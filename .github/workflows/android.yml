@@ -34,9 +34,11 @@ jobs:
             ./gradlew --no-daemon "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g" :app:connectedDebugAndroidTest
             test_status=$?
             mkdir -p /tmp/send-ui-screenshots
-            adb pull /sdcard/Android/data/dev.send.matrix.test/files/send-home-screen.png /tmp/send-ui-screenshots/
-            adb pull /sdcard/Android/data/dev.send.matrix.test/files/send-conversation-screen.png /tmp/send-ui-screenshots/
-            exit "$test_status"
+            screenshot_status=0
+            adb exec-out run-as dev.send.matrix.test cat cache/send-home-screen.png > /tmp/send-ui-screenshots/send-home-screen.png || screenshot_status=$?
+            adb exec-out run-as dev.send.matrix.test cat cache/send-conversation-screen.png > /tmp/send-ui-screenshots/send-conversation-screen.png || screenshot_status=$?
+            if [ "$test_status" -ne 0 ]; then exit "$test_status"; fi
+            exit "$screenshot_status"
       - name: Upload Android instrumentation results
         if: always()
         uses: actions/upload-artifact@v4
