@@ -300,7 +300,7 @@ class MatrixRepository(context: Context) {
                 isEncrypted = true,
                 isDirect = true,
                 visibility = RoomVisibility.Private,
-                preset = RoomPreset.PrivateChat,
+                preset = RoomPreset.PRIVATE_CHAT,
                 invite = listOf(recipient),
                 avatar = null,
                 powerLevelContentOverride = null,
