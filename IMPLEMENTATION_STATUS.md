@@ -11,9 +11,9 @@ Send's Android shell and conversation-first Compose reference UI are present. Th
 
 ## Build environment and CI
 
-- GitHub Actions workflow `.github/workflows/android.yml` runs `assembleDebug testDebugUnitTest lintDebug` after installing Android API 37 SDK/build tools. These checks have not been run; no GitHub remote/run result is available here.
-- Current workspace has Java 17, Android platform 34/build-tools 34, and an API 34 emulator image; API 37 platform/build-tools are absent. No local builds/tests were run, per the request to run checks in GitHub CI only.
-- Gradle wrapper creation was attempted, but the wrapper files have not been confirmed present. CI currently invokes `./gradlew`, so wrapper completion is necessary before GitHub checks can pass.
+- Public GitHub repository: https://github.com/hanthor/send-android. The Android CI workflow builds, runs unit tests and lint, then uploads the installable APK as the `Send-debug-APK` artifact for 30 days.
+- GitHub Actions provisions Gradle 9.6.0 and Android API 37; this checkout has no Gradle wrapper. The local environment lacks API 37, and no local builds or tests were run.
+- The APK is a UI preview only. Matrix login, sync, encrypted messaging, QR login, and calls remain unimplemented.
 
 ## Remaining implementation blockers
 
