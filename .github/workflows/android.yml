@@ -24,7 +24,7 @@ jobs:
       - name: Install Android API 37 SDK
         run: sdkmanager 'platforms;android-37.2' 'build-tools;37.0.0'
       - name: Assemble, test, and lint
-        run: gradle --no-daemon :app:assembleDebug :app:testDebugUnitTest :app:lintDebug
+        run: gradle --no-daemon "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g" :app:assembleDebug :app:testDebugUnitTest :app:lintDebug
       - name: Upload installable debug APK
         uses: actions/upload-artifact@v4
         with:
