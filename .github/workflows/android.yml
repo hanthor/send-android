@@ -30,11 +30,25 @@ jobs:
           arch: x86_64
           disable-animations: true
           script: |
+            set +e
             ./gradlew --no-daemon "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g" :app:connectedDebugAndroidTest
+            test_status=$?
             mkdir -p /tmp/send-ui-screenshots
             adb pull /sdcard/Android/data/dev.send.matrix.test/files/send-home-screen.png /tmp/send-ui-screenshots/
             adb pull /sdcard/Android/data/dev.send.matrix.test/files/send-conversation-screen.png /tmp/send-ui-screenshots/
+            exit "$test_status"
+      - name: Upload Android instrumentation results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Send-Android-Test-Results
+          path: |
+            app/build/reports/androidTests/connected/debug/**
+            app/build/outputs/androidTest-results/connected/debug/**
+          if-no-files-found: warn
+          retention-days: 30
       - name: Upload installable debug APK
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: Send-debug-APK
@@ -42,9 +56,10 @@ jobs:
           if-no-files-found: error
           retention-days: 30
       - name: Upload UI comparison screenshots
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: Send-UI-Screenshots
           path: /tmp/send-ui-screenshots/*.png
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 30
