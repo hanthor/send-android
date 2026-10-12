@@ -16,7 +16,7 @@ import org.matrix.rustcomponents.sdk.Client
 class NativeMatrixCallSession(
     context: Context,
     client: Client,
-    sessionScope: CoroutineScope,
+    private val sessionScope: CoroutineScope,
 ) : AutoCloseable {
     private val transport: ElementCallMatrixTransport = ElementCallSdkTransport(client, sessionScope)
     private val stack = ElementCallStack.Builder(context, transport)

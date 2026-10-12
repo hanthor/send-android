@@ -1,42 +1,41 @@
 package dev.send.matrix
 
 import android.content.Context
-import java.net.URI
 import android.util.Base64
+import java.net.URI
 import java.security.KeyStore
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.spec.GCMParameterSpec
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.matrix.rustcomponents.sdk.Client
 import org.matrix.rustcomponents.sdk.ClientBuilder
 import org.matrix.rustcomponents.sdk.MessageType
+import org.matrix.rustcomponents.sdk.QrCodeData
 import org.matrix.rustcomponents.sdk.Room
 import org.matrix.rustcomponents.sdk.SqliteStoreBuilder
+import org.matrix.rustcomponents.sdk.SsoHandler
 import org.matrix.rustcomponents.sdk.TextMessageContent
 import org.matrix.rustcomponents.sdk.Timeline
-import org.matrix.rustcomponents.sdk.QrCodeData
-import org.matrix.rustcomponents.sdk.SsoHandler
-
-
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.SupervisorJob
 
 data class MatrixRoom(val id: String, val name: String, val encrypted: Boolean)
 data class MatrixMessage(val id: String, val sender: String, val text: String, val own: Boolean, val reactions: List<String>)
 
 class MatrixRepository(context: Context) {
-    private val appContext = context.applicationContext
+    private val repositoryScope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
     @Volatile private var callSession: NativeMatrixCallSession? = null
     @Volatile private var client: Client? = null
     @Volatile private var syncService: org.matrix.rustcomponents.sdk.SyncService? = null
     @Volatile private var roomListService: org.matrix.rustcomponents.sdk.RoomListService? = null
     private var roomList: org.matrix.rustcomponents.sdk.RoomList? = null
-    private var roomEntriesController: org.matrix.rustcomponents.sdk.RoomListDynamicEntriesController? = null
+    private var roomEntriesResult: org.matrix.rustcomponents.sdk.RoomListEntriesWithDynamicAdaptersResult? = null
     private var roomEntriesHandle: org.matrix.rustcomponents.sdk.TaskHandle? = null
     private var roomListStateHandle: org.matrix.rustcomponents.sdk.TaskHandle? = null
     private var timelineHandle: org.matrix.rustcomponents.sdk.TaskHandle? = null
@@ -68,8 +67,23 @@ class MatrixRepository(context: Context) {
         val sdk = createClient(normalizeHomeserverUrl(homeserver))
         try {
             check(sdk.isLoginWithQrCodeSupported()) { "This homeserver does not support Matrix QR sign-in." }
-            val handler = sdk.newLoginWithQrCodeHandler(null)
-            handler.scan(QrCodeData.fromBytes(qrPayload.toByteArray(Charsets.UTF_8)), null)
+            val oauthConfiguration = org.matrix.rustcomponents.sdk.OAuthConfiguration(
+                clientName = "Send Android",
+                redirectUri = "dev.send.matrix://sso/callback",
+                clientUri = "https://github.com/hanthor/send-android",
+                logoUri = null,
+                tosUri = null,
+                policyUri = null,
+                staticRegistrations = emptyMap(),
+            )
+            val handler = sdk.newLoginWithQrCodeHandler(oauthConfiguration)
+            val task = handler.scan(
+                QrCodeData.fromBytes(qrPayload.toByteArray(Charsets.UTF_8)),
+                object : org.matrix.rustcomponents.sdk.QrLoginProgressListener {
+                    override fun onUpdate(state: org.matrix.rustcomponents.sdk.QrLoginProgress) = Unit
+                },
+            )
+            task.wait()
             val session = sdk.session()
             sdk.restoreSession(session)
             saveAuthenticatedClient(sdk)
@@ -193,49 +207,58 @@ class MatrixRepository(context: Context) {
         val service = sync.roomListService()
         roomListService = service
         roomListStateHandle = service.state(
-            org.matrix.rustcomponents.sdk.RoomListServiceStateListener { state ->
-                _roomListServiceState.value = state
-            }
+            object : org.matrix.rustcomponents.sdk.RoomListServiceStateListener {
+                override fun onUpdate(state: org.matrix.rustcomponents.sdk.RoomListServiceState) {
+                    _roomListServiceState.value = state
+                }
+            },
         )
         val list = service.allRooms()
         roomList = list
-        val result = list.entriesWithDynamicAdapters(20u) { updates ->
-            val current = _joinedRooms.value.toMutableList()
-            for (update in updates) {
-                when (update) {
-                    is org.matrix.rustcomponents.sdk.RoomListEntriesUpdate.Reset -> {
-                        current.clear()
-                        current.addAll(update.values.map(::toMatrixRoom))
+        val result = list.entriesWithDynamicAdapters(
+            20u,
+            object : org.matrix.rustcomponents.sdk.RoomListEntriesListener {
+                override fun onUpdate(updates: List<org.matrix.rustcomponents.sdk.RoomListEntriesUpdate>) {
+                    repositoryScope.launch {
+                        val current = _joinedRooms.value.toMutableList()
+                        for (update in updates) {
+                            when (update) {
+                                is org.matrix.rustcomponents.sdk.RoomListEntriesUpdate.Reset -> {
+                                    current.clear()
+                                    current.addAll(update.values.map(::toMatrixRoom))
+                                }
+                                is org.matrix.rustcomponents.sdk.RoomListEntriesUpdate.Append ->
+                                    current.addAll(update.values.map(::toMatrixRoom))
+                                is org.matrix.rustcomponents.sdk.RoomListEntriesUpdate.PushBack ->
+                                    current.add(toMatrixRoom(update.value))
+                                is org.matrix.rustcomponents.sdk.RoomListEntriesUpdate.PushFront ->
+                                    current.add(0, toMatrixRoom(update.value))
+                                is org.matrix.rustcomponents.sdk.RoomListEntriesUpdate.Insert ->
+                                    current.add(update.index.toInt().coerceIn(0, current.size), toMatrixRoom(update.value))
+                                is org.matrix.rustcomponents.sdk.RoomListEntriesUpdate.Set -> {
+                                    val index = update.index.toInt()
+                                    if (index in current.indices) current[index] = toMatrixRoom(update.value)
+                                }
+                                is org.matrix.rustcomponents.sdk.RoomListEntriesUpdate.Remove -> {
+                                    val index = update.index.toInt()
+                                    if (index in current.indices) current.removeAt(index)
+                                }
+                                is org.matrix.rustcomponents.sdk.RoomListEntriesUpdate.PopBack ->
+                                    if (current.isNotEmpty()) current.removeAt(current.lastIndex)
+                                is org.matrix.rustcomponents.sdk.RoomListEntriesUpdate.PopFront ->
+                                    if (current.isNotEmpty()) current.removeAt(0)
+                                is org.matrix.rustcomponents.sdk.RoomListEntriesUpdate.Truncate -> {
+                                    val size = update.length.toInt().coerceAtLeast(0)
+                                    if (size < current.size) current.subList(size, current.size).clear()
+                                }
+                                org.matrix.rustcomponents.sdk.RoomListEntriesUpdate.Clear -> current.clear()
+                            }
+                        }
+                        _joinedRooms.value = current
                     }
-                    is org.matrix.rustcomponents.sdk.RoomListEntriesUpdate.Append ->
-                        current.addAll(update.values.map(::toMatrixRoom))
-                    is org.matrix.rustcomponents.sdk.RoomListEntriesUpdate.PushBack ->
-                        current.add(toMatrixRoom(update.value))
-                    is org.matrix.rustcomponents.sdk.RoomListEntriesUpdate.PushFront ->
-                        current.add(0, toMatrixRoom(update.value))
-                    is org.matrix.rustcomponents.sdk.RoomListEntriesUpdate.Insert ->
-                        current.add(update.index.toInt().coerceIn(0, current.size), toMatrixRoom(update.value))
-                    is org.matrix.rustcomponents.sdk.RoomListEntriesUpdate.Set -> {
-                        val index = update.index.toInt()
-                        if (index in current.indices) current[index] = toMatrixRoom(update.value)
-                    }
-                    is org.matrix.rustcomponents.sdk.RoomListEntriesUpdate.Remove -> {
-                        val index = update.index.toInt()
-                        if (index in current.indices) current.removeAt(index)
-                    }
-                    is org.matrix.rustcomponents.sdk.RoomListEntriesUpdate.PopBack ->
-                        if (current.isNotEmpty()) current.removeAt(current.lastIndex)
-                    is org.matrix.rustcomponents.sdk.RoomListEntriesUpdate.PopFront ->
-                        if (current.isNotEmpty()) current.removeAt(0)
-                    is org.matrix.rustcomponents.sdk.RoomListEntriesUpdate.Truncate -> {
-                        val size = update.length.toInt().coerceAtLeast(0)
-                        if (size < current.size) current.subList(size, current.size).clear()
-                    }
-                    org.matrix.rustcomponents.sdk.RoomListEntriesUpdate.Clear -> current.clear()
                 }
-            }
-            _joinedRooms.value = current
-        }
+            },
+        )
         roomEntriesResult = result
         val controller = result.controller()
         roomEntriesController = controller
@@ -243,9 +266,8 @@ class MatrixRepository(context: Context) {
         roomEntriesHandle = result.entriesStream()
     }
 
-    private fun toMatrixRoom(room: Room) =
+    private suspend fun toMatrixRoom(room: Room): MatrixRoom =
         MatrixRoom(room.id(), room.displayName().orEmpty().ifBlank { room.id() }, room.isEncrypted())
-
 
     suspend fun openEncryptedRoom(roomId: String): Room = withContext(Dispatchers.IO) {
         val room = requireClient().getRoom(roomId) ?: error("Conversation is unavailable.")
@@ -261,31 +283,33 @@ class MatrixRepository(context: Context) {
     suspend fun observeTimeline(timeline: Timeline) = withContext(Dispatchers.IO) {
         timelineHandle?.close()
         _messages.value = emptyList()
-        timelineHandle = timeline.addListener(org.matrix.rustcomponents.sdk.TimelineListener { diffs ->
-            val current = _messages.value.toMutableList()
-            diffs.forEach { diff ->
-                when (diff) {
-                    is org.matrix.rustcomponents.sdk.TimelineDiff.Reset -> {
-                        current.clear()
-                        current.addAll(diff.values.mapNotNull(::toMessage))
-                    }
-                    is org.matrix.rustcomponents.sdk.TimelineDiff.Append ->
-                        current.addAll(diff.values.mapNotNull(::toMessage))
-                    is org.matrix.rustcomponents.sdk.TimelineDiff.PushBack ->
-                        toMessage(diff.value)?.let(current::add)
-                    is org.matrix.rustcomponents.sdk.TimelineDiff.PushFront ->
-                        toMessage(diff.value)?.let(current::add)
-                    is org.matrix.rustcomponents.sdk.TimelineDiff.Set -> {
-                        val updated = toMessage(diff.value)
-                        if (updated != null) {
-                            val index = current.indexOfFirst { it.id == updated.id }
-                            if (index >= 0) current[index] = updated
+        timelineHandle = timeline.addListener(object : org.matrix.rustcomponents.sdk.TimelineListener {
+            override fun onUpdate(diffs: List<org.matrix.rustcomponents.sdk.TimelineDiff>) {
+                val current = _messages.value.toMutableList()
+                diffs.forEach { diff ->
+                    when (diff) {
+                        is org.matrix.rustcomponents.sdk.TimelineDiff.Reset -> {
+                            current.clear()
+                            current.addAll(diff.values.mapNotNull(::toMessage))
                         }
+                        is org.matrix.rustcomponents.sdk.TimelineDiff.Append ->
+                            current.addAll(diff.values.mapNotNull(::toMessage))
+                        is org.matrix.rustcomponents.sdk.TimelineDiff.PushBack ->
+                            toMessage(diff.value)?.let(current::add)
+                        is org.matrix.rustcomponents.sdk.TimelineDiff.PushFront ->
+                            toMessage(diff.value)?.let(current::add)
+                        is org.matrix.rustcomponents.sdk.TimelineDiff.Set -> {
+                            val updated = toMessage(diff.value)
+                            if (updated != null) {
+                                val index = current.indexOfFirst { it.id == updated.id }
+                                if (index >= 0) current[index] = updated
+                            }
+                        }
+                        is org.matrix.rustcomponents.sdk.TimelineDiff.Clear -> current.clear()
                     }
-                    is org.matrix.rustcomponents.sdk.TimelineDiff.Clear -> current.clear()
                 }
+                _messages.value = current
             }
-            _messages.value = current
         })
     }
 
@@ -302,6 +326,7 @@ class MatrixRepository(context: Context) {
         check(room.isEncrypted()) { "Sending is disabled because this room is not encrypted." }
         require(text.isNotBlank())
         val content = timeline.createMessageContent(MessageType.Text(TextMessageContent(text, null)))
+            ?: error("The Matrix SDK could not create a text message.")
         timeline.send(content)
     }
 
@@ -311,9 +336,8 @@ class MatrixRepository(context: Context) {
     }
 
     suspend fun paginateOlder(timeline: Timeline): Boolean = withContext(Dispatchers.IO) {
-        timeline.paginateBackwards(30.toShort())
+        timeline.paginateBackwards(30u.toUShort())
     }
-
     private fun normalizeHomeserverUrl(value: String): String {
         val url = URI(value.trim())
         require(

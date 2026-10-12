@@ -59,6 +59,7 @@ import org.matrix.rustcomponents.sdk.Room
 import org.matrix.rustcomponents.sdk.Timeline
 import io.element.android.call.api.ElementCallConnection
 import io.element.android.call.api.ElementCallSnapshot
+private val Lavender = Color(0xFFE8EEFF)
 private val Ink = Color(0xFF202124)
 private val Muted = Color(0xFF65676B)
 private val Canvas = Color(0xFFF7F8FA)
@@ -422,13 +423,13 @@ private fun ConversationScreen(
             Surface(Modifier.fillMaxWidth().padding(vertical = 8.dp), shape = RoundedCornerShape(18.dp), color = Color(0xFFE9E5F4)) {
                 Column(Modifier.padding(14.dp)) {
                     Text(
-                        when (call.connection) {
+                        when (val connection = call.connection) {
                             ElementCallConnection.RequestingPermission -> "Microphone permission required"
                             ElementCallConnection.Joining -> "Calling…"
                             ElementCallConnection.ConnectingMedia -> "Connecting audio…"
                             ElementCallConnection.Connected -> "Audio call"
                             ElementCallConnection.Degraded -> "Audio connection unstable"
-                            is ElementCallConnection.Failed -> call.connection.message
+                            is ElementCallConnection.Failed -> connection.message
                             ElementCallConnection.Ended -> "Call ended"
                         },
                         fontWeight = FontWeight.Medium,

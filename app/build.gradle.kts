@@ -32,7 +32,6 @@ dependencies {
     implementation(libs.matrix.sdk)
     implementation(libs.zxing.embedded)
     implementation(libs.androidx.browser)
-    implementation(libs.matrix.crypto)
     implementation(platform(libs.element.call.bom))
     implementation(libs.element.call.api)
     implementation(libs.element.call.impl)
