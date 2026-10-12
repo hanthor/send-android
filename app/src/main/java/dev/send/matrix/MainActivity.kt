@@ -77,7 +77,7 @@ class MainActivity : ComponentActivity() {
             } else {
                 lightColorScheme(primary = Color(0xFF0B57D0))
             }
-            MaterialTheme(colorScheme = colors) { SendApp(repository) }
+            MaterialTheme(colorScheme = colors) { SendApp(repository, this@MainActivity) }
         }
     }
 
@@ -95,7 +95,7 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun SendApp(repository: MatrixRepository) {
+private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
     var signedIn by rememberSaveable { mutableStateOf(false) }
     var homeserver by rememberSaveable { mutableStateOf("") }
     var user by rememberSaveable { mutableStateOf("") }
@@ -116,7 +116,6 @@ private fun SendApp(repository: MatrixRepository) {
     val callState by callStateFlow.collectAsState()
     val messages by repository.messages.collectAsState()
     val scope = androidx.compose.runtime.rememberCoroutineScope()
-    val activity = androidx.compose.ui.platform.LocalContext.current as MainActivity
     val requestMicrophone = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         callSession?.controller?.setMicrophonePermissionGranted(granted)
         if (!granted) error = "Microphone permission is required for an audio call."
