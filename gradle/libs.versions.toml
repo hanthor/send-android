@@ -1,0 +1,24 @@
+[versions]
+agp = "9.4.0"
+kotlin = "2.3.20"
+compose-bom = "2026.09.00"
+activity-compose = "1.13.0"
+lifecycle = "2.10.0"
+navigation-compose = "2.9.7"
+matrix = "26.09.28"
+matrix-crypto = "26.05.12"
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+
+[libraries]
+compose-bom = { module = "androidx.compose:compose-bom", version.ref = "compose-bom" }
+compose-ui = { module = "androidx.compose.ui:ui" }
+compose-material3 = { module = "androidx.compose.material3:material3" }
+compose-tooling = { module = "androidx.compose.ui:ui-tooling" }
+activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activity-compose" }
+lifecycle-runtime = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "lifecycle" }
+navigation-compose = { module = "androidx.navigation:navigation-compose", version.ref = "navigation-compose" }
+matrix-sdk = { module = "org.matrix.rustcomponents:sdk-android", version.ref = "matrix" }
+matrix-crypto = { module = "org.matrix.rustcomponents:crypto-android", version.ref = "matrix-crypto" }
