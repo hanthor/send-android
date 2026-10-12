@@ -10,6 +10,7 @@ import javax.crypto.spec.GCMParameterSpec
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -29,6 +30,7 @@ data class MatrixRoom(val id: String, val name: String, val encrypted: Boolean)
 data class MatrixMessage(val id: String, val sender: String, val text: String, val own: Boolean, val reactions: List<String>)
 
 class MatrixRepository(context: Context) {
+    private val appContext = context.applicationContext
     private val repositoryScope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
     @Volatile private var callSession: NativeMatrixCallSession? = null
     @Volatile private var client: Client? = null
@@ -36,9 +38,11 @@ class MatrixRepository(context: Context) {
     @Volatile private var roomListService: org.matrix.rustcomponents.sdk.RoomListService? = null
     private var roomList: org.matrix.rustcomponents.sdk.RoomList? = null
     private var roomEntriesResult: org.matrix.rustcomponents.sdk.RoomListEntriesWithDynamicAdaptersResult? = null
+    private var roomEntriesController: org.matrix.rustcomponents.sdk.RoomListDynamicEntriesController? = null
     private var roomEntriesHandle: org.matrix.rustcomponents.sdk.TaskHandle? = null
     private var roomListStateHandle: org.matrix.rustcomponents.sdk.TaskHandle? = null
     private var timelineHandle: org.matrix.rustcomponents.sdk.TaskHandle? = null
+    private val timelineItems = mutableListOf<org.matrix.rustcomponents.sdk.TimelineItem>()
     private val _joinedRooms = MutableStateFlow<List<MatrixRoom>>(emptyList())
     val joinedRooms: StateFlow<List<MatrixRoom>> = _joinedRooms.asStateFlow()
     private val _roomListServiceState = MutableStateFlow(org.matrix.rustcomponents.sdk.RoomListServiceState.INITIAL)
@@ -77,13 +81,14 @@ class MatrixRepository(context: Context) {
                 staticRegistrations = emptyMap(),
             )
             val handler = sdk.newLoginWithQrCodeHandler(oauthConfiguration)
-            val task = handler.scan(
+            // scan is a suspending SDK operation; it returns only after the QR login
+            // exchange completes (or throws), so session restoration must follow it.
+            handler.scan(
                 QrCodeData.fromBytes(qrPayload.toByteArray(Charsets.UTF_8)),
                 object : org.matrix.rustcomponents.sdk.QrLoginProgressListener {
                     override fun onUpdate(state: org.matrix.rustcomponents.sdk.QrLoginProgress) = Unit
                 },
             )
-            task.wait()
             val session = sdk.session()
             sdk.restoreSession(session)
             saveAuthenticatedClient(sdk)
@@ -168,6 +173,7 @@ class MatrixRepository(context: Context) {
         client?.close()
         client = null
         _joinedRooms.value = emptyList()
+        timelineItems.clear()
         _messages.value = emptyList()
         _roomListServiceState.value = org.matrix.rustcomponents.sdk.RoomListServiceState.INITIAL
     }
@@ -185,6 +191,14 @@ class MatrixRepository(context: Context) {
         roomList = null
         roomListService?.close()
         roomListService = null
+    }
+
+    fun close() {
+        closeSessionResources()
+        ssoClient?.close()
+        ssoClient = null
+        ssoHandler = null
+        repositoryScope.cancel()
     }
 
     suspend fun startSync() = withContext(Dispatchers.IO) {
@@ -225,10 +239,11 @@ class MatrixRepository(context: Context) {
                             when (update) {
                                 is org.matrix.rustcomponents.sdk.RoomListEntriesUpdate.Reset -> {
                                     current.clear()
-                                    current.addAll(update.values.map(::toMatrixRoom))
+                                    for (room in update.values) current.add(toMatrixRoom(room))
                                 }
-                                is org.matrix.rustcomponents.sdk.RoomListEntriesUpdate.Append ->
-                                    current.addAll(update.values.map(::toMatrixRoom))
+                                is org.matrix.rustcomponents.sdk.RoomListEntriesUpdate.Append -> {
+                                    for (room in update.values) current.add(toMatrixRoom(room))
+                                }
                                 is org.matrix.rustcomponents.sdk.RoomListEntriesUpdate.PushBack ->
                                     current.add(toMatrixRoom(update.value))
                                 is org.matrix.rustcomponents.sdk.RoomListEntriesUpdate.PushFront ->
@@ -282,33 +297,44 @@ class MatrixRepository(context: Context) {
 
     suspend fun observeTimeline(timeline: Timeline) = withContext(Dispatchers.IO) {
         timelineHandle?.close()
+        timelineItems.clear()
         _messages.value = emptyList()
         timelineHandle = timeline.addListener(object : org.matrix.rustcomponents.sdk.TimelineListener {
             override fun onUpdate(diffs: List<org.matrix.rustcomponents.sdk.TimelineDiff>) {
-                val current = _messages.value.toMutableList()
-                diffs.forEach { diff ->
+                for (diff in diffs) {
                     when (diff) {
                         is org.matrix.rustcomponents.sdk.TimelineDiff.Reset -> {
-                            current.clear()
-                            current.addAll(diff.values.mapNotNull(::toMessage))
+                            timelineItems.clear()
+                            timelineItems.addAll(diff.values)
                         }
                         is org.matrix.rustcomponents.sdk.TimelineDiff.Append ->
-                            current.addAll(diff.values.mapNotNull(::toMessage))
+                            timelineItems.addAll(diff.values)
                         is org.matrix.rustcomponents.sdk.TimelineDiff.PushBack ->
-                            toMessage(diff.value)?.let(current::add)
+                            timelineItems.add(diff.value)
                         is org.matrix.rustcomponents.sdk.TimelineDiff.PushFront ->
-                            toMessage(diff.value)?.let(current::add)
+                            timelineItems.add(0, diff.value)
+                        is org.matrix.rustcomponents.sdk.TimelineDiff.Insert ->
+                            timelineItems.add(diff.index.toInt().coerceIn(0, timelineItems.size), diff.value)
                         is org.matrix.rustcomponents.sdk.TimelineDiff.Set -> {
-                            val updated = toMessage(diff.value)
-                            if (updated != null) {
-                                val index = current.indexOfFirst { it.id == updated.id }
-                                if (index >= 0) current[index] = updated
-                            }
+                            val index = diff.index.toInt()
+                            if (index in timelineItems.indices) timelineItems[index] = diff.value
                         }
-                        is org.matrix.rustcomponents.sdk.TimelineDiff.Clear -> current.clear()
+                        is org.matrix.rustcomponents.sdk.TimelineDiff.Remove -> {
+                            val index = diff.index.toInt()
+                            if (index in timelineItems.indices) timelineItems.removeAt(index)
+                        }
+                        is org.matrix.rustcomponents.sdk.TimelineDiff.PopBack ->
+                            if (timelineItems.isNotEmpty()) timelineItems.removeAt(timelineItems.lastIndex)
+                        is org.matrix.rustcomponents.sdk.TimelineDiff.PopFront ->
+                            if (timelineItems.isNotEmpty()) timelineItems.removeAt(0)
+                        is org.matrix.rustcomponents.sdk.TimelineDiff.Truncate -> {
+                            val size = diff.length.toInt().coerceAtLeast(0)
+                            if (size < timelineItems.size) timelineItems.subList(size, timelineItems.size).clear()
+                        }
+                        is org.matrix.rustcomponents.sdk.TimelineDiff.Clear -> timelineItems.clear()
                     }
                 }
-                _messages.value = current
+                _messages.value = timelineItems.mapNotNull(::toMessage)
             }
         })
     }
@@ -416,3 +442,4 @@ class MatrixRepository(context: Context) {
             instance ?: MatrixRepository(context.applicationContext).also { instance = it }
         }
     }
+}
