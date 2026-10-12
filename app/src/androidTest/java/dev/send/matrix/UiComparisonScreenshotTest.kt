@@ -76,9 +76,8 @@ class UiComparisonScreenshotTest {
 
     private fun saveScreenshot(fileName: String) {
         composeRule.waitForIdle()
-        val context = InstrumentationRegistry.getInstrumentation().context
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
         val output = File(context.cacheDir, fileName)
-        check(output.parentFile?.mkdirs() == true || output.parentFile?.isDirectory == true)
         output.outputStream().use { stream ->
             check(composeRule.onRoot().captureToImage().asAndroidBitmap().compress(android.graphics.Bitmap.CompressFormat.PNG, 100, stream))
         }
