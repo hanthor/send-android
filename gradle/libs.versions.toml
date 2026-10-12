@@ -1,12 +1,17 @@
 [versions]
 agp = "9.4.0"
-kotlin = "2.3.20"
+kotlin = "2.4.10"
 compose-bom = "2026.09.00"
 activity-compose = "1.13.0"
 lifecycle = "2.10.0"
 navigation-compose = "2.9.7"
-matrix = "26.09.28"
+matrix = "26.09.28" # v0.1.0-rc.7 requires >= 26.09.26 (upstream README)
 matrix-crypto = "26.05.12"
+zxing-embedded = "4.3.0"
+element-call = "0.1.0-rc.7"
+browser = "1.9.0"
+androidx-test-junit = "1.2.1"
+androidx-test-runner = "1.6.2"
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
@@ -22,3 +27,13 @@ lifecycle-runtime = { module = "androidx.lifecycle:lifecycle-runtime-compose", v
 navigation-compose = { module = "androidx.navigation:navigation-compose", version.ref = "navigation-compose" }
 matrix-sdk = { module = "org.matrix.rustcomponents:sdk-android", version.ref = "matrix" }
 matrix-crypto = { module = "org.matrix.rustcomponents:crypto-android", version.ref = "matrix-crypto" }
+zxing-embedded = { module = "com.journeyapps:zxing-android-embedded", version.ref = "zxing-embedded" }
+androidx-browser = { module = "androidx.browser:browser", version.ref = "browser" }
+element-call-bom = { module = "io.element.android:element-call-bom", version.ref = "element-call" }
+element-call-api = { module = "io.element.android:element-call-api" }
+element-call-impl = { module = "io.element.android:element-call" }
+element-call-matrix = { module = "io.element.android:element-call-matrix" }
+compose-ui-test-junit4 = { module = "androidx.compose.ui:ui-test-junit4" }
+compose-ui-test-manifest = { module = "androidx.compose.ui:ui-test-manifest" }
+androidx-test-junit = { module = "androidx.test.ext:junit", version.ref = "androidx-test-junit" }
+androidx-test-runner = { module = "androidx.test:runner", version.ref = "androidx-test-runner" }

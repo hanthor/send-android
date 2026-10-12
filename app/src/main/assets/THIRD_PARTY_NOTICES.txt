@@ -1,0 +1,15 @@
+Element Call Android
+Copyright (c) 2026 Element Creations Ltd.
+Source: https://github.com/element-hq/element-call-android/tree/v0.1.0-rc.7
+Artifacts: io.element.android:element-call-api, io.element.android:element-call,
+           io.element.android:element-call-matrix (v0.1.0-rc.7)
+License: AGPL-3.0-only OR LicenseRef-Element-Commercial.
+The upstream project is dual licensed by Element Creations Ltd. Refer to the
+upstream LICENSE and LICENSE-COMMERCIAL files for the complete terms. This notice
+does not select a license for Send or make a licensing determination.
+
+Matrix Rust RTC Android core
+Copyright and license notices: https://github.com/element-hq/matrix-rust-rtc
+Artifact: io.element.android:matrix-rtc-android:0.5.0-rc.2
+The core version is selected by the published Element Call module metadata.
+See the upstream repository's license files for its license terms.

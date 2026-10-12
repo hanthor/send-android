@@ -25,6 +25,13 @@ jobs:
         run: sdkmanager 'platforms;android-37.2' 'build-tools;37.0.0'
       - name: Assemble, test, and lint
         run: gradle --no-daemon "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g" :app:assembleDebug :app:testDebugUnitTest :app:lintDebug
+      - name: Run instrumented authentication smoke test
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          disable-animations: true
+          script: gradle --no-daemon "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g" :app:connectedDebugAndroidTest
       - name: Upload installable debug APK
         uses: actions/upload-artifact@v4
         with:
