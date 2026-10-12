@@ -5,7 +5,7 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performTextInput
-import androidx.compose.ui.test.assertExists
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Rule
@@ -36,6 +36,6 @@ class AuthenticationUiTest {
         composeRule.onNodeWithText("Password").performTextInput("not-a-real-password")
         composeRule.onNodeWithText("Sign in with password").performClick()
 
-        composeRule.onNodeWithText("Enter a valid HTTPS homeserver URL.").assertExists()
+        composeRule.onNodeWithText("Enter a valid HTTPS homeserver URL.").assertIsDisplayed()
     }
 }
