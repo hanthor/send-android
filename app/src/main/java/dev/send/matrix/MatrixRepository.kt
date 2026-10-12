@@ -26,7 +26,7 @@ import org.matrix.rustcomponents.sdk.SsoHandler
 import org.matrix.rustcomponents.sdk.TextMessageContent
 import org.matrix.rustcomponents.sdk.Timeline
 
-data class MatrixRoom(val id: String, val name: String, val encrypted: Boolean)
+data class MatrixRoom(val id: String, val name: String, val encrypted: Boolean, val direct: Boolean)
 data class MatrixMessage(val id: String, val sender: String, val text: String, val own: Boolean, val reactions: List<String>)
 
 class MatrixRepository(context: Context) {
@@ -282,8 +282,9 @@ class MatrixRepository(context: Context) {
     }
 
     private suspend fun toMatrixRoom(room: Room): MatrixRoom =
-        MatrixRoom(room.id(), room.displayName().orEmpty().ifBlank { room.id() }, room.isEncrypted())
+        MatrixRoom(room.id(), room.displayName().orEmpty().ifBlank { room.id() }, room.isEncrypted(), room.isDirect())
 
+    suspend fun isDirectRoom(room: Room): Boolean = withContext(Dispatchers.IO) { room.isDirect() }
     suspend fun openEncryptedRoom(roomId: String): Room = withContext(Dispatchers.IO) {
         val room = requireClient().getRoom(roomId) ?: error("Conversation is unavailable.")
         check(room.isEncrypted()) { "This room is not end-to-end encrypted and cannot be opened for messaging." }

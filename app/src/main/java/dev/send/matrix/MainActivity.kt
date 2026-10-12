@@ -108,6 +108,7 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
     var timeline by remember { mutableStateOf<Timeline?>(null) }
     var activeRoomId by rememberSaveable { mutableStateOf("") }
     var roomTitle by rememberSaveable { mutableStateOf("") }
+    var activeRoomIsDirect by rememberSaveable { mutableStateOf(false) }
     var drafts by rememberSaveable { mutableStateOf<Map<String, String>>(emptyMap()) }
     val rooms by repository.joinedRooms.collectAsState()
     var callSession by remember { mutableStateOf<NativeMatrixCallSession?>(null) }
@@ -185,6 +186,7 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
                     repository.observeTimeline(restoredTimeline)
                     room = restoredRoom
                     timeline = restoredTimeline
+                    activeRoomIsDirect = repository.isDirectRoom(restoredRoom)
                 }
             }
         } catch (failure: Exception) {
@@ -248,10 +250,11 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
             )
             room != null && timeline != null -> ConversationScreen(
                 title = roomTitle,
+                isDirect = activeRoomIsDirect,
                 draft = drafts[activeRoomId].orEmpty(),
                 onDraft = { value -> drafts = drafts + (activeRoomId to value) },
                 messages = messages,
-                onBack = { room = null; timeline = null; activeRoomId = ""; roomTitle = ""; error = "" },
+                onBack = { room = null; timeline = null; activeRoomId = ""; roomTitle = ""; activeRoomIsDirect = false; error = "" },
                 onSend = {
                     val currentRoom = room
                     val currentTimeline = timeline
@@ -309,6 +312,7 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
                             timeline = selectedTimeline
                             activeRoomId = selected.id
                             roomTitle = selected.name
+                            activeRoomIsDirect = selected.direct
                         } catch (failure: Exception) {
                             error = failure.message ?: "Conversation could not be opened."
                         }
@@ -394,6 +398,7 @@ private fun Initial(name: String) {
 @Composable
 private fun ConversationScreen(
     title: String,
+    isDirect: Boolean,
     draft: String,
     onDraft: (String) -> Unit,
     messages: List<MatrixMessage>,
@@ -416,7 +421,9 @@ private fun ConversationScreen(
                 Text("🔒  End-to-end encrypted", fontSize = 12.sp, color = Muted)
             }
         }
-            TextButton(onClick = onAudioCall, enabled = callState == null) { Text("Call") }
+            if (isDirect) {
+                TextButton(onClick = onAudioCall, enabled = callState == null) { Text("Call") }
+            }
         TextButton(onClick = onOlder, modifier = Modifier.align(Alignment.CenterHorizontally)) { Text("Load older messages") }
         callState?.let { call ->
             Surface(Modifier.fillMaxWidth().padding(vertical = 8.dp), shape = RoundedCornerShape(18.dp), color = Color(0xFFE9E5F4)) {
