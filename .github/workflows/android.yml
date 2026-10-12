@@ -19,23 +19,32 @@ jobs:
           java-version: '17'
       - uses: android-actions/setup-android@v4
       - uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '9.6.0'
       - name: Install Android API 37 SDK
         run: sdkmanager 'platforms;android-37.2' 'build-tools;37.0.0'
       - name: Assemble, test, and lint
-        run: gradle --no-daemon "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g" :app:assembleDebug :app:testDebugUnitTest :app:lintDebug
-      - name: Run instrumented authentication smoke test
+        run: ./gradlew --no-daemon "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g" :app:assembleDebug :app:testDebugUnitTest :app:lintDebug
+      - name: Run emulator UI smoke tests and capture screenshots
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
           arch: x86_64
           disable-animations: true
-          script: gradle --no-daemon "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g" :app:connectedDebugAndroidTest
+          script: |
+            ./gradlew --no-daemon "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g" :app:connectedDebugAndroidTest
+            mkdir -p /tmp/send-ui-screenshots
+            adb pull /sdcard/Android/data/dev.send.matrix.test/files/send-home-screen.png /tmp/send-ui-screenshots/
+            adb pull /sdcard/Android/data/dev.send.matrix.test/files/send-conversation-screen.png /tmp/send-ui-screenshots/
       - name: Upload installable debug APK
         uses: actions/upload-artifact@v4
         with:
           name: Send-debug-APK
           path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload UI comparison screenshots
+        uses: actions/upload-artifact@v4
+        with:
+          name: Send-UI-Screenshots
+          path: /tmp/send-ui-screenshots/*.png
           if-no-files-found: error
           retention-days: 30

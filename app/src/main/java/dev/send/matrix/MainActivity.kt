@@ -110,6 +110,7 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
     var roomTitle by rememberSaveable { mutableStateOf("") }
     var activeRoomIsDirect by rememberSaveable { mutableStateOf(false) }
     var drafts by rememberSaveable { mutableStateOf<Map<String, String>>(emptyMap()) }
+    var notice by rememberSaveable { mutableStateOf("") }
     val rooms by repository.joinedRooms.collectAsState()
     var callSession by remember { mutableStateOf<NativeMatrixCallSession?>(null) }
     val noCall = remember { kotlinx.coroutines.flow.MutableStateFlow<ElementCallSnapshot?>(null) }
@@ -318,7 +319,21 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
                         }
                     }
                 },
-                error = error
+                error = error,
+                notice = notice,
+                creatingDirectRoom = activeJob?.isActive == true,
+                onCreateDirectRoom = { matrixUserId ->
+                    error = ""
+                    notice = "Creating encrypted conversation…"
+                    activeJob = scope.launch {
+                        try {
+                            repository.createEncryptedDirectRoom(matrixUserId)
+                            notice = "Encrypted conversation created. It will appear after sync."
+                        } catch (failure: Exception) {
+                            error = failure.message ?: "Conversation could not be created."
+                        }
+                    }
+                }
             )
         }
     }
@@ -361,18 +376,31 @@ private fun SignInScreen(
 }
 
 @Composable
-private fun HomeScreen(rooms: List<MatrixRoom>, onOpen: (MatrixRoom) -> Unit, error: String) {
+internal fun HomeScreen(
+    rooms: List<MatrixRoom>,
+    onOpen: (MatrixRoom) -> Unit,
+    error: String,
+    notice: String,
+    creatingDirectRoom: Boolean,
+    onCreateDirectRoom: (String) -> Unit,
+) {
+    var showingNewChat by rememberSaveable { mutableStateOf(false) }
+    var matrixUserId by rememberSaveable { mutableStateOf("") }
     Column(Modifier.fillMaxSize().padding(horizontal = 22.dp, vertical = 28.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("Send", fontSize = 31.sp, fontWeight = FontWeight.SemiBold)
                 Text("Your encrypted conversations", color = Muted, modifier = Modifier.padding(top = 4.dp))
             }
+            Button(onClick = { showingNewChat = true }, shape = RoundedCornerShape(26.dp)) {
+                Text("New chat")
+            }
         }
         if (error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 10.dp))
+        if (notice.isNotBlank()) Text(notice, color = Muted, modifier = Modifier.padding(top = 10.dp))
         if (rooms.isEmpty()) Text("No conversations are available yet.", color = Muted, modifier = Modifier.padding(top = 24.dp))
-        else if (rooms.none { it.encrypted }) {
-            Text("These rooms are unencrypted. Send hides them and cannot open them for messaging.", color = Muted, modifier = Modifier.padding(top = 20.dp))
+        else if (rooms.any { !it.encrypted }) {
+            Text("Unencrypted rooms are hidden. Send only opens end-to-end encrypted conversations.", color = Muted, modifier = Modifier.padding(top = 20.dp))
         }
         LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.padding(top = 14.dp)) {
             items(rooms.filter { it.encrypted }, key = { it.id }) { chat ->
@@ -386,6 +414,37 @@ private fun HomeScreen(rooms: List<MatrixRoom>, onOpen: (MatrixRoom) -> Unit, er
             }
         }
     }
+    if (showingNewChat) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { if (!creatingDirectRoom) showingNewChat = false },
+            title = { Text("New encrypted conversation") },
+            text = {
+                OutlinedTextField(
+                    value = matrixUserId,
+                    onValueChange = { matrixUserId = it },
+                    label = { Text("Matrix user ID") },
+                    placeholder = { Text("@alice:example.org") },
+                    singleLine = true,
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onCreateDirectRoom(matrixUserId)
+                        showingNewChat = false
+                    },
+                    enabled = !creatingDirectRoom && matrixUserId.trim().let {
+                        it.startsWith("@") && it.indexOf(':') > 1 && !it.any(Char::isWhitespace)
+                    },
+                ) {
+                    Text(if (creatingDirectRoom) "Creating…" else "Create")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showingNewChat = false }, enabled = !creatingDirectRoom) { Text("Cancel") }
+            },
+        )
+    }
 }
 
 @Composable
@@ -396,7 +455,7 @@ private fun Initial(name: String) {
 }
 
 @Composable
-private fun ConversationScreen(
+internal fun ConversationScreen(
     title: String,
     isDirect: Boolean,
     draft: String,

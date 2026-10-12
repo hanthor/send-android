@@ -25,6 +25,9 @@ import org.matrix.rustcomponents.sdk.SqliteStoreBuilder
 import org.matrix.rustcomponents.sdk.SsoHandler
 import org.matrix.rustcomponents.sdk.TextMessageContent
 import org.matrix.rustcomponents.sdk.Timeline
+import org.matrix.rustcomponents.sdk.CreateRoomParameters
+import org.matrix.rustcomponents.sdk.RoomPreset
+import org.matrix.rustcomponents.sdk.RoomVisibility
 
 data class MatrixRoom(val id: String, val name: String, val encrypted: Boolean, val direct: Boolean)
 data class MatrixMessage(val id: String, val sender: String, val text: String, val own: Boolean, val reactions: List<String>)
@@ -285,6 +288,30 @@ class MatrixRepository(context: Context) {
         MatrixRoom(room.id(), room.displayName().orEmpty().ifBlank { room.id() }, room.isEncrypted(), room.isDirect())
 
     suspend fun isDirectRoom(room: Room): Boolean = withContext(Dispatchers.IO) { room.isDirect() }
+    suspend fun createEncryptedDirectRoom(matrixUserId: String): String = withContext(Dispatchers.IO) {
+        val recipient = matrixUserId.trim()
+        require(recipient.startsWith("@") && recipient.indexOf(':') > 1 && !recipient.any(Char::isWhitespace)) {
+            "Enter a Matrix user ID such as @alice:example.org."
+        }
+        requireClient().createRoom(
+            CreateRoomParameters(
+                name = null,
+                topic = null,
+                isEncrypted = true,
+                isDirect = true,
+                visibility = RoomVisibility.Private,
+                preset = RoomPreset.PrivateChat,
+                invite = listOf(recipient),
+                avatar = null,
+                powerLevelContentOverride = null,
+                joinRuleOverride = null,
+                historyVisibilityOverride = null,
+                canonicalAlias = null,
+                isSpace = false,
+            ),
+        )
+    }
+
     suspend fun openEncryptedRoom(roomId: String): Room = withContext(Dispatchers.IO) {
         val room = requireClient().getRoom(roomId) ?: error("Conversation is unavailable.")
         check(room.isEncrypted()) { "This room is not end-to-end encrypted and cannot be opened for messaging." }
