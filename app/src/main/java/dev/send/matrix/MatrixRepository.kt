@@ -1,6 +1,7 @@
 package dev.send.matrix
 
 import android.content.Context
+import java.net.URI
 import android.util.Base64
 import java.security.KeyStore
 import javax.crypto.Cipher
@@ -64,8 +65,7 @@ class MatrixRepository(context: Context) {
 
 
     suspend fun qrLogin(homeserver: String, qrPayload: String) = withContext(Dispatchers.IO) {
-        require(homeserver.startsWith("https://") || homeserver.startsWith("http://")) { "Enter a valid homeserver URL." }
-        val sdk = createClient(homeserver.trimEnd('/'))
+        val sdk = createClient(normalizeHomeserverUrl(homeserver))
         try {
             check(sdk.isLoginWithQrCodeSupported()) { "This homeserver does not support Matrix QR sign-in." }
             val handler = sdk.newLoginWithQrCodeHandler(null)
@@ -83,8 +83,7 @@ class MatrixRepository(context: Context) {
     @Volatile private var ssoHandler: SsoHandler? = null
 
     suspend fun beginSsoLogin(homeserver: String): String = withContext(Dispatchers.IO) {
-        require(homeserver.startsWith("https://") || homeserver.startsWith("http://")) { "Enter a valid homeserver URL." }
-        val sdk = createClient(homeserver.trimEnd('/'))
+        val sdk = createClient(normalizeHomeserverUrl(homeserver))
         try {
             val handler = sdk.startSsoLogin("dev.send.matrix://sso/callback", null)
             ssoClient?.close()
@@ -121,8 +120,7 @@ class MatrixRepository(context: Context) {
         ssoHandler = null
     }
     suspend fun passwordLogin(homeserver: String, user: String, password: String) = withContext(Dispatchers.IO) {
-        require(homeserver.startsWith("https://") || homeserver.startsWith("http://")) { "Enter a valid homeserver URL." }
-        val sdk = createClient(homeserver.trimEnd('/'))
+        val sdk = createClient(normalizeHomeserverUrl(homeserver))
         try {
             sdk.login(user, password, "Send Android", null)
             replaceAuthenticatedClient(sdk)
@@ -314,6 +312,21 @@ class MatrixRepository(context: Context) {
 
     suspend fun paginateOlder(timeline: Timeline): Boolean = withContext(Dispatchers.IO) {
         timeline.paginateBackwards(30.toShort())
+    }
+
+    private fun normalizeHomeserverUrl(value: String): String {
+        val url = URI(value.trim())
+        require(
+            url.scheme == "https" &&
+                !url.host.isNullOrBlank() &&
+                url.userInfo == null &&
+                url.query == null &&
+                url.fragment == null &&
+                (url.port == -1 || url.port in 1..65535)
+        ) {
+            "Enter a valid HTTPS homeserver URL."
+        }
+        return url.normalize().toASCIIString().trimEnd('/')
     }
 
     private suspend fun createClient(homeserver: String): Client {
