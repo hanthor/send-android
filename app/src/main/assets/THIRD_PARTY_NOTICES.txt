@@ -1,15 +1,38 @@
+Send is licensed under the GNU Affero General Public License v3.0 only.
+See the LICENSE file at the repository root and the in-app "About & licenses"
+dialog for the full terms. Corresponding source:
+https://github.com/hanthor/send-android
+
+This app links the following third-party components:
+
 Element Call Android
 Copyright (c) 2026 Element Creations Ltd.
 Source: https://github.com/element-hq/element-call-android/tree/v0.1.0-rc.7
 Artifacts: io.element.android:element-call-api, io.element.android:element-call,
-           io.element.android:element-call-matrix (v0.1.0-rc.7)
+           io.element.android:element-call-matrix,
+           io.element.android:element-call-ui (v0.1.0-rc.7)
 License: AGPL-3.0-only OR LicenseRef-Element-Commercial.
-The upstream project is dual licensed by Element Creations Ltd. Refer to the
-upstream LICENSE and LICENSE-COMMERCIAL files for the complete terms. This notice
-does not select a license for Send or make a licensing determination.
+Send is distributed under the AGPL-3.0-only option. Refer to the
+upstream LICENSE and LICENSE-COMMERCIAL files for the complete terms.
 
 Matrix Rust RTC Android core
 Copyright and license notices: https://github.com/element-hq/matrix-rust-rtc
 Artifact: io.element.android:matrix-rtc-android:0.5.0-rc.2
 The core version is selected by the published Element Call module metadata.
-See the upstream repository's license files for its license terms.
+The upstream repository is licensed AGPL-3.0; see its license files.
+
+Matrix Rust SDK (Kotlin/Android binding)
+Copyright and license notices: https://github.com/matrix-org/matrix-rust-sdk
+Artifact: org.matrix.rustcomponents:sdk-android:26.09.28
+License: Apache License 2.0 (http://www.apache.org/licenses/LICENSE-2.0).
+
+ZXing Android Embedded (QR login scanning)
+Copyright (C) 2012-2022 ZXing authors, Journey Mobile.
+Source: https://github.com/journeyapps/zxing-android-embedded
+Artifact: com.journeyapps:zxing-android-embedded:4.3.0
+License: Apache License 2.0 (http://www.apache.org/licenses/LICENSE-2.0).
+
+AndroidX libraries (Compose, Material 3, Activity, Browser, Test)
+Copyright The Android Open Source Project.
+Source: https://github.com/androidx/androidx
+License: Apache License 2.0 (http://www.apache.org/licenses/LICENSE-2.0).

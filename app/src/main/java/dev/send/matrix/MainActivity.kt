@@ -354,7 +354,7 @@ internal fun SignInScreen(
     onSsoLogin: () -> Unit,
     onLogin: () -> Unit,
 ) {
-    var showPasswordLogin by rememberSaveable { mutableStateOf(false) }
+    var showLegal by rememberSaveable { mutableStateOf(false) }
     val colors = MaterialTheme.colorScheme
 
     Column(
@@ -503,8 +503,14 @@ internal fun SignInScreen(
                         Text("Cancel SSO sign-in")
                     }
                 }
+                TextButton(onClick = { showLegal = true }, modifier = Modifier.align(Alignment.CenterHorizontally)) {
+                    Text("About & licenses")
+                }
             }
         }
+    }
+    if (showLegal) {
+        LegalNoticesDialog(onDismiss = { showLegal = false })
     }
 }
 
@@ -518,7 +524,7 @@ internal fun HomeScreen(
     onCreateDirectRoom: (String) -> Unit,
 ) {
     var showingNewChat by rememberSaveable { mutableStateOf(false) }
-    var matrixUserId by rememberSaveable { mutableStateOf("") }
+    var showLegal by rememberSaveable { mutableStateOf(false) }
     Column(Modifier.fillMaxSize().padding(horizontal = 22.dp, vertical = 28.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
@@ -546,6 +552,10 @@ internal fun HomeScreen(
                 }
             }
         }
+        TextButton(onClick = { showLegal = true }) { Text("About & licenses") }
+    }
+    if (showLegal) {
+        LegalNoticesDialog(onDismiss = { showLegal = false })
     }
     if (showingNewChat) {
         androidx.compose.material3.AlertDialog(
