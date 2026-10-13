@@ -29,16 +29,7 @@ jobs:
           api-level: 35
           arch: x86_64
           disable-animations: true
-          script: |
-            set +e
-            ./gradlew --no-daemon "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g" :app:connectedDebugAndroidTest
-            test_status=$?
-            mkdir -p /tmp/send-ui-screenshots
-            screenshot_status=0
-            adb pull /storage/emulated/0/Download/Send/send-home-screen.png /tmp/send-ui-screenshots/ || screenshot_status=$?
-            adb pull /storage/emulated/0/Download/Send/send-conversation-screen.png /tmp/send-ui-screenshots/ || screenshot_status=$?
-            if [ "$test_status" -ne 0 ]; then exit "$test_status"; fi
-            exit "$screenshot_status"
+          script: ./gradlew --no-daemon "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g" :app:connectedDebugAndroidTest && mkdir -p /tmp/send-ui-screenshots && adb pull /storage/emulated/0/Download/Send/send-home-screen.png /tmp/send-ui-screenshots/ && adb pull /storage/emulated/0/Download/Send/send-conversation-screen.png /tmp/send-ui-screenshots/
       - name: Upload Android instrumentation results
         if: always()
         uses: actions/upload-artifact@v4
