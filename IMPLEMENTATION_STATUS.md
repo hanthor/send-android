@@ -11,7 +11,7 @@ Send is an original Kotlin/Compose Matrix Android client with a conversation-fir
 
 ## Known implementation limits
 
-- Element Call `0.1.0-rc.7` exposes no host-facing incoming-call invitation/event flow, accept/decline API, or supported inbound entry point. Incoming call alerts and accept/decline are not implemented; no fake inbound controls are shown.
+- Outgoing 1:1 audio calls use Element Call `0.1.0-rc.7` (`ElementCallOverlay` over the authenticated Rust SDK session, mic-gated start, mute/audio routing, library foreground service/notification, host picture-in-picture wiring). The release's public `ElementCallController` exposes `startCall`/`hangUp` but no host-facing incoming-call invitation/event flow or accept/decline API, so incoming call alerts and accept/decline are not implemented; no fake inbound controls are shown.
 - Encrypted 1:1 room creation from a Matrix user ID is implemented. Push notifications, Android Auto, widgets, dictation, text-to-speech, and AI features remain roadmap items in `ANDROID_INTEGRATIONS.md`.
 - CI provisions two Synapse demo accounts and verifies Alice-to-Bob encrypted delivery/decryption and reaction receipt on Bob's independent client. Pre-existing remote room-list population, encryption recovery, and live MatrixRTC calls are not verified. The CI emulator cannot resolve `matrix.reilly.asia`, so remote SSO/production login is also unverified.
 - Element Call is a release candidate; upstream APIs may change. This repository uses its documented minimum Rust SDK version `26.09.26`; the pinned stable SDK `26.09.28` meets that floor, with build/runtime compatibility still to verify.

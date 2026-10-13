@@ -76,7 +76,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import org.matrix.rustcomponents.sdk.Room
 import org.matrix.rustcomponents.sdk.Timeline
-import io.element.android.call.ui.ElementCallOverlay
+import io.element.android.call.impl.ElementCallPictureInPicture
+import io.element.android.call.api.ElementCallController
 private val Lavender = Color(0xFFE8EEFF)
 private val Ink = Color(0xFF202124)
 private val Muted = Color(0xFF65676B)
@@ -85,7 +86,7 @@ private val QuickReactions = listOf("👍", "❤️", "😂")
 
 class MainActivity : ComponentActivity() {
     private val repository by lazy { MatrixRepository.get(applicationContext) }
-    val ssoCallback = mutableStateOf<Uri?>(null)
+    private var pipController: ElementCallController? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -100,18 +101,19 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    override fun onNewIntent(intent: android.content.Intent) {
-        super.onNewIntent(intent)
-        setIntent(intent)
-        acceptSsoCallback(intent.data)
-    }
-
-    private fun acceptSsoCallback(uri: Uri?) {
-        if (uri?.scheme == "dev.send.matrix" && uri.host == "sso" && uri.path == "/callback") {
-            ssoCallback.value = uri
+    internal fun attachCallController(controller: ElementCallController) {
+        if (pipController !== controller) {
+            pipController = controller
+            ElementCallPictureInPicture.attach(this, controller)
         }
     }
-}
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        pipController?.let { ElementCallPictureInPicture.onUserLeaveHint(this, it) }
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
 
 @Composable
 private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
@@ -133,8 +135,10 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
     val rooms by repository.joinedRooms.collectAsState()
     var callSession by remember { mutableStateOf<NativeMatrixCallSession?>(null) }
     LaunchedEffect(signedIn) {
-        if (signedIn) callSession = repository.callSession()
-        else callSession = null
+        if (signedIn) {
+            callSession = repository.callSession()
+            callSession?.let { activity.attachCallController(it.controller) }
+        } else callSession = null
     }
     val messages by repository.messages.collectAsState()
     val scope = androidx.compose.runtime.rememberCoroutineScope()
