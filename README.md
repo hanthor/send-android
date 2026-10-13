@@ -58,7 +58,7 @@ Builds and automated tests run in GitHub Actions (see
 
 - `./gradlew :app:assembleDebug :app:testDebugUnitTest :app:lintDebug`
 - Android emulator instrumentation against disposable Synapse, including real
-  password sign-in and encrypted message exchange.
+  password sign-in, encrypted-room creation, and encrypted message send.
 - Successful runs upload the debug APK (`Send-debug-APK`), test results
   (`Send-Android-Test-Results`), and full-resolution screenshots
   (`Send-UI-Screenshots`).
