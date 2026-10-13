@@ -67,8 +67,15 @@ class ZLocalSynapseIntegrationTest {
         composeRule.onAllNodes(hasSetTextAction()).get(2).performScrollTo().performTextInput("local-dev-password")
         composeRule.onNodeWithText("Sign in with password").performScrollTo().performClick()
 
-        composeRule.waitUntil(timeoutMillis = 60_000) {
-            composeRule.onAllNodesWithContentDescription("Search").fetchSemanticsNodes().isNotEmpty()
+        try {
+            composeRule.waitUntil(timeoutMillis = 60_000) {
+                composeRule.onAllNodesWithContentDescription("Search").fetchSemanticsNodes().isNotEmpty()
+            }
+        } catch (timeout: Exception) {
+            val texts = composeRule.onAllNodesWithText("", substring = true).fetchSemanticsNodes()
+                .mapNotNull { runCatching { it.config[androidx.compose.ui.semantics.SemanticsProperties.Text] }.getOrNull() }
+            println("SEND_DIAG visible texts after login: $texts")
+            throw timeout
         }
         composeRule.onNodeWithContentDescription("Search").assertIsDisplayed()
         val repository = MatrixRepository.get(
