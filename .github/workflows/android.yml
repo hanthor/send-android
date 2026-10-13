@@ -21,6 +21,22 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - name: Install Android API 37 SDK
         run: sdkmanager 'platforms;android-37.2' 'build-tools;37.0.0'
+      - name: Start disposable local Synapse backend
+        run: |
+          docker compose -f dev/matrix/compose.yaml config --quiet
+          docker compose -f dev/matrix/compose.yaml up -d
+          ready=
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:8008/_matrix/client/versions >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 2
+          done
+          if [ -z "$ready" ]; then docker compose -f dev/matrix/compose.yaml logs synapse; exit 1; fi
+          docker compose -f dev/matrix/compose.yaml exec -T synapse \
+            register_new_matrix_user -c /data/homeserver.yaml \
+            -u alice -p local-dev-password http://localhost:8008
       - name: Assemble, test, and lint
         run: ./gradlew --no-daemon "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g" :app:assembleDebug :app:testDebugUnitTest :app:lintDebug
       - name: Run emulator UI smoke tests and capture screenshots
@@ -29,7 +45,7 @@ jobs:
           api-level: 35
           arch: x86_64
           disable-animations: true
-          script: ./gradlew --no-daemon "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g" :app:connectedDebugAndroidTest && mkdir -p /tmp/send-ui-screenshots && adb pull /storage/emulated/0/Download/Send/send-home-screen.png /tmp/send-ui-screenshots/ && adb pull /storage/emulated/0/Download/Send/send-conversation-screen.png /tmp/send-ui-screenshots/
+          script: ./gradlew --no-daemon "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g" :app:connectedDebugAndroidTest && mkdir -p /tmp/send-ui-screenshots && adb pull /storage/emulated/0/Download/Send/send-login-screen.png /tmp/send-ui-screenshots/ && adb pull /storage/emulated/0/Download/Send/send-home-screen.png /tmp/send-ui-screenshots/ && adb pull /storage/emulated/0/Download/Send/send-conversation-screen.png /tmp/send-ui-screenshots/
       - name: Upload Android instrumentation results
         if: always()
         uses: actions/upload-artifact@v4
@@ -56,3 +72,6 @@ jobs:
           path: /tmp/send-ui-screenshots/*.png
           if-no-files-found: warn
           retention-days: 30
+      - name: Stop disposable local Synapse backend
+        if: always()
+        run: docker compose -f dev/matrix/compose.yaml down

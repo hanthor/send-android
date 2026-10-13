@@ -401,8 +401,15 @@ class MatrixRepository(context: Context) {
     }
     private fun normalizeHomeserverUrl(value: String): String {
         val url = URI(value.trim())
+        val localDebugHomeserver = BuildConfig.DEBUG &&
+            url.scheme == "http" &&
+            url.port == 8008 &&
+            when (url.host?.lowercase()) {
+                "10.0.2.2", "127.0.0.1", "localhost" -> true
+                else -> false
+            }
         require(
-            url.scheme == "https" &&
+            (url.scheme == "https" || localDebugHomeserver) &&
                 !url.host.isNullOrBlank() &&
                 url.userInfo == null &&
                 url.query == null &&

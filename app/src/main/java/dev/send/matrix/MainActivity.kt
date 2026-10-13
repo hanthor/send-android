@@ -10,6 +10,13 @@ import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.browser.customtabs.CustomTabsIntent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
@@ -19,6 +26,10 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.verticalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -38,6 +49,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -347,7 +360,7 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
 }
 
 @Composable
-private fun SignInScreen(
+internal fun SignInScreen(
     homeserver: String,
     onHomeserver: (String) -> Unit,
     user: String,
@@ -363,22 +376,157 @@ private fun SignInScreen(
     onSsoLogin: () -> Unit,
     onLogin: () -> Unit,
 ) {
-    Column(Modifier.fillMaxSize().padding(horizontal = 26.dp), verticalArrangement = Arrangement.Center) {
-        Text("Send", fontSize = 40.sp, fontWeight = FontWeight.SemiBold)
-        Text("Private conversations, on your terms.", color = Muted, modifier = Modifier.padding(top = 6.dp, bottom = 28.dp))
-        OutlinedTextField(homeserver, onHomeserver, label = { Text("Homeserver") }, placeholder = { Text("https://matrix.example.org") }, singleLine = true, modifier = Modifier.fillMaxWidth(), enabled = !busy)
-        Button(onClick = onQrLogin, enabled = !busy && homeserver.isNotBlank(), modifier = Modifier.fillMaxWidth().padding(top = 14.dp), shape = RoundedCornerShape(26.dp)) {
-            Text(if (busy) "Signing in…" else "Scan QR code")
+    var showPasswordLogin by rememberSaveable { mutableStateOf(false) }
+    val colors = MaterialTheme.colorScheme
+
+    Column(
+        Modifier.fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .imePadding()
+            .padding(horizontal = 24.dp, vertical = 28.dp),
+    ) {
+        AnimatedVisibility(
+            visible = true,
+            enter = fadeIn(animationSpec = tween(420)) +
+                slideInVertically(initialOffsetY = { it / 14 }, animationSpec = tween(420)),
+        ) {
+            Column {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Surface(
+                        modifier = Modifier.size(54.dp),
+                        shape = RoundedCornerShape(18.dp),
+                        color = colors.primaryContainer,
+                    ) {
+                        androidx.compose.foundation.layout.Box(contentAlignment = Alignment.Center) {
+                            Text("S", color = colors.onPrimaryContainer, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                    Column(Modifier.padding(start = 14.dp)) {
+                        Text("Send", fontSize = 25.sp, fontWeight = FontWeight.SemiBold)
+                        Text("Private, thoughtful messaging", color = Muted, fontSize = 13.sp)
+                    }
+                }
+
+                Text(
+                    "Your conversations,\nwith room to breathe.",
+                    style = MaterialTheme.typography.displaySmall,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(top = 34.dp),
+                )
+                Text(
+                    "Connect to your Matrix homeserver. Your messages stay end-to-end encrypted.",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = Muted,
+                    modifier = Modifier.padding(top = 12.dp, bottom = 28.dp),
+                )
+
+                Text(
+                    "HOMESERVER",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Muted,
+                    modifier = Modifier.padding(start = 4.dp, bottom = 6.dp),
+                )
+                OutlinedTextField(
+                    value = homeserver,
+                    onValueChange = onHomeserver,
+                    label = { Text("Homeserver") },
+                    placeholder = { Text("https://matrix.example.org") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !busy,
+                    shape = RoundedCornerShape(18.dp),
+                )
+                Button(
+                    onClick = onQrLogin,
+                    enabled = !busy && homeserver.isNotBlank(),
+                    modifier = Modifier.fillMaxWidth().padding(top = 16.dp).height(56.dp),
+                    shape = RoundedCornerShape(18.dp),
+                ) {
+                    if (busy) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(19.dp),
+                            strokeWidth = 2.dp,
+                            color = colors.onPrimary,
+                        )
+                        Text("  Connecting…")
+                    } else {
+                        Text("Scan QR code", fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                    }
+                }
+                OutlinedButton(
+                    onClick = onSsoLogin,
+                    enabled = !busy && homeserver.isNotBlank(),
+                    modifier = Modifier.fillMaxWidth().padding(top = 10.dp).height(54.dp),
+                    shape = RoundedCornerShape(18.dp),
+                ) {
+                    Text("Continue with SSO", fontSize = 15.sp)
+                }
+
+                TextButton(
+                    onClick = { showPasswordLogin = !showPasswordLogin },
+                    enabled = !busy,
+                    modifier = Modifier.align(Alignment.CenterHorizontally).padding(top = 8.dp),
+                ) {
+                    Text(if (showPasswordLogin) "Use another sign-in method" else "Use username and password")
+                }
+
+                AnimatedVisibility(
+                    visible = showPasswordLogin,
+                    enter = fadeIn(tween(220)) + expandVertically(expandFrom = Alignment.Top, animationSpec = tween(260)),
+                    exit = fadeOut(tween(150)) + shrinkVertically(shrinkTowards = Alignment.Top, animationSpec = tween(200)),
+                ) {
+                    Column {
+                        OutlinedTextField(
+                            value = user,
+                            onValueChange = onUser,
+                            label = { Text("Username") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                            enabled = !busy,
+                            shape = RoundedCornerShape(18.dp),
+                        )
+                        OutlinedTextField(
+                            value = password,
+                            onValueChange = onPassword,
+                            label = { Text("Password") },
+                            singleLine = true,
+                            visualTransformation = PasswordVisualTransformation(),
+                            modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+                            enabled = !busy,
+                            shape = RoundedCornerShape(18.dp),
+                        )
+                        Button(
+                            onClick = onLogin,
+                            enabled = !busy && homeserver.isNotBlank() && user.isNotBlank() && password.isNotBlank(),
+                            modifier = Modifier.fillMaxWidth().padding(top = 14.dp).height(54.dp),
+                            shape = RoundedCornerShape(18.dp),
+                        ) {
+                            Text("Sign in with password")
+                        }
+                    }
+                }
+
+                if (error.isNotBlank()) {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth().padding(top = 14.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        color = colors.errorContainer,
+                    ) {
+                        Text(error, color = colors.onErrorContainer, modifier = Modifier.padding(16.dp))
+                    }
+                }
+                if (busy) {
+                    TextButton(onClick = onCancel, modifier = Modifier.align(Alignment.CenterHorizontally)) {
+                        Text("Cancel sign-in")
+                    }
+                }
+                if (ssoPending) {
+                    TextButton(onClick = onCancelSso, modifier = Modifier.align(Alignment.CenterHorizontally)) {
+                        Text("Cancel SSO sign-in")
+                    }
+                }
+            }
         }
-        TextButton(onClick = onSsoLogin, enabled = !busy && homeserver.isNotBlank(), modifier = Modifier.align(Alignment.CenterHorizontally)) { Text("Continue with SSO") }
-        OutlinedTextField(user, onUser, label = { Text("Username") }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(top = 8.dp), enabled = !busy)
-        OutlinedTextField(password, onPassword, label = { Text("Password") }, singleLine = true, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth().padding(top = 8.dp), enabled = !busy)
-        if (error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 10.dp))
-        Button(onClick = onLogin, enabled = !busy && homeserver.isNotBlank() && user.isNotBlank() && password.isNotBlank(), modifier = Modifier.fillMaxWidth().padding(top = 18.dp), shape = RoundedCornerShape(26.dp)) {
-            Text(if (busy) "Signing in…" else "Sign in with password")
-        }
-        if (busy) TextButton(onClick = onCancel, modifier = Modifier.align(Alignment.CenterHorizontally)) { Text("Cancel") }
-        if (ssoPending) TextButton(onClick = onCancelSso, modifier = Modifier.align(Alignment.CenterHorizontally)) { Text("Cancel SSO sign-in") }
     }
 }
 

@@ -1,0 +1,13 @@
+services:
+  synapse:
+    image: matrixdotorg/synapse:latest
+    environment:
+      SYNAPSE_SERVER_NAME: send.test
+      SYNAPSE_REPORT_STATS: "no"
+    ports:
+      - "127.0.0.1:8008:8008"
+    volumes:
+      - synapse-data:/data
+
+volumes:
+  synapse-data:

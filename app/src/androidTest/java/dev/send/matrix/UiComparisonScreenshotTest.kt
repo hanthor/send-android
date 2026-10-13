@@ -26,6 +26,34 @@ class UiComparisonScreenshotTest {
     val composeRule = createComposeRule()
 
     @Test
+    fun capturesMaterialSignInScreen() {
+        composeRule.setContent {
+            MaterialTheme {
+                SignInScreen(
+                    homeserver = "",
+                    onHomeserver = {},
+                    user = "",
+                    onUser = {},
+                    password = "",
+                    onPassword = {},
+                    busy = false,
+                    error = "",
+                    onCancel = {},
+                    ssoPending = false,
+                    onCancelSso = {},
+                    onQrLogin = {},
+                    onSsoLogin = {},
+                    onLogin = {},
+                )
+            }
+        }
+
+        saveScreenshot("send-login-screen.png")
+        composeRule.onNodeWithText("Scan QR code").assertIsDisplayed()
+        composeRule.onNodeWithText("Continue with SSO").assertIsDisplayed()
+    }
+
+    @Test
     fun newChatRequiresAValidMatrixUserIdAndCapturesHomeScreen() {
         composeRule.setContent {
             MaterialTheme {
