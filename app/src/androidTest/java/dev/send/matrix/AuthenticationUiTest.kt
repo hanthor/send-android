@@ -24,7 +24,7 @@ class AuthenticationUiTest {
 
     @Test
     fun authenticationActionsRequireHomeserverAndPasswordFields() {
-        composeRule.onNodeWithText("Use username and password").performTouchInput { click() }
+        composeRule.onNodeWithText("Use username and password").performScrollTo().performTouchInput { click() }
         composeRule.mainClock.advanceTimeBy(600)
         composeRule.onAllNodes(hasSetTextAction()).assertCountEquals(3)
         composeRule.onAllNodes(hasSetTextAction()).get(0).performTextInput("https://matrix.example.org")
@@ -37,7 +37,7 @@ class AuthenticationUiTest {
 
     @Test
     fun rejectsPlainHttpHomeserverBeforeLogin() {
-        composeRule.onNodeWithText("Use username and password").performTouchInput { click() }
+        composeRule.onNodeWithText("Use username and password").performScrollTo().performTouchInput { click() }
         composeRule.mainClock.advanceTimeBy(600)
         composeRule.onAllNodes(hasSetTextAction()).assertCountEquals(3)
         composeRule.onAllNodes(hasSetTextAction()).get(0).performTextInput("http://matrix.example.org")

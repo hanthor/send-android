@@ -23,7 +23,7 @@ class ZLocalSynapseIntegrationTest {
 
     @Test
     fun signsInToLocalSynapseOverDebugOnlyEmulatorHttp() {
-        composeRule.onNodeWithText("Use username and password").performTouchInput { click() }
+        composeRule.onNodeWithText("Use username and password").performScrollTo().performTouchInput { click() }
         composeRule.mainClock.advanceTimeBy(600)
         composeRule.onAllNodes(hasSetTextAction()).assertCountEquals(3)
         composeRule.onAllNodes(hasSetTextAction()).get(0).performTextInput("http://10.0.2.2:8008")
