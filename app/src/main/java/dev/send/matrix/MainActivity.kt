@@ -862,10 +862,10 @@ internal fun PixelOnboardingHero(modifier: Modifier = Modifier) {
             val steps = points * 16
             for (i in 0..steps) {
                 val angle = (i.toFloat() / steps) * 2f * PI.toFloat()
-                val lobe = (0.5f + 0.5f * cos(points * angle)).toFloat()
+                val lobe = 0.5f + 0.5f * cos(points * angle)
                 val r = baseR * (0.86f + 0.14f * lobe)
-                val x = cx + r * cos(angle).toFloat()
-                val y = cy + r * sin(angle).toFloat()
+                val x = cx + r * cos(angle)
+                val y = cy + r * sin(angle)
                 if (i == 0) scallop.moveTo(x, y) else scallop.lineTo(x, y)
             }
             scallop.close()
