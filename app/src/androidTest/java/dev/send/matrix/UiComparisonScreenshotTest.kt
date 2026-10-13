@@ -79,6 +79,7 @@ class UiComparisonScreenshotTest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val outputDirectory = context.getExternalFilesDir(null) ?: error("Emulator external storage is unavailable.")
         val output = File(outputDirectory, fileName)
+        android.util.Log.i("UiComparisonScreenshotTest", "Saved screenshot to ${output.absolutePath}")
         output.outputStream().use { stream ->
             check(composeRule.onRoot().captureToImage().asAndroidBitmap().compress(android.graphics.Bitmap.CompressFormat.PNG, 100, stream))
         }
