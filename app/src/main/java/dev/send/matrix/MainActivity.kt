@@ -354,6 +354,7 @@ internal fun SignInScreen(
     onSsoLogin: () -> Unit,
     onLogin: () -> Unit,
 ) {
+    var showPasswordLogin by rememberSaveable { mutableStateOf(false) }
     var showLegal by rememberSaveable { mutableStateOf(false) }
     val colors = MaterialTheme.colorScheme
 
@@ -524,6 +525,7 @@ internal fun HomeScreen(
     onCreateDirectRoom: (String) -> Unit,
 ) {
     var showingNewChat by rememberSaveable { mutableStateOf(false) }
+    var matrixUserId by rememberSaveable { mutableStateOf("") }
     var showLegal by rememberSaveable { mutableStateOf(false) }
     Column(Modifier.fillMaxSize().padding(horizontal = 22.dp, vertical = 28.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
