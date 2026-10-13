@@ -33,6 +33,7 @@ element-call-bom = { module = "io.element.android:element-call-bom", version.ref
 element-call-api = { module = "io.element.android:element-call-api" }
 element-call-impl = { module = "io.element.android:element-call" }
 element-call-matrix = { module = "io.element.android:element-call-matrix" }
+element-call-ui = { module = "io.element.android:element-call-ui" }
 compose-ui-test-junit4 = { module = "androidx.compose.ui:ui-test-junit4" }
 compose-ui-test-manifest = { module = "androidx.compose.ui:ui-test-manifest" }
 androidx-test-junit = { module = "androidx.test.ext:junit", version.ref = "androidx-test-junit" }

@@ -6,7 +6,7 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createComposeRule
-import androidx.compose.ui.test.onNodeWithText
+import io.element.android.call.ui.ElementCallOverlay
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
@@ -80,40 +80,38 @@ class UiComparisonScreenshotTest {
         var selectedReaction: Pair<String, String>? = null
         composeRule.setContent {
             MaterialTheme {
-                ConversationScreen(
-                    title = "Alice",
-                    isDirect = true,
-                    draft = "",
-                    onDraft = {},
-                    messages = listOf(
-                        MatrixMessage(
-                            id = "\$event-one",
-                            sender = "@alice:example.org",
-                            text = "Hey, are you free to talk?",
-                            own = false,
-                            timestampMillis = 1_746_000_000_000L,
-                            reactions = listOf("❤️"),
+                ElementCallOverlay(controller = null) { _ ->
+                    ConversationScreen(
+                        title = "Alice",
+                        isDirect = true,
+                        draft = "",
+                        onDraft = {},
+                        messages = listOf(
+                            MatrixMessage(
+                                id = "\$event-one",
+                                sender = "@alice:example.org",
+                                text = "Hey, are you free to talk?",
+                                own = false,
+                                timestampMillis = 1_746_000_000_000L,
+                                reactions = listOf("❤️"),
+                            ),
+                            MatrixMessage(
+                                id = "\$event-two",
+                                sender = "@me:example.org",
+                                text = "Sure, what's up?",
+                                own = true,
+                                timestampMillis = 1_746_000_060_000L,
+                                reactions = emptyList(),
+                            ),
                         ),
-                        MatrixMessage(
-                            id = "\$event-two",
-                            sender = "@me:example.org",
-                            text = "Sure, what's up?",
-                            own = true,
-                            timestampMillis = 1_746_000_060_000L,
-                            reactions = emptyList(),
-                        ),
-                    ),
-                    onBack = {},
-                    onSend = {},
-                    onOlder = {},
-                    onReact = { eventId, emoji -> selectedReaction = eventId to emoji },
-                    callState = null,
-                    onAudioCall = {},
-                    onMute = {},
-                    onAudioOutput = {},
-                    onHangUp = {},
-                    error = "",
-                )
+                        onBack = {},
+                        onSend = {},
+                        onOlder = {},
+                        onReact = { eventId, emoji -> selectedReaction = eventId to emoji },
+                        onAudioCall = {},
+                        error = "",
+                    )
+                }
             }
         }
 

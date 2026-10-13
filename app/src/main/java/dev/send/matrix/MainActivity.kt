@@ -76,8 +76,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import org.matrix.rustcomponents.sdk.Room
 import org.matrix.rustcomponents.sdk.Timeline
-import io.element.android.call.api.ElementCallConnection
-import io.element.android.call.api.ElementCallSnapshot
+import io.element.android.call.ui.ElementCallOverlay
 private val Lavender = Color(0xFFE8EEFF)
 private val Ink = Color(0xFF202124)
 private val Muted = Color(0xFF65676B)
@@ -133,28 +132,12 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
     var notice by rememberSaveable { mutableStateOf("") }
     val rooms by repository.joinedRooms.collectAsState()
     var callSession by remember { mutableStateOf<NativeMatrixCallSession?>(null) }
-    val noCall = remember { kotlinx.coroutines.flow.MutableStateFlow<ElementCallSnapshot?>(null) }
-    val callStateFlow = callSession?.controller?.state ?: noCall
-    val callState by callStateFlow.collectAsState()
-    val messages by repository.messages.collectAsState()
-    val scope = androidx.compose.runtime.rememberCoroutineScope()
-    val requestMicrophone = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        callSession?.controller?.setMicrophonePermissionGranted(granted)
-        if (!granted) error = "Microphone permission is required for an audio call."
-    }
     LaunchedEffect(signedIn) {
         if (signedIn) callSession = repository.callSession()
         else callSession = null
     }
-    LaunchedEffect(callSession, callState?.connection) {
-        if (callState?.connection == ElementCallConnection.RequestingPermission) {
-            if (ContextCompat.checkSelfPermission(activity, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-                callSession?.controller?.setMicrophonePermissionGranted(true)
-            } else {
-                requestMicrophone.launch(Manifest.permission.RECORD_AUDIO)
-            }
-        }
-    }
+    val messages by repository.messages.collectAsState()
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
     val qrScanner = rememberLauncherForActivityResult(ScanContract()) { result ->
         val payload = result.contents
         if (payload.isNullOrBlank()) {
@@ -215,7 +198,12 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
         } finally { loading = false }
     }
 
-    Surface(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing), color = Canvas, contentColor = Ink) {
+    val sendCallStyle = rememberSendCallStyle()
+    ElementCallOverlay(
+        controller = callSession?.controller,
+        style = sendCallStyle,
+    ) { overlayModifier ->
+    Surface(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).then(overlayModifier), color = Canvas, contentColor = Ink) {
         when {
             loading -> Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
                 Text("Connecting to Matrix…", color = Muted)
@@ -306,18 +294,7 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
                         catch (failure: Exception) { error = failure.message ?: "Reaction could not be sent." }
                     }
                 },
-                callState = callState,
                 onAudioCall = { callSession?.startAudioCall(activeRoomId) },
-                onMute = { callSession?.controller?.setMicrophoneMuted(!(callState?.isMicrophoneMuted ?: false)) },
-                onAudioOutput = {
-                    val snapshot = callState
-                    val devices = snapshot?.audioDevices.orEmpty()
-                    if (snapshot != null && devices.isNotEmpty()) {
-                        val current = devices.indexOf(snapshot.selectedAudioDevice)
-                        callSession?.controller?.selectAudioDevice(devices[(current + 1).mod(devices.size)])
-                    }
-                },
-                onHangUp = { callSession?.controller?.hangUp() },
                 error = error
             )
             else -> HomeScreen(
@@ -356,6 +333,7 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
                 }
             )
         }
+    }
     }
 }
 
@@ -621,11 +599,7 @@ internal fun ConversationScreen(
     onSend: () -> Unit,
     onOlder: () -> Unit,
     onReact: (String, String) -> Unit,
-    callState: ElementCallSnapshot?,
     onAudioCall: () -> Unit,
-    onMute: () -> Unit,
-    onAudioOutput: () -> Unit,
-    onHangUp: () -> Unit,
     error: String,
 ) {
     var reactionTargetId by remember { mutableStateOf<String?>(null) }
@@ -639,42 +613,11 @@ internal fun ConversationScreen(
                 Text("🔒  End-to-end encrypted", fontSize = 12.sp, color = Muted)
             }
             if (isDirect) {
-                TextButton(onClick = onAudioCall, enabled = callState == null) { Text("Call") }
+                TextButton(onClick = onAudioCall) { Text("Call") }
             }
         }
         TextButton(onClick = onOlder, modifier = Modifier.align(Alignment.CenterHorizontally)) {
             Text("Load older messages")
-        }
-        callState?.let { call ->
-            Surface(
-                Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                shape = RoundedCornerShape(18.dp),
-                color = Color(0xFFE9E5F4),
-            ) {
-                Column(Modifier.padding(14.dp)) {
-                    Text(
-                        when (val connection = call.connection) {
-                            ElementCallConnection.RequestingPermission -> "Microphone permission required"
-                            ElementCallConnection.Joining -> "Calling…"
-                            ElementCallConnection.ConnectingMedia -> "Connecting audio…"
-                            ElementCallConnection.Connected -> "Audio call"
-                            ElementCallConnection.Degraded -> "Audio connection unstable"
-                            is ElementCallConnection.Failed -> connection.message
-                            ElementCallConnection.Ended -> "Call ended"
-                        },
-                        fontWeight = FontWeight.Medium,
-                    )
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        TextButton(onClick = onMute, enabled = call.isMicrophonePermissionGranted) {
-                            Text(if (call.isMicrophoneMuted) "Unmute" else "Mute")
-                        }
-                        TextButton(onClick = onAudioOutput, enabled = call.audioDevices.size > 1) {
-                            Text("Audio output ${call.audioDevices.indexOf(call.selectedAudioDevice) + 1}/${call.audioDevices.size}")
-                        }
-                        TextButton(onClick = onHangUp) { Text("End call") }
-                    }
-                }
-            }
         }
         LazyColumn(
             Modifier.weight(1f).fillMaxWidth(),

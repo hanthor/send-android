@@ -78,11 +78,7 @@ private fun ConversationScreenPreview() {
             onSend = {},
             onOlder = {},
             onReact = { _, _ -> },
-            callState = null,
             onAudioCall = {},
-            onMute = {},
-            onAudioOutput = {},
-            onHangUp = {},
             error = "",
         )
     }
