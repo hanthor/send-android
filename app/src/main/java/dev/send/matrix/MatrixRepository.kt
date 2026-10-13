@@ -235,6 +235,7 @@ class MatrixRepository(context: Context) {
             object : org.matrix.rustcomponents.sdk.RoomListServiceStateListener {
                 override fun onUpdate(state: org.matrix.rustcomponents.sdk.RoomListServiceState) {
                     _roomListServiceState.value = state
+                    android.util.Log.i("SendMatrixSync", "Room-list service state: $state")
                 }
             },
         )
