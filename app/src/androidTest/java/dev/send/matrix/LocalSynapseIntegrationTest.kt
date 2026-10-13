@@ -16,6 +16,21 @@ import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.onRoot
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
+import org.matrix.rustcomponents.sdk.Client
+import org.matrix.rustcomponents.sdk.ClientBuilder
+import org.matrix.rustcomponents.sdk.MsgLikeKind
+import org.matrix.rustcomponents.sdk.SlidingSyncVersionBuilder
+import org.matrix.rustcomponents.sdk.SqliteStoreBuilder
+import org.matrix.rustcomponents.sdk.SyncService
+import org.matrix.rustcomponents.sdk.TaskHandle
+import org.matrix.rustcomponents.sdk.Timeline
+import org.matrix.rustcomponents.sdk.TimelineDiff
+import org.matrix.rustcomponents.sdk.TimelineItem
+import org.matrix.rustcomponents.sdk.TimelineItemContent
+import org.matrix.rustcomponents.sdk.TimelineListener
+import org.junit.After
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -25,8 +40,22 @@ class ZLocalSynapseIntegrationTest {
     @get:Rule
     val composeRule = createAndroidComposeRule<MainActivity>()
 
+    private var receiverClient: Client? = null
+    private var receiverSync: SyncService? = null
+    private var receiverTimeline: Timeline? = null
+    private var receiverTimelineHandle: TaskHandle? = null
+    @Volatile private var receiverGotMessage = false
+    @Volatile private var receiverGotReaction = false
+
+    @After
+    fun closeReceiver() {
+        receiverTimelineHandle?.close()
+        receiverSync?.close()
+        receiverClient?.close()
+    }
+
     @Test
-    fun signsInCreatesEncryptedRoomSendsMessageAndCapturesWalkthrough() {
+    fun signsInCreatesRoomAndVerifiesEncryptedDeliveryAndReactionOnBob() {
         composeRule.onNodeWithText("Use username and password").performScrollTo().performTouchInput { click() }
         composeRule.mainClock.advanceTimeBy(600)
         composeRule.onAllNodes(hasSetTextAction()).assertCountEquals(3)
@@ -47,7 +76,8 @@ class ZLocalSynapseIntegrationTest {
         }
         val unencryptedRoom = repository.joinedRooms.value.first { !it.encrypted }
         composeRule.onAllNodesWithText(unencryptedRoom.name).assertCountEquals(0)
-
+        val message = "Hello Bob — this is an encrypted demo message."
+        startBobReceiver()
         composeRule.onNodeWithText("New chat").performClick()
         composeRule.onNodeWithText("Matrix user ID").performTextInput("@bob:send.test")
         captureWalkthroughScreenshot("send-demo-create-chat.png")
@@ -56,18 +86,22 @@ class ZLocalSynapseIntegrationTest {
             repository.joinedRooms.value.any { it.direct && it.encrypted }
         }
         val demoRoom = repository.joinedRooms.value.first { it.direct && it.encrypted }
+        composeRule.waitUntil(timeoutMillis = 30_000) {
+            composeRule.onAllNodesWithText(demoRoom.name).fetchSemanticsNodes().isNotEmpty()
+        }
         captureWalkthroughScreenshot("send-demo-conversations.png")
+        joinReceiverRoom(demoRoom.id, message)
         composeRule.onNodeWithText(demoRoom.name).performClick()
         composeRule.waitUntil(timeoutMillis = 30_000) {
             composeRule.onAllNodesWithText("Message").fetchSemanticsNodes().isNotEmpty()
         }
-        val message = "Hello Bob — this is an encrypted demo message."
         composeRule.onNodeWithText("Message").performTextInput(message)
         composeRule.onNodeWithText("Send").performClick()
         composeRule.waitUntil(timeoutMillis = 30_000) {
             composeRule.onAllNodesWithText(message).fetchSemanticsNodes().isNotEmpty()
         }
         composeRule.onNodeWithText(message).assertIsDisplayed()
+        composeRule.waitUntil(timeoutMillis = 30_000) { receiverGotMessage }
         captureWalkthroughScreenshot("send-demo-conversation.png")
         composeRule.onNodeWithText(message).performTouchInput {
             down(center)
@@ -78,8 +112,69 @@ class ZLocalSynapseIntegrationTest {
         composeRule.waitUntil(timeoutMillis = 30_000) {
             composeRule.onAllNodesWithText("👍").fetchSemanticsNodes().isNotEmpty()
         }
+        composeRule.waitUntil(timeoutMillis = 30_000) { receiverGotReaction }
     }
 
+
+    private fun startBobReceiver() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val root = context.filesDir.resolve("matrix-integration-bob")
+        root.deleteRecursively()
+        root.mkdirs()
+        val client = ClientBuilder()
+            .homeserverUrl("http://10.0.2.2:8008")
+            .slidingSyncVersionBuilder(SlidingSyncVersionBuilder.NATIVE)
+            .sqliteStore(SqliteStoreBuilder(root.resolve("store.db").absolutePath, "").key(ByteArray(32)))
+            .sessionPaths(root.resolve("cache").absolutePath, root.resolve("crypto").absolutePath)
+            .build()
+        var sync: SyncService? = null
+        try {
+            runBlocking(Dispatchers.IO) {
+                client.login("@bob:send.test", "local-dev-password", "Send integration receiver", null)
+                sync = client.syncService().finish()
+                sync!!.start()
+            }
+            receiverClient = client
+            receiverSync = sync
+        } catch (failure: Exception) {
+            sync?.close()
+            client.close()
+            throw failure
+        }
+    }
+
+    private fun joinReceiverRoom(roomId: String, message: String) {
+        runBlocking(Dispatchers.IO) {
+            val room = checkNotNull(receiverClient).joinRoomById(roomId)
+            val timeline = room.timeline()
+            receiverTimeline = timeline
+            receiverTimelineHandle = timeline.addListener(object : TimelineListener {
+                override fun onUpdate(diffs: List<TimelineDiff>) {
+                    for (diff in diffs) {
+                        for (item in timelineItems(diff)) {
+                            val event = item.asEvent() ?: continue
+                            val content = event.content as? TimelineItemContent.MsgLike ?: continue
+                            val text = (content.content.kind as? MsgLikeKind.Message)?.content ?: continue
+                            if (text.body == message) {
+                                receiverGotMessage = true
+                                if (event.reactions.any { it.key == "👍" }) receiverGotReaction = true
+                            }
+                        }
+                    }
+                }
+            })
+        }
+    }
+
+    private fun timelineItems(diff: TimelineDiff): List<TimelineItem> = when (diff) {
+        is TimelineDiff.Reset -> diff.values
+        is TimelineDiff.Append -> diff.values
+        is TimelineDiff.PushBack -> listOf(diff.value)
+        is TimelineDiff.PushFront -> listOf(diff.value)
+        is TimelineDiff.Insert -> listOf(diff.value)
+        is TimelineDiff.Set -> listOf(diff.value)
+        else -> emptyList()
+    }
 
     private fun captureWalkthroughScreenshot(fileName: String) {
         composeRule.waitForIdle()
