@@ -2,7 +2,6 @@ package dev.send.matrix
 
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
-import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -21,9 +20,7 @@ class AuthenticationUiTest {
     @Test
     fun authenticationActionsRequireHomeserverAndPasswordFields() {
         composeRule.onNodeWithText("Use username and password").performClick()
-        composeRule.waitUntil(timeoutMillis = 5_000) {
-            composeRule.onAllNodesWithText("Username").fetchSemanticsNodes().isNotEmpty()
-        }
+        composeRule.mainClock.advanceTimeBy(600)
         composeRule.onNodeWithText("Homeserver").performTextInput("https://matrix.example.org")
         composeRule.onNodeWithText("Scan QR code").assertIsEnabled()
         composeRule.onNodeWithText("Continue with SSO").assertIsEnabled()
@@ -35,9 +32,7 @@ class AuthenticationUiTest {
     @Test
     fun rejectsPlainHttpHomeserverBeforeLogin() {
         composeRule.onNodeWithText("Use username and password").performClick()
-        composeRule.waitUntil(timeoutMillis = 5_000) {
-            composeRule.onAllNodesWithText("Username").fetchSemanticsNodes().isNotEmpty()
-        }
+        composeRule.mainClock.advanceTimeBy(600)
         composeRule.onNodeWithText("Homeserver").performTextInput("http://matrix.example.org")
         composeRule.onNodeWithText("Username").performTextInput("@alice:example.org")
         composeRule.onNodeWithText("Password").performTextInput("not-a-real-password")

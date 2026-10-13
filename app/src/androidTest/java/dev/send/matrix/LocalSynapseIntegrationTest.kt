@@ -19,9 +19,7 @@ class ZLocalSynapseIntegrationTest {
     @Test
     fun signsInToLocalSynapseOverDebugOnlyEmulatorHttp() {
         composeRule.onNodeWithText("Use username and password").performClick()
-        composeRule.waitUntil(timeoutMillis = 5_000) {
-            composeRule.onAllNodesWithText("Username").fetchSemanticsNodes().isNotEmpty()
-        }
+        composeRule.mainClock.advanceTimeBy(600)
         composeRule.onNodeWithText("Homeserver").performTextInput("http://10.0.2.2:8008")
         composeRule.onNodeWithText("Username").performTextInput("@alice:send.test")
         composeRule.onNodeWithText("Password").performTextInput("local-dev-password")
