@@ -60,8 +60,9 @@ The UI suite verifies homeserver URL validation, new-chat recipient validation,
 long-press reaction selection, legal notices, and sign-in/home/conversation
 fixtures. The live Synapse walkthrough proves password authentication, encrypted
 room creation, navigation, and encrypted message send/render in the local
-timeline. It does not establish delivery/decryption on Bob's separate device or
-reliable background room-list synchronization.
+timeline, plus delivery/decryption of that message and a 👍 reaction on Bob's
+independent SDK client after Bob joins the room. It does not verify reliable
+background room-list synchronization.
 
 Synapse is not configured with MatrixRTC/LiveKit; this does not verify calls.
 Push notifications, Android Auto, widgets, dictation, and AI are roadmap items,
