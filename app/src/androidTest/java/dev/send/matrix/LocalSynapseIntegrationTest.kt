@@ -7,6 +7,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.performTextInput
@@ -56,6 +57,7 @@ class ZLocalSynapseIntegrationTest {
 
     @Test
     fun signsInCreatesRoomAndVerifiesEncryptedDeliveryAndReactionOnBob() {
+        composeRule.onNodeWithText("Get started").performClick()
         composeRule.onNodeWithText("Use username and password").performScrollTo().performTouchInput { click() }
         composeRule.mainClock.advanceTimeBy(600)
         composeRule.onAllNodes(hasSetTextAction()).assertCountEquals(3)
@@ -65,9 +67,9 @@ class ZLocalSynapseIntegrationTest {
         composeRule.onNodeWithText("Sign in with password").performScrollTo().performClick()
 
         composeRule.waitUntil(timeoutMillis = 60_000) {
-            composeRule.onAllNodesWithText("Your encrypted conversations").fetchSemanticsNodes().isNotEmpty()
+            composeRule.onAllNodesWithText("Search conversations").fetchSemanticsNodes().isNotEmpty()
         }
-        composeRule.onNodeWithText("Your encrypted conversations").assertIsDisplayed()
+        composeRule.onNodeWithText("Search conversations").assertIsDisplayed()
         val repository = MatrixRepository.get(
             InstrumentationRegistry.getInstrumentation().targetContext,
         )
@@ -78,7 +80,7 @@ class ZLocalSynapseIntegrationTest {
         composeRule.onAllNodesWithText(unencryptedRoom.name).assertCountEquals(0)
         val message = "Hello Bob — this is an encrypted demo message."
         startBobReceiver()
-        composeRule.onNodeWithText("New chat").performClick()
+        composeRule.onNodeWithText("New chat", useUnmergedTree = true).performClick()
         composeRule.onNodeWithText("Matrix user ID").performTextInput("@bob:send.test")
         captureWalkthroughScreenshot("send-demo-create-chat.png")
         composeRule.onNodeWithText("Create").performClick()
@@ -96,7 +98,7 @@ class ZLocalSynapseIntegrationTest {
             composeRule.onAllNodesWithText("Message").fetchSemanticsNodes().isNotEmpty()
         }
         composeRule.onNodeWithText("Message").performTextInput(message)
-        composeRule.onNodeWithText("Send").performClick()
+        composeRule.onNodeWithContentDescription("Send").performClick()
         composeRule.waitUntil(timeoutMillis = 30_000) {
             composeRule.onAllNodesWithText(message).fetchSemanticsNodes().isNotEmpty()
         }
