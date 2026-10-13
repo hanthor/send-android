@@ -76,6 +76,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import org.matrix.rustcomponents.sdk.Room
 import org.matrix.rustcomponents.sdk.Timeline
+import io.element.android.call.ui.ElementCallOverlay
 import io.element.android.call.impl.ElementCallPictureInPicture
 import io.element.android.call.api.ElementCallController
 private val Lavender = Color(0xFFE8EEFF)
