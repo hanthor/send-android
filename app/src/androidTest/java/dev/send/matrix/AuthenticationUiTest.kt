@@ -29,6 +29,7 @@ class AuthenticationUiTest {
         composeRule.onNodeWithText("Use username and password").performScrollTo().performTouchInput { click() }
         composeRule.mainClock.advanceTimeBy(600)
         composeRule.onAllNodes(hasSetTextAction()).assertCountEquals(3)
+        composeRule.onAllNodes(hasSetTextAction()).get(0).performTextClearance()
         composeRule.onAllNodes(hasSetTextAction()).get(0).performTextInput("https://matrix.example.org")
         composeRule.onNodeWithText("Scan QR code").assertIsEnabled()
         composeRule.onNodeWithText("Continue with SSO").assertIsEnabled()
@@ -43,6 +44,7 @@ class AuthenticationUiTest {
         composeRule.onNodeWithText("Use username and password").performScrollTo().performTouchInput { click() }
         composeRule.mainClock.advanceTimeBy(600)
         // Bare server name: no https:// required.
+        composeRule.onAllNodes(hasSetTextAction()).get(0).performTextClearance()
         composeRule.onAllNodes(hasSetTextAction()).get(0).performTextInput("example.org")
         composeRule.onNodeWithText("Scan QR code").assertIsEnabled()
         composeRule.onNodeWithText("Continue with SSO").assertIsEnabled()
@@ -59,6 +61,7 @@ class AuthenticationUiTest {
         composeRule.onNodeWithText("Use username and password").performScrollTo().performTouchInput { click() }
         composeRule.mainClock.advanceTimeBy(600)
         composeRule.onAllNodes(hasSetTextAction()).assertCountEquals(3)
+        composeRule.onAllNodes(hasSetTextAction()).get(0).performTextClearance()
         composeRule.onAllNodes(hasSetTextAction()).get(0).performTextInput("http://matrix.example.org")
         composeRule.onAllNodes(hasSetTextAction()).get(1).performScrollTo().performTextInput("@alice:example.org")
         composeRule.onAllNodes(hasSetTextAction()).get(2).performScrollTo().performTextInput("not-a-real-password")
