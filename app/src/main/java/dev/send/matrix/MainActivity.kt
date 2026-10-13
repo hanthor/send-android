@@ -86,6 +86,7 @@ private val QuickReactions = listOf("👍", "❤️", "😂")
 
 class MainActivity : ComponentActivity() {
     private val repository by lazy { MatrixRepository.get(applicationContext) }
+    val ssoCallback = mutableStateOf<Uri?>(null)
     private var pipController: ElementCallController? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -114,6 +115,17 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        acceptSsoCallback(intent.data)
+    }
+
+    private fun acceptSsoCallback(uri: Uri?) {
+        if (uri?.scheme == "dev.send.matrix" && uri.host == "sso" && uri.path == "/callback") {
+            ssoCallback.value = uri
+        }
+    }
+}
 
 @Composable
 private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
