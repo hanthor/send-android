@@ -301,7 +301,8 @@ class MatrixRepository(context: Context) {
         require(recipient.startsWith("@") && recipient.indexOf(':') > 1 && !recipient.any(Char::isWhitespace)) {
             "Enter a Matrix user ID such as @alice:example.org."
         }
-        requireClient().createRoom(
+        val sdk = requireClient()
+        val roomId = sdk.createRoom(
             CreateRoomParameters(
                 name = null,
                 topic = null,
@@ -318,6 +319,10 @@ class MatrixRepository(context: Context) {
                 isSpace = false,
             ),
         )
+        val createdRoom = sdk.getRoom(roomId) ?: error("The encrypted conversation was created but could not be loaded.")
+        val matrixRoom = toMatrixRoom(createdRoom)
+        _joinedRooms.value = (_joinedRooms.value.filterNot { it.id == roomId } + matrixRoom)
+        roomId
     }
 
     suspend fun openEncryptedRoom(roomId: String): Room = withContext(Dispatchers.IO) {
