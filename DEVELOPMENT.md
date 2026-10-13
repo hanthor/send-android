@@ -5,6 +5,7 @@
 The optional Synapse service provides a disposable backend for account sign-in, encrypted direct-room creation, and message/reaction testing. It binds to the workstation loopback only; do not expose it to a public network.
 
 ```sh
+docker compose -f dev/matrix/compose.yaml run --rm synapse generate
 docker compose -f dev/matrix/compose.yaml up -d
 curl --fail http://127.0.0.1:8008/_matrix/client/versions
 docker compose -f dev/matrix/compose.yaml exec synapse \

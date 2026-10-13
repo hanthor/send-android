@@ -24,6 +24,7 @@ jobs:
       - name: Start disposable local Synapse backend
         run: |
           docker compose -f dev/matrix/compose.yaml config --quiet
+          docker compose -f dev/matrix/compose.yaml run --rm synapse generate
           docker compose -f dev/matrix/compose.yaml up -d
           ready=
           for attempt in $(seq 1 60); do
