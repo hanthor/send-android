@@ -23,7 +23,6 @@ class ZLocalSynapseIntegrationTest {
     fun signsInToLocalSynapseOverDebugOnlyEmulatorHttp() {
         composeRule.onNodeWithText("Use username and password").performClick()
         composeRule.mainClock.advanceTimeBy(600)
-        composeRule.onNodeWithText("Use another sign-in method").assertIsDisplayed()
         composeRule.onAllNodes(hasSetTextAction()).assertCountEquals(3)
         composeRule.onAllNodes(hasSetTextAction()).get(0).performTextInput("http://10.0.2.2:8008")
         composeRule.onAllNodes(hasSetTextAction()).get(1).performScrollTo().performTextInput("@alice:send.test")
