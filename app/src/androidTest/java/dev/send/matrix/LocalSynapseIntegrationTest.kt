@@ -45,11 +45,15 @@ class ZLocalSynapseIntegrationTest {
         composeRule.onNodeWithText("Matrix user ID").performTextInput("@bob:send.test")
         captureWalkthroughScreenshot("send-demo-create-chat.png")
         composeRule.onNodeWithText("Create").performClick()
+        val repository = MatrixRepository.get(
+            InstrumentationRegistry.getInstrumentation().targetContext,
+        )
         composeRule.waitUntil(timeoutMillis = 30_000) {
-            composeRule.onAllNodesWithText("Bob").fetchSemanticsNodes().isNotEmpty()
+            repository.joinedRooms.value.any { it.direct && it.encrypted }
         }
+        val demoRoom = repository.joinedRooms.value.first { it.direct && it.encrypted }
         captureWalkthroughScreenshot("send-demo-conversations.png")
-        composeRule.onNodeWithText("Bob").performClick()
+        composeRule.onNodeWithText(demoRoom.name).performClick()
         composeRule.waitUntil(timeoutMillis = 30_000) {
             composeRule.onAllNodesWithText("Message").fetchSemanticsNodes().isNotEmpty()
         }
