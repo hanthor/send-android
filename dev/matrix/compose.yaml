@@ -1,6 +1,6 @@
 services:
   synapse:
-    image: matrixdotorg/synapse:latest
+    image: matrixdotorg/synapse:v1.162.0
     environment:
       SYNAPSE_SERVER_NAME: send.test
       SYNAPSE_REPORT_STATS: "no"
