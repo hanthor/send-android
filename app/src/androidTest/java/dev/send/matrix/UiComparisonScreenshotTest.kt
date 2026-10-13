@@ -90,7 +90,7 @@ class UiComparisonScreenshotTest {
         }
 
         saveScreenshot("send-conversation-screen.png")
-        composeRule.onNodeWithText("Sent").assertIsDisplayed()
+        composeRule.onNodeWithText("Sent", substring = true).assertIsDisplayed()
         composeRule.onNodeWithText("Hey, are you free to talk?").performTouchInput {
             down(center)
             advanceEventTime(1_000)
