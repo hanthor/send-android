@@ -35,8 +35,8 @@ jobs:
             test_status=$?
             mkdir -p /tmp/send-ui-screenshots
             screenshot_status=0
-            adb pull /storage/emulated/0/Android/data/dev.send.matrix/files/send-home-screen.png /tmp/send-ui-screenshots/ || screenshot_status=$?
-            adb pull /storage/emulated/0/Android/data/dev.send.matrix/files/send-conversation-screen.png /tmp/send-ui-screenshots/ || screenshot_status=$?
+            adb pull /storage/emulated/0/Download/Send/send-home-screen.png /tmp/send-ui-screenshots/ || screenshot_status=$?
+            adb pull /storage/emulated/0/Download/Send/send-conversation-screen.png /tmp/send-ui-screenshots/ || screenshot_status=$?
             if [ "$test_status" -ne 0 ]; then exit "$test_status"; fi
             exit "$screenshot_status"
       - name: Upload Android instrumentation results

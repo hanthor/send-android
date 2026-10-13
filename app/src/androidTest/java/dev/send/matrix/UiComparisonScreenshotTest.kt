@@ -77,10 +77,26 @@ class UiComparisonScreenshotTest {
     private fun saveScreenshot(fileName: String) {
         composeRule.waitForIdle()
         val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val outputDirectory = context.getExternalFilesDir(null) ?: error("Emulator external storage is unavailable.")
-        val output = File(outputDirectory, fileName)
-        output.outputStream().use { stream ->
-            check(composeRule.onRoot().captureToImage().asAndroidBitmap().compress(android.graphics.Bitmap.CompressFormat.PNG, 100, stream))
+        val values = android.content.ContentValues().apply {
+            put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+            put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "image/png")
+            put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, "Download/Send")
+            put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1)
+        }
+        val resolver = context.contentResolver
+        val uri = resolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+            ?: error("Could not create screenshot output.")
+        try {
+            val output = resolver.openOutputStream(uri) ?: error("Could not open screenshot output.")
+            output.use { stream ->
+                check(composeRule.onRoot().captureToImage().asAndroidBitmap().compress(android.graphics.Bitmap.CompressFormat.PNG, 100, stream))
+            }
+            values.clear()
+            values.put(android.provider.MediaStore.MediaColumns.IS_PENDING, 0)
+            check(resolver.update(uri, values, null, null) == 1)
+        } catch (failure: Exception) {
+            resolver.delete(uri, null, null)
+            throw failure
         }
     }
 }
