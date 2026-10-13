@@ -57,6 +57,7 @@ class MatrixRepository(context: Context) {
     private val timelineItems = mutableListOf<org.matrix.rustcomponents.sdk.TimelineItem>()
     private val _joinedRooms = MutableStateFlow<List<MatrixRoom>>(emptyList())
     val joinedRooms: StateFlow<List<MatrixRoom>> = _joinedRooms.asStateFlow()
+    private val locallyCreatedRooms = mutableMapOf<String, MatrixRoom>()
     private val _roomListServiceState = MutableStateFlow(org.matrix.rustcomponents.sdk.RoomListServiceState.INITIAL)
     val roomListServiceState: StateFlow<org.matrix.rustcomponents.sdk.RoomListServiceState> = _roomListServiceState.asStateFlow()
     private val _messages = MutableStateFlow<List<MatrixMessage>>(emptyList())
@@ -184,6 +185,7 @@ class MatrixRepository(context: Context) {
         callSession = null
         client?.close()
         client = null
+        synchronized(locallyCreatedRooms) { locallyCreatedRooms.clear() }
         _joinedRooms.value = emptyList()
         timelineItems.clear()
         _messages.value = emptyList()
@@ -281,7 +283,7 @@ class MatrixRepository(context: Context) {
                                 org.matrix.rustcomponents.sdk.RoomListEntriesUpdate.Clear -> current.clear()
                             }
                         }
-                        _joinedRooms.value = current
+                        _joinedRooms.value = mergeLocallyCreatedRooms(current)
                     }
                 }
             },
@@ -293,8 +295,18 @@ class MatrixRepository(context: Context) {
         roomEntriesHandle = result.entriesStream()
     }
 
-    private suspend fun toMatrixRoom(room: Room): MatrixRoom =
-        MatrixRoom(room.id(), room.displayName().orEmpty().ifBlank { room.id() }, room.isEncrypted(), room.isDirect())
+    private suspend fun toMatrixRoom(room: Room): MatrixRoom {
+        val matrixRoom = MatrixRoom(room.id(), room.displayName().orEmpty().ifBlank { room.id() }, room.isEncrypted(), room.isDirect())
+        synchronized(locallyCreatedRooms) { locallyCreatedRooms.remove(matrixRoom.id) }
+        return matrixRoom
+    }
+
+    private fun mergeLocallyCreatedRooms(rooms: List<MatrixRoom>): List<MatrixRoom> {
+        synchronized(locallyCreatedRooms) {
+            val roomIds = rooms.mapTo(mutableSetOf()) { it.id }
+            return rooms + locallyCreatedRooms.values.filterNot { it.id in roomIds }
+        }
+    }
 
     suspend fun isDirectRoom(room: Room): Boolean = withContext(Dispatchers.IO) { room.isDirect() }
     suspend fun createEncryptedDirectRoom(matrixUserId: String): String = withContext(Dispatchers.IO) {
@@ -322,7 +334,10 @@ class MatrixRepository(context: Context) {
         )
         val displayName = recipient.substringAfter('@').substringBefore(':')
         val createdRoom = MatrixRoom(roomId, displayName, encrypted = true, direct = true)
-        _joinedRooms.value = (_joinedRooms.value.filterNot { it.id == roomId } + createdRoom)
+        synchronized(locallyCreatedRooms) {
+            if (_joinedRooms.value.none { it.id == roomId }) locallyCreatedRooms[roomId] = createdRoom
+            _joinedRooms.value = mergeLocallyCreatedRooms(_joinedRooms.value)
+        }
         roomId
     }
 
