@@ -10,47 +10,72 @@ import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.browser.customtabs.CustomTabsIntent
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
-import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.dynamicLightColorScheme
-import androidx.compose.material3.lightColorScheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.dynamicDarkColorScheme
+import androidx.compose.material3.dynamicLightColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -59,15 +84,20 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.text.style.TextAlign
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.sin
 import androidx.compose.ui.platform.LocalContext
-import android.text.format.DateUtils
+import androidx.compose.ui.platform.LocalDensity
 import androidx.core.content.ContextCompat
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
@@ -79,11 +109,62 @@ import org.matrix.rustcomponents.sdk.Timeline
 import io.element.android.call.ui.ElementCallOverlay
 import io.element.android.call.impl.ElementCallPictureInPicture
 import io.element.android.call.api.ElementCallController
-private val Lavender = Color(0xFFE8EEFF)
-private val Ink = Color(0xFF202124)
-private val Muted = Color(0xFF65676B)
-private val Canvas = Color(0xFFF7F8FA)
-private val QuickReactions = listOf("👍", "❤️", "😂")
+private val QuickReactions = listOf("👍", "❤️", "😂", "😮", "😢", "🙏")
+
+// Google Messages Material 3 avatar palettes (container to content pairs).
+private val AvatarPalettesLight = listOf(
+    Color(0xFFD3E3FD) to Color(0xFF041E49),
+    Color(0xFFC4EED0) to Color(0xFF072711),
+    Color(0xFFFFEFC3) to Color(0xFF3E2723),
+    Color(0xFFF9DEDC) to Color(0xFF410E0B),
+    Color(0xFFE8DEF8) to Color(0xFF1D192B),
+    Color(0xFFD0F0F7) to Color(0xFF00363D),
+)
+private val AvatarPalettesDark = listOf(
+    Color(0xFF0842A0) to Color(0xFFD3E3FD),
+    Color(0xFF0F5223) to Color(0xFFC4EED0),
+    Color(0xFF5B4300) to Color(0xFFFFEFC3),
+    Color(0xFF8C1D18) to Color(0xFFF9DEDC),
+    Color(0xFF4A4458) to Color(0xFFE8DEF8),
+    Color(0xFF004F58) to Color(0xFFD0F0F7),
+)
+private val GoogleLightColors = lightColorScheme(
+    primary = Color(0xFF0B57D0),
+    onPrimary = Color(0xFFFFFFFF),
+    primaryContainer = Color(0xFFD3E3FD),
+    onPrimaryContainer = Color(0xFF041E49),
+    secondaryContainer = Color(0xFFC2E7FF),
+    onSecondaryContainer = Color(0xFF001D35),
+    surface = Color(0xFFFDFCFB),
+    onSurface = Color(0xFF1F1F1F),
+    onSurfaceVariant = Color(0xFF444746),
+    surfaceContainerLow = Color(0xFFF7F9FC),
+    surfaceContainer = Color(0xFFF0F4F9),
+    surfaceContainerHigh = Color(0xFFE9EEF6),
+    surfaceContainerHighest = Color(0xFFDDE3EA),
+)
+private val GoogleDarkColors = darkColorScheme(
+    primary = Color(0xFFA8C7FA),
+    onPrimary = Color(0xFF062E6F),
+    primaryContainer = Color(0xFF0842A0),
+    onPrimaryContainer = Color(0xFFD3E3FD),
+    secondaryContainer = Color(0xFF004A77),
+    onSecondaryContainer = Color(0xFFC2E7FF),
+    surface = Color(0xFF131314),
+    onSurface = Color(0xFFE3E3E3),
+    onSurfaceVariant = Color(0xFFC4C7C5),
+    surfaceContainerLow = Color(0xFF1B1B1F),
+    surfaceContainer = Color(0xFF1E1F20),
+    surfaceContainerHigh = Color(0xFF282A2C),
+    surfaceContainerHighest = Color(0xFF333537),
+)
+
+@Composable
+private fun avatarPalette(name: String): Pair<Color, Color> {
+    val palettes = if (isSystemInDarkTheme()) AvatarPalettesDark else AvatarPalettesLight
+    val index = (name.hashCode().let { if (it == Int.MIN_VALUE) 0 else kotlin.math.abs(it) }) % palettes.size
+    return palettes[index]
+}
 
 class MainActivity : ComponentActivity() {
     private val repository by lazy { MatrixRepository.get(applicationContext) }
@@ -94,10 +175,13 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         acceptSsoCallback(intent?.data)
         setContent {
+            val dark = isSystemInDarkTheme()
             val colors = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                dynamicLightColorScheme(this)
+                if (dark) dynamicDarkColorScheme(this) else dynamicLightColorScheme(this)
+            } else if (dark) {
+                GoogleDarkColors
             } else {
-                lightColorScheme(primary = Color(0xFF0B57D0))
+                GoogleLightColors
             }
             MaterialTheme(colorScheme = colors) { SendApp(repository, this@MainActivity) }
         }
@@ -220,10 +304,10 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
         controller = callSession?.controller,
         style = sendCallStyle,
     ) { overlayModifier ->
-    Surface(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).then(overlayModifier), color = Canvas, contentColor = Ink) {
+    Surface(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).then(overlayModifier), color = MaterialTheme.colorScheme.surface, contentColor = MaterialTheme.colorScheme.onSurface) {
         when {
             loading -> Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("Connecting to Matrix…", color = Muted)
+                Text("Connecting to Matrix…", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 if (error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error)
             }
             !signedIn -> SignInScreen(
@@ -371,113 +455,276 @@ internal fun SignInScreen(
     onSsoLogin: () -> Unit,
     onLogin: () -> Unit,
 ) {
+    // Step 0 = Pixel welcome hero; Step 1 = homeserver & auth setup.
+    var step by rememberSaveable { mutableStateOf(if (homeserver.isNotBlank() || error.isNotBlank() || busy || ssoPending) 1 else 0) }
     var showPasswordLogin by rememberSaveable { mutableStateOf(false) }
     var showLegal by rememberSaveable { mutableStateOf(false) }
     val colors = MaterialTheme.colorScheme
 
-    Column(
-        Modifier.fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .imePadding()
-            .padding(horizontal = 24.dp, vertical = 28.dp),
+    androidx.activity.compose.BackHandler(enabled = step == 1 && !busy) { step = 0 }
+
+    Box(
+        modifier = Modifier.fillMaxSize().background(colors.surface).windowInsetsPadding(WindowInsets.safeDrawing).imePadding(),
     ) {
-        AnimatedVisibility(
-            visible = true,
-            enter = fadeIn(animationSpec = tween(420)) +
-                slideInVertically(initialOffsetY = { it / 14 }, animationSpec = tween(420)),
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            drawCircle(
+                color = colors.primaryContainer.copy(alpha = 0.35f),
+                radius = size.minDimension * 0.65f,
+                center = Offset(size.width * 0.85f, size.height * 0.1f),
+            )
+            drawCircle(
+                color = colors.secondaryContainer.copy(alpha = 0.25f),
+                radius = size.minDimension * 0.55f,
+                center = Offset(size.width * 0.15f, size.height * 0.35f),
+            )
+        }
+        AnimatedContent(
+            targetState = step,
+            transitionSpec = {
+                if (targetState > initialState) {
+                    (slideInHorizontally(tween(380, easing = FastOutSlowInEasing)) { it / 2 } + fadeIn(tween(300)))
+                        .togetherWith(slideOutHorizontally(tween(380, easing = FastOutSlowInEasing)) { -it / 3 } + fadeOut(tween(200)))
+                } else {
+                    (slideInHorizontally(tween(380, easing = FastOutSlowInEasing)) { -it / 3 } + fadeIn(tween(300)))
+                        .togetherWith(slideOutHorizontally(tween(380, easing = FastOutSlowInEasing)) { it / 2 } + fadeOut(tween(200)))
+                }.using(SizeTransform(clip = false))
+            },
+            label = "OnboardingStepTransition",
+        ) { currentStep ->
+            if (currentStep == 0) {
+                OnboardingHeroStep(onHomeserver = onHomeserver, homeserverBlank = homeserver.isBlank(), onNext = { step = 1 }, onLegal = { showLegal = true })
+            } else {
+                OnboardingSetupStep(
+                    homeserver = homeserver,
+                    onHomeserver = onHomeserver,
+                    user = user,
+                    onUser = onUser,
+                    password = password,
+                    onPassword = onPassword,
+                    busy = busy,
+                    error = error,
+                    onCancel = onCancel,
+                    ssoPending = ssoPending,
+                    onCancelSso = onCancelSso,
+                    onQrLogin = onQrLogin,
+                    onSsoLogin = onSsoLogin,
+                    onLogin = onLogin,
+                    onBack = { step = 0 },
+                    onLegal = { showLegal = true },
+                )
+            }
+        }
+    }
+    if (showLegal) {
+        LegalNoticesDialog(onDismiss = { showLegal = false })
+    }
+}
+
+@Composable
+private fun OnboardingHeroStep(onHomeserver: (String) -> Unit, homeserverBlank: Boolean, onNext: () -> Unit, onLegal: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    Column(
+        modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 20.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Surface(
+            shape = RoundedCornerShape(50),
+            color = colors.surfaceContainerHigh.copy(alpha = 0.85f),
+            modifier = Modifier.padding(top = 8.dp),
         ) {
+            Row(modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(imageVector = Icons.Filled.Lock, contentDescription = null, tint = colors.primary, modifier = Modifier.size(14.dp))
+                Spacer(Modifier.width(6.dp))
+                Text(text = "Send · Matrix E2EE", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold, color = colors.onSurface)
+            }
+        }
+        Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+            PixelOnboardingHero()
+        }
+        Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                text = "Messages that stay yours",
+                style = MaterialTheme.typography.displaySmall,
+                fontWeight = FontWeight.SemiBold,
+                textAlign = TextAlign.Center,
+                color = colors.onSurface,
+            )
+            Spacer(Modifier.height(12.dp))
+            Text(
+                text = "Fast, expressive, end-to-end encrypted messaging powered by your own Matrix homeserver.",
+                style = MaterialTheme.typography.bodyLarge,
+                color = colors.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(horizontal = 12.dp),
+            )
+            Spacer(Modifier.height(28.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                FeatureChip("End-to-End Encrypted")
+                FeatureChip("Open Matrix Standard")
+            }
+            Spacer(Modifier.height(28.dp))
+            Button(
+                onClick = {
+                    if (homeserverBlank) onHomeserver("matrix.org")
+                    onNext()
+                },
+                modifier = Modifier.fillMaxWidth().height(56.dp),
+                shape = RoundedCornerShape(28.dp),
+            ) {
+                Text(text = "Get started", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            }
+            Spacer(Modifier.height(8.dp))
+            TextButton(onClick = onLegal) {
+                Text(text = "About & open-source licenses", style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
+            }
+        }
+    }
+}
+
+@Composable
+private fun OnboardingSetupStep(
+    homeserver: String,
+    onHomeserver: (String) -> Unit,
+    user: String,
+    onUser: (String) -> Unit,
+    password: String,
+    onPassword: (String) -> Unit,
+    busy: Boolean,
+    error: String,
+    onCancel: () -> Unit,
+    ssoPending: Boolean,
+    onCancelSso: () -> Unit,
+    onQrLogin: () -> Unit,
+    onSsoLogin: () -> Unit,
+    onLogin: () -> Unit,
+    onBack: () -> Unit,
+    onLegal: () -> Unit,
+) {
+    var showPasswordLogin by rememberSaveable { mutableStateOf(false) }
+    val colors = MaterialTheme.colorScheme
+    // Password-manager path: a full Matrix ID in the username field supplies the server.
+    val serverReady = effectiveServerInput(homeserver, user).isNotBlank()
+    Column(
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 16.dp),
+    ) {
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(
+                onClick = onBack,
+                enabled = !busy,
+                modifier = Modifier.size(40.dp).clip(CircleShape).background(colors.surfaceContainerHigh),
+            ) {
+                Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = colors.onSurface)
+            }
+            Spacer(Modifier.width(12.dp))
+            SendBrandLogo(size = 36.dp)
+            Spacer(Modifier.width(10.dp))
             Column {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Surface(
-                        modifier = Modifier.size(54.dp),
-                        shape = RoundedCornerShape(18.dp),
-                        color = colors.primaryContainer,
-                    ) {
-                        androidx.compose.foundation.layout.Box(contentAlignment = Alignment.Center) {
-                            Text("S", color = colors.onPrimaryContainer, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+                Text(text = "Send", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text(text = "Matrix Account Setup", style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant)
+            }
+        }
+        Spacer(Modifier.height(28.dp))
+        Text(text = "Connect your homeserver", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
+        Text(
+            text = "Choose where your encrypted conversations live, then sign in with a QR code, SSO, or password.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = colors.onSurfaceVariant,
+            modifier = Modifier.padding(top = 6.dp, bottom = 20.dp),
+        )
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(28.dp),
+            color = colors.surfaceContainerLow,
+            border = BorderStroke(1.dp, colors.surfaceContainerHighest),
+        ) {
+            Column(modifier = Modifier.padding(20.dp)) {
+                Text(text = "Server", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, color = colors.primary)
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(bottom = 12.dp)) {
+                    listOf("matrix.org" to "https://matrix.org", "element.io" to "https://matrix-client.matrix.org").forEach { (label, url) ->
+                        val host = url.removePrefix("https://").removePrefix("http://").trimEnd('/')
+                        val typed = homeserver.trim().removePrefix("https://").removePrefix("http://").trimEnd('/')
+                        val selected = typed.equals(url, ignoreCase = true) || typed.equals(host, ignoreCase = true)
+                        Surface(
+                            modifier = Modifier.clip(RoundedCornerShape(50)).clickable(enabled = !busy) { onHomeserver(url) },
+                            shape = RoundedCornerShape(50),
+                            color = if (selected) colors.secondaryContainer else colors.surfaceContainerHigh,
+                        ) {
+                            Text(
+                                text = label,
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                                color = if (selected) colors.onSecondaryContainer else colors.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
+                            )
                         }
                     }
-                    Column(Modifier.padding(start = 14.dp)) {
-                        Text("Send", fontSize = 25.sp, fontWeight = FontWeight.SemiBold)
-                        Text("Private, thoughtful messaging", color = Muted, fontSize = 13.sp)
-                    }
                 }
-
-                Text(
-                    "Your conversations,\nwith room to breathe.",
-                    style = MaterialTheme.typography.displaySmall,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.padding(top = 34.dp),
-                )
-                Text(
-                    "Connect to your Matrix homeserver. Your messages stay end-to-end encrypted.",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = Muted,
-                    modifier = Modifier.padding(top = 12.dp, bottom = 28.dp),
-                )
-
-                Text(
-                    "HOMESERVER",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = Muted,
-                    modifier = Modifier.padding(start = 4.dp, bottom = 6.dp),
-                )
                 OutlinedTextField(
                     value = homeserver,
                     onValueChange = onHomeserver,
-                    label = { Text("Homeserver") },
-                    placeholder = { Text("https://matrix.example.org") },
+                    label = { Text("Server address") },
+                    placeholder = { Text("reilly.asia or @you:reilly.asia") },
+                    supportingText = { Text("Bare server names work — connection details are looked up automatically.") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                     enabled = !busy,
                     shape = RoundedCornerShape(18.dp),
                 )
+                Spacer(Modifier.height(20.dp))
                 Button(
                     onClick = onQrLogin,
-                    enabled = !busy && homeserver.isNotBlank(),
-                    modifier = Modifier.fillMaxWidth().padding(top = 16.dp).height(56.dp),
-                    shape = RoundedCornerShape(18.dp),
+                    enabled = !busy && serverReady,
+                    modifier = Modifier.fillMaxWidth().height(54.dp),
+                    shape = RoundedCornerShape(27.dp),
                 ) {
                     if (busy) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(19.dp),
-                            strokeWidth = 2.dp,
-                            color = colors.onPrimary,
-                        )
-                        Text("  Connecting…")
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.5.dp, color = colors.onPrimary)
+                        Spacer(Modifier.width(10.dp))
+                        Text("Connecting…", fontSize = 16.sp, fontWeight = FontWeight.Medium)
                     } else {
-                        Text("Scan QR code", fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                        Text("Scan QR code", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
                 OutlinedButton(
                     onClick = onSsoLogin,
-                    enabled = !busy && homeserver.isNotBlank(),
-                    modifier = Modifier.fillMaxWidth().padding(top = 10.dp).height(54.dp),
-                    shape = RoundedCornerShape(18.dp),
+                    enabled = !busy && serverReady,
+                    modifier = Modifier.fillMaxWidth().padding(top = 10.dp).height(52.dp),
+                    shape = RoundedCornerShape(26.dp),
                 ) {
-                    Text("Continue with SSO", fontSize = 15.sp)
+                    Text("Continue with SSO", fontSize = 15.sp, fontWeight = FontWeight.Medium)
                 }
-
-                TextButton(
-                    onClick = { showPasswordLogin = !showPasswordLogin },
-                    enabled = !busy,
-                    modifier = Modifier.align(Alignment.CenterHorizontally).padding(top = 8.dp),
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(24.dp),
+            color = colors.surfaceContainerLow,
+            border = BorderStroke(1.dp, colors.surfaceContainerHighest),
+        ) {
+            Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().clickable(enabled = !busy) { showPasswordLogin = !showPasswordLogin }.padding(vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(if (showPasswordLogin) "Use another sign-in method" else "Use username and password")
+                    Text(text = "Use username & password", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    Text(text = if (showPasswordLogin) "−" else "+", style = MaterialTheme.typography.titleMedium, color = colors.onSurfaceVariant)
                 }
-
                 AnimatedVisibility(
                     visible = showPasswordLogin,
                     enter = fadeIn(tween(220)) + expandVertically(expandFrom = Alignment.Top, animationSpec = tween(260)),
                     exit = fadeOut(tween(150)) + shrinkVertically(shrinkTowards = Alignment.Top, animationSpec = tween(200)),
                 ) {
-                    Column {
+                    Column(modifier = Modifier.padding(bottom = 10.dp)) {
                         OutlinedTextField(
                             value = user,
                             onValueChange = onUser,
                             label = { Text("Username") },
+                            placeholder = { Text("you or @you:reilly.asia") },
                             singleLine = true,
-                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                            modifier = Modifier.fillMaxWidth(),
                             enabled = !busy,
                             shape = RoundedCornerShape(18.dp),
                         )
@@ -493,44 +740,160 @@ internal fun SignInScreen(
                         )
                         Button(
                             onClick = onLogin,
-                            enabled = !busy && homeserver.isNotBlank() && user.isNotBlank() && password.isNotBlank(),
-                            modifier = Modifier.fillMaxWidth().padding(top = 14.dp).height(54.dp),
-                            shape = RoundedCornerShape(18.dp),
+                            enabled = !busy && serverReady && user.isNotBlank() && password.isNotBlank(),
+                            modifier = Modifier.fillMaxWidth().padding(top = 14.dp).height(52.dp),
+                            shape = RoundedCornerShape(26.dp),
                         ) {
                             Text("Sign in with password")
                         }
                     }
                 }
+            }
+        }
+        if (error.isNotBlank()) {
+            Surface(modifier = Modifier.fillMaxWidth().padding(top = 14.dp), shape = RoundedCornerShape(16.dp), color = colors.errorContainer) {
+                Text(error, color = colors.onErrorContainer, modifier = Modifier.padding(16.dp))
+            }
+        }
+        if (busy) {
+            TextButton(onClick = onCancel, modifier = Modifier.align(Alignment.CenterHorizontally)) { Text("Cancel sign-in") }
+        }
+        if (ssoPending) {
+            TextButton(onClick = onCancelSso, modifier = Modifier.align(Alignment.CenterHorizontally)) { Text("Cancel SSO sign-in") }
+        }
+        TextButton(onClick = onLegal, modifier = Modifier.align(Alignment.CenterHorizontally)) { Text("About & licenses") }
+    }
+}
 
-                if (error.isNotBlank()) {
-                    Surface(
-                        modifier = Modifier.fillMaxWidth().padding(top = 14.dp),
-                        shape = RoundedCornerShape(16.dp),
-                        color = colors.errorContainer,
-                    ) {
-                        Text(error, color = colors.onErrorContainer, modifier = Modifier.padding(16.dp))
-                    }
-                }
-                if (busy) {
-                    TextButton(onClick = onCancel, modifier = Modifier.align(Alignment.CenterHorizontally)) {
-                        Text("Cancel sign-in")
-                    }
-                }
-                if (ssoPending) {
-                    TextButton(onClick = onCancelSso, modifier = Modifier.align(Alignment.CenterHorizontally)) {
-                        Text("Cancel SSO sign-in")
-                    }
-                }
-                TextButton(onClick = { showLegal = true }, modifier = Modifier.align(Alignment.CenterHorizontally)) {
-                    Text("About & licenses")
+@Composable
+private fun FeatureChip(label: String) {
+    val colors = MaterialTheme.colorScheme
+    Surface(shape = RoundedCornerShape(50), color = colors.surfaceContainerHigh) {
+        Text(text = label, style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant, modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp))
+    }
+}
+
+@Composable
+internal fun SendBrandLogo(size: androidx.compose.ui.unit.Dp, modifier: Modifier = Modifier) {
+    // Google-style vector mark: two overlapping translucent bubbles with a darker
+    // lens intersection, drawn dynamically in Material You theme colors.
+    val colors = MaterialTheme.colorScheme
+    Canvas(modifier = modifier.size(size)) {
+        val w = this.size.width
+        val h = this.size.height
+        val radius = 0.31f * w
+        val leftCenter = Offset(0.38f * w, 0.44f * h)
+        val rightCenter = Offset(0.62f * w, 0.44f * h)
+        drawCircle(color = colors.primary.copy(alpha = 0.82f), radius = radius, center = leftCenter)
+        drawCircle(color = colors.tertiary.copy(alpha = 0.82f), radius = radius, center = rightCenter)
+        drawCircle(color = colors.primary.copy(alpha = 0.55f), radius = radius * 0.52f, center = Offset((leftCenter.x + rightCenter.x) / 2f, (leftCenter.y + rightCenter.y) / 2f))
+        val tailPath = Path().apply {
+            moveTo(0.30f * w, 0.78f * h)
+            lineTo(0.42f * w, 0.78f * h)
+            lineTo(0.33f * w, 0.94f * h)
+            close()
+        }
+        drawPath(path = tailPath, color = colors.primary.copy(alpha = 0.82f))
+        val shield = Offset(0.74f * w, 0.76f * h)
+        val shieldR = 0.16f * w
+        drawCircle(color = colors.surface, radius = shieldR * 1.35f, center = shield)
+        drawCircle(color = colors.primary, radius = shieldR, center = shield)
+        drawLine(
+            color = colors.onPrimary,
+            start = Offset(shield.x - shieldR * 0.35f, shield.y),
+            end = Offset(shield.x - shieldR * 0.02f, shield.y + shieldR * 0.35f),
+            strokeWidth = shieldR * 0.28f,
+            cap = StrokeCap.Round,
+        )
+        drawLine(
+            color = colors.onPrimary,
+            start = Offset(shield.x - shieldR * 0.02f, shield.y + shieldR * 0.35f),
+            end = Offset(shield.x + shieldR * 0.42f, shield.y - shieldR * 0.32f),
+            strokeWidth = shieldR * 0.28f,
+            cap = StrokeCap.Round,
+        )
+        drawRoundRect(
+            color = colors.outline.copy(alpha = 0.35f),
+            topLeft = Offset(0.06f * w, 0.06f * h),
+            size = Size(0.88f * w, 0.88f * h),
+            cornerRadius = CornerRadius(0.26f * w, 0.26f * h),
+            style = Stroke(width = (0.035f * w).coerceAtLeast(2f)),
+        )
+    }
+}
+
+@Composable
+internal fun PixelOnboardingHero(modifier: Modifier = Modifier) {
+    // Pixel hero: rotating 8-sided Material scallop, sinusoidally bobbing orbital
+    // chat bubbles, and a softly orbiting E2EE lock badge.
+    val colors = MaterialTheme.colorScheme
+    val transition = rememberInfiniteTransition(label = "PixelHero")
+    val rotation by transition.animateFloat(initialValue = 0f, targetValue = 360f, animationSpec = infiniteRepeatable(animation = tween(24000, easing = LinearEasing), repeatMode = RepeatMode.Restart), label = "ScallopRotation")
+    val bobA by transition.animateFloat(initialValue = -1f, targetValue = 1f, animationSpec = infiniteRepeatable(animation = tween(1800, easing = FastOutSlowInEasing), repeatMode = RepeatMode.Reverse), label = "BobA")
+    val bobB by transition.animateFloat(initialValue = 1f, targetValue = -1f, animationSpec = infiniteRepeatable(animation = tween(2200, easing = FastOutSlowInEasing), repeatMode = RepeatMode.Reverse), label = "BobB")
+    val orbit by transition.animateFloat(initialValue = 0f, targetValue = (2f * PI).toFloat(), animationSpec = infiniteRepeatable(animation = tween(9000, easing = LinearEasing), repeatMode = RepeatMode.Restart), label = "LockOrbit")
+    Box(modifier = modifier.size(280.dp), contentAlignment = Alignment.Center) {
+        Canvas(modifier = Modifier.fillMaxSize().graphicsLayer { rotationZ = rotation }) {
+            val cx = size.width / 2f
+            val cy = size.height / 2f
+            val baseR = size.minDimension * 0.38f
+            val points = 8
+            val scallop = Path()
+            val steps = points * 16
+            for (i in 0..steps) {
+                val angle = (i.toFloat() / steps) * 2f * PI.toFloat()
+                val lobe = (0.5f + 0.5f * cos(points * angle)).toFloat()
+                val r = baseR * (0.86f + 0.14f * lobe)
+                val x = cx + r * cos(angle).toFloat()
+                val y = cy + r * sin(angle).toFloat()
+                if (i == 0) scallop.moveTo(x, y) else scallop.lineTo(x, y)
+            }
+            scallop.close()
+            drawPath(path = scallop, color = colors.primaryContainer.copy(alpha = 0.75f))
+            rotate(degrees = 22.5f) {
+                drawPath(path = scallop, color = colors.secondaryContainer.copy(alpha = 0.35f))
+            }
+        }
+        val bubbleOffsetA = (bobA * 10f).dp
+        val bubbleOffsetB = (bobB * 12f).dp
+        Surface(
+            shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp, bottomStart = 4.dp, bottomEnd = 20.dp),
+            color = colors.surfaceContainerHigh,
+            tonalElevation = 2.dp,
+            modifier = Modifier.align(Alignment.TopStart).padding(top = 36.dp, start = 8.dp).offset(y = bubbleOffsetA),
+        ) {
+            Text(text = "Hey, are we still on? ✨", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp))
+        }
+        Surface(
+            shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp, bottomStart = 20.dp, bottomEnd = 4.dp),
+            color = colors.primary,
+            contentColor = colors.onPrimary,
+            tonalElevation = 2.dp,
+            modifier = Modifier.align(Alignment.BottomEnd).padding(bottom = 52.dp, end = 4.dp).offset(y = bubbleOffsetB),
+        ) {
+            Text(text = "Absolutely 🙌", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp))
+        }
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            val orbitR = with(LocalDensity.current) { 96.dp.toPx() }
+            Surface(
+                shape = CircleShape,
+                color = colors.primary,
+                contentColor = colors.onPrimary,
+                tonalElevation = 4.dp,
+                modifier = Modifier.graphicsLayer {
+                    translationX = cos(orbit) * orbitR
+                    translationY = sin(orbit) * orbitR
+                }.size(44.dp),
+            ) {
+                Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                    Icon(imageVector = Icons.Filled.Lock, contentDescription = "End-to-end encrypted", modifier = Modifier.size(20.dp))
                 }
             }
         }
-    }
-    if (showLegal) {
-        LegalNoticesDialog(onDismiss = { showLegal = false })
+        SendBrandLogo(size = 64.dp, modifier = Modifier.align(Alignment.Center))
     }
 }
+
 
 @Composable
 internal fun HomeScreen(
@@ -544,34 +907,72 @@ internal fun HomeScreen(
     var showingNewChat by rememberSaveable { mutableStateOf(false) }
     var matrixUserId by rememberSaveable { mutableStateOf("") }
     var showLegal by rememberSaveable { mutableStateOf(false) }
-    Column(Modifier.fillMaxSize().padding(horizontal = 22.dp, vertical = 28.dp)) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text("Send", fontSize = 31.sp, fontWeight = FontWeight.SemiBold)
-                Text("Your encrypted conversations", color = Muted, modifier = Modifier.padding(top = 4.dp))
-            }
-            Button(onClick = { showingNewChat = true }, shape = RoundedCornerShape(26.dp)) {
-                Text("New chat")
-            }
-        }
-        if (error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 10.dp))
-        if (notice.isNotBlank()) Text(notice, color = Muted, modifier = Modifier.padding(top = 10.dp))
-        if (rooms.isEmpty()) Text("No conversations are available yet.", color = Muted, modifier = Modifier.padding(top = 24.dp))
-        else if (rooms.any { !it.encrypted }) {
-            Text("Unencrypted rooms are hidden. Send only opens end-to-end encrypted conversations.", color = Muted, modifier = Modifier.padding(top = 20.dp))
-        }
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.padding(top = 14.dp)) {
-            items(rooms.filter { it.encrypted }, key = { it.id }) { chat ->
-                Row(Modifier.fillMaxWidth().clickable { onOpen(chat) }.padding(vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Surface(Modifier.size(48.dp), shape = CircleShape, color = Lavender) { Initial(chat.name) }
-                    Column(Modifier.weight(1f).padding(start = 14.dp)) {
-                        Text(chat.name, fontWeight = FontWeight.Medium, fontSize = 17.sp)
-                        Text("End-to-end encrypted", color = Muted, fontSize = 13.sp)
+    var query by rememberSaveable { mutableStateOf("") }
+    val encryptedRooms = rooms.filter { it.encrypted }
+    val visibleRooms = if (query.isBlank()) encryptedRooms else encryptedRooms.filter { it.name.contains(query, ignoreCase = true) }
+    Scaffold(
+        containerColor = MaterialTheme.colorScheme.surface,
+        topBar = {
+            // Google Messages floating pill search bar: 56.dp, 28.dp corners, surfaceContainerHigh.
+            Surface(
+                modifier = Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp).height(56.dp),
+                shape = RoundedCornerShape(28.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            ) {
+                Row(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(imageVector = Icons.Filled.Search, contentDescription = "Search", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(modifier = Modifier.width(16.dp))
+                    TextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        placeholder = { Text("Search conversations") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f),
+                        colors = TextFieldDefaults.colors(
+                            focusedContainerColor = Color.Transparent,
+                            unfocusedContainerColor = Color.Transparent,
+                            focusedIndicatorColor = Color.Transparent,
+                            unfocusedIndicatorColor = Color.Transparent,
+                        ),
+                    )
+                    IconButton(onClick = { showLegal = true }) {
+                        Icon(imageVector = Icons.Filled.AccountCircle, contentDescription = "Profile", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(30.dp))
                     }
                 }
             }
+        },
+        floatingActionButton = {
+            ExtendedFloatingActionButton(
+                onClick = { showingNewChat = true },
+                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                shape = RoundedCornerShape(16.dp),
+                icon = { Icon(Icons.Filled.Edit, contentDescription = null) },
+                text = { Text("New chat") },
+            )
+        },
+    ) { innerPadding ->
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(innerPadding),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 8.dp),
+        ) {
+            if (error.isNotBlank()) item { Text(error, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) }
+            if (notice.isNotBlank()) item { Text(notice, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) }
+            if (visibleRooms.isEmpty()) {
+                item {
+                    Text(
+                        if (encryptedRooms.isNotEmpty()) "No conversations match “$query”." else if (rooms.any { !it.encrypted }) "Unencrypted rooms are hidden. Send only opens end-to-end encrypted conversations." else "No conversations are available yet.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 24.dp),
+                    )
+                }
+            } else {
+                items(visibleRooms, key = { it.id }) { chat ->
+                    ConversationRow(name = chat.name, snippet = "End-to-end encrypted", timestamp = "›", onClick = { onOpen(chat) })
+                }
+            }
         }
-        TextButton(onClick = { showLegal = true }) { Text("About & licenses") }
     }
     if (showLegal) {
         LegalNoticesDialog(onDismiss = { showLegal = false })
@@ -610,9 +1011,44 @@ internal fun HomeScreen(
 }
 
 @Composable
-private fun Initial(name: String) {
-    androidx.compose.foundation.layout.Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Text(name.take(1), color = Color(0xFF433675), fontSize = 19.sp, fontWeight = FontWeight.Medium)
+private fun ConversationRow(name: String, snippet: String, timestamp: String, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().clickable { onClick() }.padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        val (avatarBg, avatarFg) = avatarPalette(name)
+        Box(
+            modifier = Modifier.size(48.dp).background(avatarBg, CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = name.firstOrNull()?.uppercase().orEmpty(),
+                style = MaterialTheme.typography.titleMedium,
+                color = avatarFg,
+            )
+        }
+        Spacer(modifier = Modifier.width(16.dp))
+        androidx.compose.foundation.layout.Column(modifier = Modifier.weight(1f)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = name,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(text = timestamp, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = snippet,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+            )
+        }
     }
 }
 
@@ -633,83 +1069,182 @@ internal fun ConversationScreen(
 ) {
     var reactionTargetId by remember { mutableStateOf<String?>(null) }
     val context = LocalContext.current
-
-    Column(Modifier.fillMaxSize().imePadding().padding(horizontal = 18.dp, vertical = 20.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = onBack) { Text("‹", fontSize = 28.sp) }
-            Column(Modifier.weight(1f)) {
-                Text(title, fontWeight = FontWeight.Medium, fontSize = 18.sp)
-                Text("🔒  End-to-end encrypted", fontSize = 12.sp, color = Muted)
-            }
-            if (isDirect) {
-                TextButton(onClick = onAudioCall) { Text("Call") }
-            }
-        }
-        TextButton(onClick = onOlder, modifier = Modifier.align(Alignment.CenterHorizontally)) {
-            Text("Load older messages")
-        }
-        LazyColumn(
-            Modifier.weight(1f).fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-            reverseLayout = true,
-        ) {
-            items(messages.asReversed(), key = { it.id }) { message ->
-                Column(Modifier.fillMaxWidth(), horizontalAlignment = if (message.own) Alignment.End else Alignment.Start) {
-                    androidx.compose.foundation.layout.Box {
-                        Surface(
-                            modifier = Modifier.combinedClickable(
-                                onClick = {},
-                                onLongClick = { reactionTargetId = message.id },
-                            ),
-                            color = if (message.own) Lavender else Color(0xFFE9E5F4),
-                            shape = RoundedCornerShape(18.dp),
-                        ) {
-                            Text(message.text, Modifier.padding(horizontal = 15.dp, vertical = 11.dp))
+    androidx.activity.compose.BackHandler { onBack() }
+    Scaffold(
+        containerColor = MaterialTheme.colorScheme.surface,
+        topBar = {
+            Surface(color = MaterialTheme.colorScheme.surface, modifier = Modifier.statusBarsPadding()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    IconButton(onClick = onBack) {
+                        Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                    Box(
+                        modifier = Modifier.size(40.dp).background(MaterialTheme.colorScheme.secondaryContainer, CircleShape),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = title.firstOrNull()?.toString().orEmpty(),
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    androidx.compose.foundation.layout.Column(modifier = Modifier.weight(1f)) {
+                        Text(title, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface, maxLines = 1)
+                        Text("End-to-end encrypted", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    if (isDirect) {
+                        IconButton(onClick = onAudioCall) {
+                            Icon(imageVector = Icons.Filled.Call, contentDescription = "Call")
                         }
+                    }
+                }
+            }
+        },
+        bottomBar = {
+            Surface(color = MaterialTheme.colorScheme.surface, modifier = Modifier.imePadding()) {
+                androidx.compose.foundation.layout.Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                    if (error.isNotBlank()) {
+                        Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(bottom = 6.dp))
+                    }
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        TextField(
+                            value = draft,
+                            onValueChange = onDraft,
+                            placeholder = { Text("Message") },
+                            modifier = Modifier.weight(1f).heightIn(min = 48.dp),
+                            shape = RoundedCornerShape(24.dp),
+                            maxLines = 4,
+                            colors = TextFieldDefaults.colors(
+                                focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                                unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                                focusedIndicatorColor = Color.Transparent,
+                                unfocusedIndicatorColor = Color.Transparent,
+                            ),
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        FilledIconButton(onClick = onSend, enabled = draft.isNotBlank()) {
+                            Icon(imageVector = Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
+                        }
+                    }
+                }
+            }
+        },
+    ) { innerPadding ->
+        androidx.compose.foundation.layout.Column(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
+            TextButton(onClick = onOlder, modifier = Modifier.align(Alignment.CenterHorizontally)) {
+                Text("Load older messages")
+            }
+            LazyColumn(
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                reverseLayout = true,
+            ) {
+                val reversed = messages.asReversed()
+                items(reversed.size, key = { reversed[it].id }) { index ->
+                    val message = reversed[index]
+                    // Grouping is computed in chronological order: neighbours are the adjacent
+                    // items in the non-reversed list, i.e. reversed neighbours flipped.
+                    val chronological = messages
+                    val chronoIndex = chronological.indexOfFirst { it.id == message.id }
+                    val prevSame = chronoIndex > 0 && chronological[chronoIndex - 1].own == message.own
+                    val nextSame = chronoIndex < chronological.lastIndex && chronological[chronoIndex + 1].own == message.own
+                    val isFirstInGroup = !prevSame
+                    val isLastInGroup = !nextSame
+                    androidx.compose.foundation.layout.Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalAlignment = if (message.own) Alignment.End else Alignment.Start,
+                    ) {
+                        MessageBubble(
+                            text = message.text,
+                            isFromMe = message.own,
+                            isFirstInGroup = isFirstInGroup,
+                            isLastInGroup = isLastInGroup,
+                            onLongPress = { reactionTargetId = message.id },
+                        )
                         DropdownMenu(
                             expanded = reactionTargetId == message.id,
                             onDismissRequest = { reactionTargetId = null },
+                            shape = RoundedCornerShape(24.dp),
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
                         ) {
-                            QuickReactions.forEach { emoji ->
-                                DropdownMenuItem(
-                                    text = { Text(emoji) },
-                                    onClick = {
-                                        reactionTargetId = null
-                                        onReact(message.id, emoji)
-                                    },
+                            // Horizontal emoji bar, Messages-style.
+                            Row(modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
+                                QuickReactions.forEach { emoji ->
+                                    TextButton(
+                                        onClick = {
+                                            reactionTargetId = null
+                                            onReact(message.id, emoji)
+                                        },
+                                    ) {
+                                        Text(emoji, fontSize = 20.sp)
+                                    }
+                                }
+                            }
+                        }
+                        if (message.reactions.isNotEmpty()) {
+                            // Overlapping rounded reaction pill at the bubble's bottom corner.
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = MaterialTheme.colorScheme.surfaceContainerLow,
+                                tonalElevation = 1.dp,
+                                modifier = Modifier.padding(horizontal = 20.dp).offset(y = (-8).dp),
+                            ) {
+                                Text(
+                                    message.reactions.joinToString(" "),
+                                    fontSize = 12.sp,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
                                 )
                             }
                         }
-                    }
-                    if (message.reactions.isNotEmpty()) {
-                        Text(message.reactions.joinToString(" "), color = Muted, fontSize = 12.sp)
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            DateUtils.formatDateTime(context, message.timestampMillis, DateUtils.FORMAT_SHOW_TIME),
-                            color = Muted,
-                            fontSize = 11.sp,
-                        )
-                        if (message.own) Text(" · Sent", color = Muted, fontSize = 11.sp)
+                        if (isLastInGroup) {
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp)) {
+                                Text(
+                                    DateUtils.formatDateTime(context, message.timestampMillis, DateUtils.FORMAT_SHOW_TIME),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 11.sp,
+                                )
+                                if (message.own) Text(" · Sent", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
+                            }
+                        }
                     }
                 }
             }
         }
-        if (error.isNotBlank()) {
-            Text(error, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(vertical = 6.dp))
-        }
-        Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(
-                value = draft,
-                onValueChange = onDraft,
-                placeholder = { Text("Message") },
-                modifier = Modifier.weight(1f),
-                shape = RoundedCornerShape(26.dp),
-                maxLines = 4,
-            )
-            TextButton(onClick = onSend, enabled = draft.isNotBlank(), modifier = Modifier.padding(start = 4.dp)) {
-                Text("Send")
-            }
+    }
+}
+
+@Composable
+fun MessageBubble(text: String, isFromMe: Boolean, isFirstInGroup: Boolean, isLastInGroup: Boolean, onLongPress: () -> Unit = {}) {
+    // Google Messages grouped corner logic: outer corners 20.dp, adjacent-to-group corners 4.dp.
+    val shape = if (isFromMe) {
+        RoundedCornerShape(
+            topStart = 20.dp,
+            bottomStart = 20.dp,
+            topEnd = if (isFirstInGroup) 20.dp else 4.dp,
+            bottomEnd = if (isLastInGroup) 20.dp else 4.dp,
+        )
+    } else {
+        RoundedCornerShape(
+            topStart = if (isFirstInGroup) 20.dp else 4.dp,
+            bottomStart = if (isLastInGroup) 20.dp else 4.dp,
+            topEnd = 20.dp,
+            bottomEnd = 20.dp,
+        )
+    }
+    Box(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = if (isLastInGroup) 4.dp else 1.dp),
+        contentAlignment = if (isFromMe) Alignment.CenterEnd else Alignment.CenterStart,
+    ) {
+        Surface(
+            shape = shape,
+            color = if (isFromMe) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHigh,
+            contentColor = if (isFromMe) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.widthIn(max = 280.dp).combinedClickable(onClick = {}, onLongClick = onLongPress),
+        ) {
+            Text(text = text, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
         }
     }
 }
