@@ -8,13 +8,13 @@ Send is an original Kotlin/Compose Matrix Android client with a conversation-fir
 - Live joined-room updates from the SDK room-list service. Unencrypted rooms are hidden from the conversation list and rejected by room-open, send, and reaction operations.
 - Encrypted text timeline receive/send, backward pagination, reactions, and room-keyed composer drafts that survive activity/process restoration. Conversation bubbles show localized event times, `Sent` for own messages, and quick emoji reactions from a long press.
 - Element Call Android `0.1.0-rc.7` MatrixRTC outgoing audio calls in encrypted direct (1:1) rooms using Rust RTC `0.5.0-rc.2`: microphone permission at call start, mute, audio-output selection, end-call control, and upstream foreground call service/notification.
-- Instrumentation coverage for login requirements, homeserver SSO startup, local Synapse password sign-in, new-chat validation, and the long-press reaction action, plus sign-in/home/conversation screenshot fixtures; GitHub Actions runs assemble, unit tests, lint, and Android-emulator instrumentation.
+- Instrumentation coverage for login requirements, local Synapse password sign-in, new-chat validation, and the long-press reaction action, plus sign-in/home/conversation screenshot fixtures; GitHub Actions runs assemble, unit tests, lint, and Android-emulator instrumentation.
 
 ## Known implementation limits
 
 - Element Call `0.1.0-rc.7` exposes no host-facing incoming-call invitation/event flow, accept/decline API, or supported inbound entry point. Incoming call alerts and accept/decline are not implemented; no fake inbound controls are shown.
 - Encrypted 1:1 room creation from a Matrix user ID is implemented. Push notifications, Android Auto, widgets, dictation, text-to-speech, and AI features remain roadmap items in `ANDROID_INTEGRATIONS.md`.
-- CI exercises local Synapse messaging sign-in and verifies SSO URL creation against `matrix.reilly.asia`; production-account login, two-account E2EE exchange, encryption recovery, and real call runtime still require a live account/two-account setup. A working MatrixRTC homeserver/LiveKit configuration is also required for real call runtime verification.
+- CI exercises local Synapse messaging sign-in and Android Matrix client initialization. The CI emulator cannot resolve `matrix.reilly.asia`, so CI does not verify remote SSO or production-account login. Two-account E2EE exchange, encryption recovery, and real call runtime still require a live account/two-account setup. A working MatrixRTC homeserver/LiveKit configuration is also required for real call runtime verification.
 - Element Call is dual-licensed `AGPL-3.0-only OR LicenseRef-Element-Commercial`; its attribution is packaged in `app/src/main/assets/THIRD_PARTY_NOTICES.txt`. Send has no selected project-level license yet, so resolve licensing before redistributing the combined APK.
 - Element Call is a release candidate; upstream APIs may change. This repository uses its documented minimum Rust SDK version `26.09.26`; the pinned stable SDK `26.09.28` meets that floor, with build/runtime compatibility still to verify.
 

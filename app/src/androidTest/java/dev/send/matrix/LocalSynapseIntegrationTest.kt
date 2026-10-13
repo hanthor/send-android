@@ -13,12 +13,16 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class ZLocalSynapseIntegrationTest {
+    @get:Rule
     val composeRule = createAndroidComposeRule<MainActivity>()
 
     @Test
     fun signsInToLocalSynapseOverDebugOnlyEmulatorHttp() {
-        composeRule.onNodeWithText("Homeserver").performTextInput("http://10.0.2.2:8008")
         composeRule.onNodeWithText("Use username and password").performClick()
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithText("Username").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithText("Homeserver").performTextInput("http://10.0.2.2:8008")
         composeRule.onNodeWithText("Username").performTextInput("@alice:send.test")
         composeRule.onNodeWithText("Password").performTextInput("local-dev-password")
         composeRule.onNodeWithText("Sign in with password").performClick()

@@ -19,6 +19,6 @@ The local Synapse instance does not configure a MatrixRTC/LiveKit service, so it
 
 ## UI design
 
-Open `app/src/main/java/dev/send/matrix/UiPreviews.kt` in Android Studio and use Compose Preview to switch among the sign-in, conversation-list, and conversation fixtures. These fixtures are static and make no homeserver requests. For runtime screenshots, the GitHub Actions run uploads `Send-UI-Screenshots`; it includes the sign-in, home, and conversation screens. The CI instrumentation also starts SSO against `matrix.reilly.asia` to catch regressions in Android rustls initialization; it does not authenticate a user.
+- Open `app/src/main/java/dev/send/matrix/UiPreviews.kt` in Android Studio and use Compose Preview to switch among the sign-in, conversation-list, and conversation fixtures. These fixtures are static and make no homeserver requests. For runtime screenshots, the GitHub Actions run uploads `Send-UI-Screenshots`; it includes the sign-in, home, and conversation screens. The CI emulator cannot resolve `matrix.reilly.asia`, so remote SSO against that homeserver is not part of the CI checks; local Synapse sign-in exercises client initialization and the debug-only HTTP route end to end.
 
 Builds and automated tests remain in GitHub Actions. Debug APKs are available from the `Send-debug-APK` artifact on a successful workflow run.
