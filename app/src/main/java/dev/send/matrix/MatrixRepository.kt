@@ -217,9 +217,9 @@ class MatrixRepository(context: Context) {
         val sdk = requireClient()
         val service = sdk.syncService().finish()
         try {
+            startRoomList(service)
             service.start()
             syncService = service
-            startRoomList(service)
         } catch (error: Exception) {
             closeRoomListResources()
             service.close()

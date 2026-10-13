@@ -10,6 +10,15 @@ for user in alice bob; do
     -u "$user" -p "$password" --no-admin http://localhost:8008
 done
 
+alice_json=$(curl --fail --silent --show-error -H 'Content-Type: application/json' \
+  -d "{\"type\":\"m.login.password\",\"user\":\"alice\",\"password\":\"$password\"}" \
+  "$base/_matrix/client/v3/login")
+alice_token=$(jq -r '.access_token' <<<"$alice_json")
+curl --fail --silent --show-error -X POST -H "Authorization: Bearer $alice_token" \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"Unencrypted test fixture","preset":"private_chat"}' \
+  "$base/_matrix/client/v3/createRoom" >/dev/null
+
 bob_json=$(curl --fail --silent --show-error -H 'Content-Type: application/json' \
   -d "{\"type\":\"m.login.password\",\"user\":\"bob\",\"password\":\"$password\"}" \
   "$base/_matrix/client/v3/login")
@@ -19,4 +28,4 @@ curl --fail --silent --show-error -X PUT -H "Authorization: Bearer $bob_token" \
   -H 'Content-Type: application/json' -d '{"displayname":"Bob"}' \
   "$base/_matrix/client/v3/profile/$bob_id/displayname" >/dev/null
 
-printf 'Seeded @alice:send.test and @bob:send.test; the walkthrough creates their encrypted room through Send.\n'
+printf 'Seeded Alice and Bob, Bob display name, and an unencrypted fixture room; Send creates the encrypted demo room.\n'
