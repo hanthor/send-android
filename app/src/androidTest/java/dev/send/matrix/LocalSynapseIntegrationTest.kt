@@ -11,6 +11,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.click
+import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performClick
@@ -62,20 +63,14 @@ class ZLocalSynapseIntegrationTest {
         composeRule.onNodeWithText("Use username and password").performScrollTo().performTouchInput { click() }
         composeRule.mainClock.advanceTimeBy(600)
         composeRule.onAllNodes(hasSetTextAction()).assertCountEquals(3)
+        composeRule.onAllNodes(hasSetTextAction()).get(0).performTextClearance()
         composeRule.onAllNodes(hasSetTextAction()).get(0).performTextInput("http://10.0.2.2:8008")
         composeRule.onAllNodes(hasSetTextAction()).get(1).performScrollTo().performTextInput("@alice:send.test")
         composeRule.onAllNodes(hasSetTextAction()).get(2).performScrollTo().performTextInput("local-dev-password")
         composeRule.onNodeWithText("Sign in with password").performScrollTo().performClick()
 
-        val homeDeadline = System.currentTimeMillis() + 60_000
-        while (System.currentTimeMillis() < homeDeadline &&
-            composeRule.onAllNodesWithContentDescription("Search").fetchSemanticsNodes().isEmpty()) {
-            Thread.sleep(500)
-        }
-        if (composeRule.onAllNodesWithContentDescription("Search").fetchSemanticsNodes().isEmpty()) {
-            val texts = composeRule.onAllNodesWithText("", substring = true).fetchSemanticsNodes()
-                .mapNotNull { runCatching { it.config[androidx.compose.ui.semantics.SemanticsProperties.Text] }.getOrNull() }
-            throw AssertionError("Login-to-home timed out. Visible texts: $texts")
+        composeRule.waitUntil(timeoutMillis = 60_000) {
+            composeRule.onAllNodesWithContentDescription("Search").fetchSemanticsNodes().isNotEmpty()
         }
         val repository = MatrixRepository.get(
             InstrumentationRegistry.getInstrumentation().targetContext,
