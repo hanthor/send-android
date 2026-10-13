@@ -26,9 +26,13 @@ fun LegalNoticesDialog(onDismiss: () -> Unit) {
         text = {
             androidx.compose.foundation.layout.Column(Modifier.verticalScroll(rememberScrollState())) {
                 Text(
-                    "Send is free software: you can redistribute it and/or modify it under " +
+                    "Copyright (C) 2026 Send contributors.\n\n" +
+                        "Send is free software: you can redistribute it and/or modify it under " +
                         "the terms of the GNU Affero General Public License as published by " +
-                        "the Free Software Foundation, version 3. There is no warranty. " +
+                        "the Free Software Foundation, version 3. This program is distributed " +
+                        "in the hope that it will be useful, but WITHOUT ANY WARRANTY. " +
+                        "The full license ships with the app (LICENSE.txt) and at " +
+                        "https://www.gnu.org/licenses/. " +
                         "Corresponding source: https://github.com/hanthor/send-android",
                     style = MaterialTheme.typography.bodyMedium,
                 )
