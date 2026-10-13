@@ -303,8 +303,10 @@ class MatrixRepository(context: Context) {
 
     private fun mergeLocallyCreatedRooms(rooms: List<MatrixRoom>): List<MatrixRoom> {
         synchronized(locallyCreatedRooms) {
-            val roomIds = rooms.mapTo(mutableSetOf()) { it.id }
-            return rooms + locallyCreatedRooms.values.filterNot { it.id in roomIds }
+            val deduped = LinkedHashMap<String, MatrixRoom>(rooms.size)
+            for (room in rooms) deduped[room.id] = room
+            for (local in locallyCreatedRooms.values) deduped.putIfAbsent(local.id, local)
+            return deduped.values.toList()
         }
     }
 
