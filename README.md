@@ -44,8 +44,8 @@ resolution and are linked to the full-size files.
 [![Live encrypted Send conversation](docs/screenshots/demo-conversation.png)](docs/screenshots/demo-conversation.png)
 
 The emulator walkthrough signs in as the demo user, creates an encrypted
-conversation with Bob, sends three sample messages through the Matrix Rust SDK,
-and verifies each appears in the local timeline. QR/SSO/password sign-in,
+conversation with Bob, sends a sample message through the Matrix Rust SDK, and
+verifies it appears in the local timeline. QR/SSO/password sign-in,
 encrypted-room list and creation, encrypted text send, pagination, reactions,
 and outgoing audio-call controls are implemented. Incoming-message sync and
 calls need their respective working backend paths; calls require MatrixRTC

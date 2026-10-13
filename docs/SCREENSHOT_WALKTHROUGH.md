@@ -2,10 +2,10 @@
 
 GitHub Actions provisions a fresh Synapse server, creates demo users, and runs
 Send in an Android emulator. Instrumentation signs into `@alice:send.test`,
-creates an encrypted direct conversation with `@bob:send.test`, sends three
-sample messages through the Matrix Rust SDK, and verifies each appears in the
-local timeline. Screenshots are captured at native emulator resolution. Sign-in
-is a static Compose fixture; the new-chat dialog, conversation list, and message
+creates an encrypted direct conversation with `@bob:send.test`, sends a sample
+message through the Matrix Rust SDK, and verifies it appears in the local
+timeline. Screenshots are captured at native emulator resolution. Sign-in is a
+static Compose fixture; the new-chat dialog, conversation list, and message
 send captures are from the live app connected to Synapse.
 
 ## Screenshots
@@ -46,10 +46,6 @@ becomes enabled after a valid ID is entered.
 
 The UI test long-presses a message, selects 😂, and verifies the event ID and
 reaction passed to the handler.
-
-### About and licenses
-
-![About and licenses dialog](screenshots/legal-dialog.png)
 
 ### Conversation UI fixture
 

@@ -7,7 +7,7 @@ Send is an original Kotlin/Compose Matrix Android client with a conversation-fir
 - Rust Matrix SDK `26.09.28` Android platform verifier bootstrapping before client creation; password, QR scan, SSO browser redirect, persisted session restoration, and an encrypted local SDK store whose key is wrapped by Android Keystore.
 - SDK room-list updates show joined encrypted rooms; newly created encrypted DMs are inserted immediately from the successful server response. Unencrypted rooms are hidden and rejected by open/send/reaction operations.
 - Encrypted text timeline send/receive, backward pagination, reactions, and room-keyed composer drafts that survive activity/process restoration. Conversation bubbles show localized event times, `Sent` for own messages, and quick emoji reactions from a long press.
-- Instrumentation covers login validation, local Synapse sign-in, encrypted direct-room creation, three encrypted message sends and local timeline rendering, new-chat validation, legal notices, and reaction selection. GitHub Actions runs assemble, unit tests, lint, and Android-emulator instrumentation; successful runs upload full-resolution screenshots and the debug APK.
+- Instrumentation covers login validation, local Synapse sign-in, encrypted direct-room creation, encrypted message send and local timeline rendering, new-chat validation, legal notices, and reaction selection. GitHub Actions runs assemble, unit tests, lint, and Android-emulator instrumentation; successful runs upload full-resolution screenshots and the debug APK.
 
 ## Known implementation limits
 

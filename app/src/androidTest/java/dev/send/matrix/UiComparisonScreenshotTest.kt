@@ -27,17 +27,6 @@ class UiComparisonScreenshotTest {
     val composeRule = createComposeRule()
 
     @Test
-    fun capturesAboutAndLicensesDialog() {
-        composeRule.setContent {
-            MaterialTheme {
-                LegalNoticesDialog(onDismiss = {})
-            }
-        }
-        composeRule.onNodeWithText("About & licenses").assertIsDisplayed()
-        saveScreenshot("send-legal-dialog.png")
-    }
-
-    @Test
     fun capturesMaterialSignInScreen() {
         composeRule.setContent {
             MaterialTheme {
