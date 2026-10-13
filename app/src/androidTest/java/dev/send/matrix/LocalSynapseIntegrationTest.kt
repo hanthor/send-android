@@ -4,6 +4,7 @@ import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.onNodeWithText
@@ -67,9 +68,9 @@ class ZLocalSynapseIntegrationTest {
         composeRule.onNodeWithText("Sign in with password").performScrollTo().performClick()
 
         composeRule.waitUntil(timeoutMillis = 60_000) {
-            composeRule.onAllNodesWithText("Search conversations").fetchSemanticsNodes().isNotEmpty()
+            composeRule.onAllNodesWithContentDescription("Search").fetchSemanticsNodes().isNotEmpty()
         }
-        composeRule.onNodeWithText("Search conversations").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Search").assertIsDisplayed()
         val repository = MatrixRepository.get(
             InstrumentationRegistry.getInstrumentation().targetContext,
         )
