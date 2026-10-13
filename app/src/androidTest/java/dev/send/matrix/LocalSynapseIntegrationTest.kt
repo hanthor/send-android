@@ -29,7 +29,7 @@ class ZLocalSynapseIntegrationTest {
         composeRule.onAllNodes(hasSetTextAction()).get(0).performTextInput("http://10.0.2.2:8008")
         composeRule.onAllNodes(hasSetTextAction()).get(1).performScrollTo().performTextInput("@alice:send.test")
         composeRule.onAllNodes(hasSetTextAction()).get(2).performScrollTo().performTextInput("local-dev-password")
-        composeRule.onNodeWithText("Sign in with password").performClick()
+        composeRule.onNodeWithText("Sign in with password").performScrollTo().performClick()
 
         composeRule.waitUntil(timeoutMillis = 60_000) {
             composeRule.onAllNodesWithText("Your encrypted conversations").fetchSemanticsNodes().isNotEmpty()

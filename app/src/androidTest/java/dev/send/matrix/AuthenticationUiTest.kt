@@ -43,7 +43,7 @@ class AuthenticationUiTest {
         composeRule.onAllNodes(hasSetTextAction()).get(0).performTextInput("http://matrix.example.org")
         composeRule.onAllNodes(hasSetTextAction()).get(1).performScrollTo().performTextInput("@alice:example.org")
         composeRule.onAllNodes(hasSetTextAction()).get(2).performScrollTo().performTextInput("not-a-real-password")
-        composeRule.onNodeWithText("Sign in with password").performClick()
-        composeRule.onNodeWithText("Enter a valid HTTPS homeserver URL.").assertIsDisplayed()
+        composeRule.onNodeWithText("Sign in with password").performScrollTo().performClick()
+        composeRule.onNodeWithText("Enter a valid HTTPS homeserver URL.").performScrollTo().assertIsDisplayed()
     }
 }
