@@ -35,9 +35,8 @@ jobs:
             sleep 2
           done
           if [ -z "$ready" ]; then docker compose -f dev/matrix/compose.yaml logs synapse; exit 1; fi
-          docker compose -f dev/matrix/compose.yaml exec -T synapse \
-            register_new_matrix_user -c /data/homeserver.yaml \
-            -u alice -p local-dev-password --no-admin http://localhost:8008
+      - name: Seed demo Matrix accounts
+        run: dev/matrix/seed-demo.sh
       - name: Assemble, test, and lint
         run: ./gradlew --no-daemon "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g" :app:assembleDebug :app:testDebugUnitTest :app:lintDebug
       - name: Enable Android emulator KVM
@@ -51,7 +50,7 @@ jobs:
           api-level: 35
           arch: x86_64
           disable-animations: true
-          script: ./gradlew --no-daemon "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g" :app:connectedDebugAndroidTest && mkdir -p /tmp/send-ui-screenshots && adb pull /storage/emulated/0/Download/Send/send-login-screen.png /tmp/send-ui-screenshots/ && adb pull /storage/emulated/0/Download/Send/send-home-screen.png /tmp/send-ui-screenshots/ && adb pull /storage/emulated/0/Download/Send/send-conversation-screen.png /tmp/send-ui-screenshots/
+          script: ./gradlew --no-daemon "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g" :app:connectedDebugAndroidTest && mkdir -p /tmp/send-ui-screenshots && adb pull /storage/emulated/0/Download/Send/send-login-screen.png /tmp/send-ui-screenshots/ && adb pull /storage/emulated/0/Download/Send/send-home-screen.png /tmp/send-ui-screenshots/ && adb pull /storage/emulated/0/Download/Send/send-conversation-screen.png /tmp/send-ui-screenshots/ && adb pull /storage/emulated/0/Download/Send/send-demo-create-chat.png /tmp/send-ui-screenshots/ && adb pull /storage/emulated/0/Download/Send/send-demo-conversations.png /tmp/send-ui-screenshots/ && adb pull /storage/emulated/0/Download/Send/send-demo-conversation.png /tmp/send-ui-screenshots/
       - name: Upload Android instrumentation results
         if: always()
         uses: actions/upload-artifact@v4

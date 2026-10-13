@@ -8,17 +8,27 @@ The optional Synapse service provides a disposable backend for account sign-in, 
 docker compose -f dev/matrix/compose.yaml run --rm synapse generate
 docker compose -f dev/matrix/compose.yaml up -d
 curl --fail http://127.0.0.1:8008/_matrix/client/versions
-docker compose -f dev/matrix/compose.yaml exec synapse \
-  register_new_matrix_user -c /data/homeserver.yaml \
-  -u alice -p local-dev-password --no-admin http://localhost:8008
+dev/matrix/seed-demo.sh
 ```
 
-The GitHub Actions workflow also starts this disposable Synapse instance, creates the same test account, and signs in through the Android emulator. This exercises the debug-only HTTP route end to end.
+This creates `@alice:send.test` and `@bob:send.test` with password
+`local-dev-password` and sets Bob's display name. Sign into Alice in Send,
+create a new encrypted conversation with `@bob:send.test`, then send a message.
+The Android SDK creates the room encryption state and encrypts messages; the
+fixture never injects plaintext events into encrypted rooms.
 
-The local Synapse instance does not configure a MatrixRTC/LiveKit service, so it is for messaging and UI iteration, not call verification.
+GitHub Actions provisions this disposable backend and runs the same real app
+flow on an Android emulator. Synapse is messaging-only; it has no MatrixRTC/
+LiveKit service, so it cannot verify calls.
 
-## UI design
+## UI design and screenshots
 
-- Open `app/src/main/java/dev/send/matrix/UiPreviews.kt` in Android Studio and use Compose Preview to switch among the sign-in, conversation-list, and conversation fixtures. These fixtures are static and make no homeserver requests. For runtime screenshots, the GitHub Actions run uploads `Send-UI-Screenshots`; it includes the sign-in, home, and conversation screens. The CI emulator cannot resolve `matrix.reilly.asia`, so remote SSO against that homeserver is not part of the CI checks; local Synapse sign-in exercises client initialization and the debug-only HTTP route end to end.
+- Use `app/src/main/java/dev/send/matrix/UiPreviews.kt` for static Compose previews.
+- `docs/SCREENSHOT_WALKTHROUGH.md` documents the automated emulator walkthrough.
+  CI captures fixture sign-in visuals and live Synapse conversations at the
+  emulator's full resolution, then uploads them with the APK and test reports.
+- CI cannot resolve `matrix.reilly.asia`; production SSO is not tested.
 
-Builds and automated tests remain in GitHub Actions. Debug APKs are available from the `Send-debug-APK` artifact on a successful workflow run.
+Builds and automated tests remain in GitHub Actions. Debug APKs are available
+from the `Send-debug-APK` artifact on a successful workflow run.
+
