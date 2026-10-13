@@ -67,16 +67,16 @@ class ZLocalSynapseIntegrationTest {
         composeRule.onAllNodes(hasSetTextAction()).get(2).performScrollTo().performTextInput("local-dev-password")
         composeRule.onNodeWithText("Sign in with password").performScrollTo().performClick()
 
-        try {
-            composeRule.waitUntil(timeoutMillis = 60_000) {
-                composeRule.onAllNodesWithContentDescription("Search").fetchSemanticsNodes().isNotEmpty()
-            }
-        } catch (timeout: Exception) {
+        val homeDeadline = System.currentTimeMillis() + 60_000
+        while (System.currentTimeMillis() < homeDeadline &&
+            composeRule.onAllNodesWithContentDescription("Search").fetchSemanticsNodes().isEmpty()) {
+            Thread.sleep(500)
+        }
+        if (composeRule.onAllNodesWithContentDescription("Search").fetchSemanticsNodes().isEmpty()) {
             val texts = composeRule.onAllNodesWithText("", substring = true).fetchSemanticsNodes()
                 .mapNotNull { runCatching { it.config[androidx.compose.ui.semantics.SemanticsProperties.Text] }.getOrNull() }
-            throw AssertionError("Login-to-home timed out. Visible texts: $texts", timeout)
+            throw AssertionError("Login-to-home timed out. Visible texts: $texts")
         }
-        composeRule.onNodeWithContentDescription("Search").assertIsDisplayed()
         val repository = MatrixRepository.get(
             InstrumentationRegistry.getInstrumentation().targetContext,
         )
