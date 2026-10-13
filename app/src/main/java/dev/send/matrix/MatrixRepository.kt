@@ -81,7 +81,7 @@ class MatrixRepository(context: Context) {
 
 
     suspend fun qrLogin(homeserver: String, qrPayload: String) = withContext(Dispatchers.IO) {
-        val sdk = createClient(normalizeHomeserverUrl(homeserver))
+        val sdk = createClient(resolveHomeserverUrl(homeserver))
         try {
             check(sdk.isLoginWithQrCodeSupported()) { "This homeserver does not support Matrix QR sign-in." }
             val oauthConfiguration = org.matrix.rustcomponents.sdk.OAuthConfiguration(
@@ -115,7 +115,7 @@ class MatrixRepository(context: Context) {
     @Volatile private var ssoHandler: SsoHandler? = null
 
     suspend fun beginSsoLogin(homeserver: String): String = withContext(Dispatchers.IO) {
-        val sdk = createClient(normalizeHomeserverUrl(homeserver))
+        val sdk = createClient(resolveHomeserverUrl(homeserver))
         try {
             val handler = sdk.startSsoLogin("dev.send.matrix://sso/callback", null)
             ssoClient?.close()
@@ -152,7 +152,7 @@ class MatrixRepository(context: Context) {
         ssoHandler = null
     }
     suspend fun passwordLogin(homeserver: String, user: String, password: String) = withContext(Dispatchers.IO) {
-        val sdk = createClient(normalizeHomeserverUrl(homeserver))
+        val sdk = createClient(resolveHomeserverUrl(effectiveServerInput(homeserver, user)))
         try {
             sdk.login(user, password, "Send Android", null)
             replaceAuthenticatedClient(sdk)
@@ -423,6 +423,44 @@ class MatrixRepository(context: Context) {
     suspend fun paginateOlder(timeline: Timeline): Boolean = withContext(Dispatchers.IO) {
         timeline.paginateBackwards(30u.toUShort())
     }
+    /**
+     * Turns free-form server input into a homeserver base URL. Explicit URLs keep
+     * the strict HTTPS validation; bare server names (and Matrix IDs) go through
+     * `.well-known/matrix/client` discovery first, falling back to
+     * `https://<server>` when the server publishes no delegation.
+     */
+    suspend fun resolveHomeserverUrl(value: String): String = withContext(Dispatchers.IO) {
+        val input = value.trim()
+        require(input.isNotBlank()) { "Enter your homeserver address." }
+        val candidate = serverNameFromMxid(input) ?: input
+        if ("://" in candidate) return@withContext normalizeHomeserverUrl(candidate)
+        val server = candidate.substringBefore('/').trim()
+        require(server.isValidServerName()) { "Enter a valid HTTPS homeserver URL." }
+        discoverHomeserverBaseUrl(server) ?: "https://$server"
+    }
+
+    private fun discoverHomeserverBaseUrl(server: String): String? {
+        return try {
+            val connection = java.net.URL("https://$server/.well-known/matrix/client").openConnection() as java.net.HttpURLConnection
+            try {
+                connection.connectTimeout = 8000
+                connection.readTimeout = 8000
+                connection.instanceFollowRedirects = true
+                connection.setRequestProperty("Accept", "application/json")
+                if (connection.responseCode != java.net.HttpURLConnection.HTTP_OK) return null
+                val body = connection.inputStream.bufferedReader().use { it.readText() }.trim()
+                if (body.isEmpty() || body.length > 65536) return null
+                val baseUrl = org.json.JSONObject(body).optJSONObject("m.homeserver")?.optString("base_url")?.trim().orEmpty()
+                if (baseUrl.isBlank()) return null
+                runCatching { normalizeHomeserverUrl(baseUrl) }.getOrNull()
+            } finally {
+                connection.disconnect()
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     private fun normalizeHomeserverUrl(value: String): String {
         val url = URI(value.trim())
         val localDebugHomeserver =
