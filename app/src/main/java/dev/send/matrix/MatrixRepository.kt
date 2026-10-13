@@ -19,6 +19,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.matrix.rustcomponents.sdk.Client
 import org.matrix.rustcomponents.sdk.ClientBuilder
+import org.matrix.rustcomponents.sdk.SlidingSyncVersionBuilder
 import org.matrix.rustcomponents.sdk.MessageType
 import org.matrix.rustcomponents.sdk.QrCodeData
 import org.matrix.rustcomponents.sdk.Room
@@ -235,7 +236,6 @@ class MatrixRepository(context: Context) {
             object : org.matrix.rustcomponents.sdk.RoomListServiceStateListener {
                 override fun onUpdate(state: org.matrix.rustcomponents.sdk.RoomListServiceState) {
                     _roomListServiceState.value = state
-                    android.util.Log.i("SendMatrixSync", "Room-list service state: $state")
                 }
             },
         )
@@ -435,6 +435,7 @@ class MatrixRepository(context: Context) {
         val crypto = root.resolve("crypto-store").absolutePath
         return ClientBuilder()
             .homeserverUrl(homeserver)
+            .slidingSyncVersionBuilder(SlidingSyncVersionBuilder.NATIVE)
             .sqliteStore(SqliteStoreBuilder(store, "").key(storeKey()))
             .sessionPaths(root.resolve("cache").absolutePath, crypto)
             .build()
