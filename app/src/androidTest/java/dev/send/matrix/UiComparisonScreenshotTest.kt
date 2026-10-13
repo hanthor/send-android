@@ -76,15 +76,11 @@ class UiComparisonScreenshotTest {
 
     private fun saveScreenshot(fileName: String) {
         composeRule.waitForIdle()
-        val instrumentation = InstrumentationRegistry.getInstrumentation()
-        val pipe = instrumentation.uiAutomation.executeShellCommandRw("cat > /sdcard/Download/$fileName && echo done")
-        val shellOutput = android.os.ParcelFileDescriptor.AutoCloseInputStream(pipe[0])
-        val shellInput = android.os.ParcelFileDescriptor.AutoCloseOutputStream(pipe[1])
-        try {
-            check(composeRule.onRoot().captureToImage().asAndroidBitmap().compress(android.graphics.Bitmap.CompressFormat.PNG, 100, shellInput))
-        } finally {
-            shellInput.close()
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val outputDirectory = context.getExternalFilesDir(null) ?: error("Emulator external storage is unavailable.")
+        val output = File(outputDirectory, fileName)
+        output.outputStream().use { stream ->
+            check(composeRule.onRoot().captureToImage().asAndroidBitmap().compress(android.graphics.Bitmap.CompressFormat.PNG, 100, stream))
         }
-        check(shellOutput.bufferedReader().use { it.readText().trim() } == "done")
     }
 }
