@@ -57,12 +57,19 @@ class ZLocalSynapseIntegrationTest {
         composeRule.waitUntil(timeoutMillis = 30_000) {
             composeRule.onAllNodesWithText("Message").fetchSemanticsNodes().isNotEmpty()
         }
-        composeRule.onNodeWithText("Message").performTextInput("Hello Bob — this is an encrypted demo message.")
-        composeRule.onNodeWithText("Send").performClick()
-        composeRule.waitUntil(timeoutMillis = 30_000) {
-            composeRule.onAllNodesWithText("Hello Bob — this is an encrypted demo message.").fetchSemanticsNodes().isNotEmpty()
+        val demoMessages = listOf(
+            "Hey Bob, here's a Send demo.",
+            "This conversation is end-to-end encrypted.",
+            "Hello Bob — this is an encrypted demo message.",
+        )
+        demoMessages.forEach { message ->
+            composeRule.onNodeWithText("Message").performTextInput(message)
+            composeRule.onNodeWithText("Send").performClick()
+            composeRule.waitUntil(timeoutMillis = 30_000) {
+                composeRule.onAllNodesWithText(message).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeRule.onNodeWithText(message).assertIsDisplayed()
         }
-        composeRule.onNodeWithText("Hello Bob — this is an encrypted demo message.").assertIsDisplayed()
         captureWalkthroughScreenshot("send-demo-conversation.png")
     }
 

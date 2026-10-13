@@ -22,31 +22,34 @@ and the in-app "About & licenses" dialog.
 
 ## Screenshots
 
-The walkthrough pages show emulator captures at their full native resolution.
-Select an image to view it at full size.
+The sign-in screenshot is a Compose UI fixture. Screenshots showing the demo
+conversation list and conversation are captured from the live Android app
+connected to disposable Synapse. All PNGs retain their original emulator
+resolution and are linked to the full-size files.
 
 ### Sign-in options
 
-![Send sign-in screen](docs/screenshots/sign-in.png)
+[![Send sign-in screen](docs/screenshots/sign-in.png)](docs/screenshots/sign-in.png)
 
 ### New encrypted conversation
 
-![Create encrypted conversation with Bob](docs/screenshots/demo-create-chat.png)
+[![Create encrypted conversation with Bob](docs/screenshots/demo-create-chat.png)](docs/screenshots/demo-create-chat.png)
 
 ### Live demo conversation list
 
-![Live Send demo conversation list](docs/screenshots/demo-conversations.png)
+[![Live Send demo conversation list](docs/screenshots/demo-conversations.png)](docs/screenshots/demo-conversations.png)
 
-### Encrypted message exchange
+### Encrypted message send
 
-![Live encrypted Send conversation](docs/screenshots/demo-conversation.png)
+[![Live encrypted Send conversation](docs/screenshots/demo-conversation.png)](docs/screenshots/demo-conversation.png)
 
 The emulator walkthrough signs in as the demo user, creates an encrypted
-conversation with Bob, sends a message through the Matrix Rust SDK, and verifies
-that it appears in the timeline. QR/SSO/password sign-in, encrypted-room list
-and creation, encrypted text send/receive, pagination, reactions, and outgoing
-audio-call controls are implemented. Calls need MatrixRTC infrastructure and
-are not part of the Synapse messaging screenshots.
+conversation with Bob, sends three sample messages through the Matrix Rust SDK,
+and verifies each appears in the local timeline. QR/SSO/password sign-in,
+encrypted-room list and creation, encrypted text send, pagination, reactions,
+and outgoing audio-call controls are implemented. Incoming-message sync and
+calls need their respective working backend paths; calls require MatrixRTC
+infrastructure.
 
 ## Build and verify
 

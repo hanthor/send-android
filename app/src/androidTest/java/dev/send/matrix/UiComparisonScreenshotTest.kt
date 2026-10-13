@@ -27,6 +27,17 @@ class UiComparisonScreenshotTest {
     val composeRule = createComposeRule()
 
     @Test
+    fun capturesAboutAndLicensesDialog() {
+        composeRule.setContent {
+            MaterialTheme {
+                LegalNoticesDialog(onDismiss = {})
+            }
+        }
+        composeRule.onNodeWithText("About & licenses").assertIsDisplayed()
+        saveScreenshot("send-legal-dialog.png")
+    }
+
+    @Test
     fun capturesMaterialSignInScreen() {
         composeRule.setContent {
             MaterialTheme {
@@ -73,6 +84,7 @@ class UiComparisonScreenshotTest {
         composeRule.onNodeWithText("New chat").performClick()
         composeRule.onNodeWithText("Create").assertIsNotEnabled()
         composeRule.onNodeWithText("Matrix user ID").performTextInput("@alice:example.org")
+        saveScreenshot("send-new-chat-dialog.png")
         composeRule.onNodeWithText("Create").assertIsEnabled()
     }
 
@@ -123,6 +135,7 @@ class UiComparisonScreenshotTest {
             advanceEventTime(1_000)
             up()
         }
+        saveScreenshot("send-reaction-picker.png")
         composeRule.onNodeWithText("😂").performClick()
         composeRule.runOnIdle {
             assertEquals("\$event-one" to "😂", selectedReaction)

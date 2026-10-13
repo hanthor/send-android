@@ -325,7 +325,7 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
                     activeJob = scope.launch {
                         try {
                             repository.createEncryptedDirectRoom(matrixUserId)
-                            notice = "Encrypted conversation created. It will appear after sync."
+                            notice = "Encrypted conversation created."
                         } catch (failure: Exception) {
                             error = failure.message ?: "Conversation could not be created."
                         }
