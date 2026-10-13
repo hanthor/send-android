@@ -72,7 +72,7 @@ class UiComparisonScreenshotTest {
         }
 
         saveScreenshot("send-home-screen.png")
-        composeRule.onNodeWithText("New chat").performClick()
+        composeRule.onNodeWithText("New chat", useUnmergedTree = true).performClick()
         composeRule.onNodeWithText("Create").assertIsNotEnabled()
         composeRule.onNodeWithText("Matrix user ID").performTextInput("@alice:example.org")
         saveScreenshot("send-new-chat-dialog.png")

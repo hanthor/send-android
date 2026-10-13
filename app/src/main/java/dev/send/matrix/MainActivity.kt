@@ -729,7 +729,7 @@ private fun OnboardingSetupStep(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(text = "Use username & password", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    Text(text = "Use username and password", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                     Text(text = if (showPasswordLogin) "−" else "+", style = MaterialTheme.typography.titleMedium, color = colors.onSurfaceVariant)
                 }
                 AnimatedVisibility(

@@ -38,7 +38,7 @@ class LegalDialogTest {
         composeRule.setContent {
             MaterialTheme {
                 SignInScreen(
-                    homeserver = "",
+                    homeserver = "https://matrix.example.org",
                     onHomeserver = {},
                     user = "",
                     onUser = {},
