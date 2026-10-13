@@ -1,6 +1,7 @@
 package dev.send.matrix
 
 import android.content.Context
+import android.content.pm.ApplicationInfo
 import android.util.Base64
 import java.net.URI
 import java.security.KeyStore
@@ -401,7 +402,8 @@ class MatrixRepository(context: Context) {
     }
     private fun normalizeHomeserverUrl(value: String): String {
         val url = URI(value.trim())
-        val localDebugHomeserver = BuildConfig.DEBUG &&
+        val localDebugHomeserver =
+            (appContext.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0 &&
             url.scheme == "http" &&
             url.port == 8008 &&
             when (url.host?.lowercase()) {
