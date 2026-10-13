@@ -6,6 +6,7 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performScrollTo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Rule
 import org.junit.Test
@@ -24,8 +25,8 @@ class AuthenticationUiTest {
         composeRule.onNodeWithText("Homeserver").performTextInput("https://matrix.example.org")
         composeRule.onNodeWithText("Scan QR code").assertIsEnabled()
         composeRule.onNodeWithText("Continue with SSO").assertIsEnabled()
-        composeRule.onNodeWithText("Username").performTextInput("@alice:example.org")
-        composeRule.onNodeWithText("Password").performTextInput("not-a-real-password")
+        composeRule.onNodeWithText("Username").performScrollTo().performTextInput("@alice:example.org")
+        composeRule.onNodeWithText("Password").performScrollTo().performTextInput("not-a-real-password")
         composeRule.onNodeWithText("Sign in with password").assertIsEnabled()
     }
 
@@ -34,8 +35,8 @@ class AuthenticationUiTest {
         composeRule.onNodeWithText("Use username and password").performClick()
         composeRule.mainClock.advanceTimeBy(600)
         composeRule.onNodeWithText("Homeserver").performTextInput("http://matrix.example.org")
-        composeRule.onNodeWithText("Username").performTextInput("@alice:example.org")
-        composeRule.onNodeWithText("Password").performTextInput("not-a-real-password")
+        composeRule.onNodeWithText("Username").performScrollTo().performTextInput("@alice:example.org")
+        composeRule.onNodeWithText("Password").performScrollTo().performTextInput("not-a-real-password")
         composeRule.onNodeWithText("Sign in with password").performClick()
         composeRule.onNodeWithText("Enter a valid HTTPS homeserver URL.").assertIsDisplayed()
     }
