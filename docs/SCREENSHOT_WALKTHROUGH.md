@@ -1,44 +1,43 @@
 # Automated feature walkthrough
 
 GitHub Actions provisions a fresh Synapse server, creates demo users, and runs
-Send in an Android emulator. Instrumentation signs into `@alice:send.test`,
-creates an encrypted direct conversation with `@bob:send.test`, sends a sample
-message through the Matrix Rust SDK, and verifies it appears in the local
-timeline. Screenshots are captured at native emulator resolution. Sign-in is a
-static Compose fixture; the new-chat dialog, conversation list, and message
-send captures are from the live app connected to Synapse.
+Send in an Android emulator. Instrumentation taps through the Pixel onboarding
+hero, signs into `@alice:send.test` with a bare `http://10.0.2.2:8008` test
+address, creates an encrypted direct conversation with `@bob:send.test`, sends
+a sample message through the Matrix Rust SDK, and verifies it appears in the
+local timeline. Screenshots are captured at native emulator resolution.
 
 ## Screenshots
 
-### Sign-in
+### Onboarding hero
 
-![Sign-in screen](screenshots/sign-in.png)
+![Pixel onboarding hero](screenshots/onboarding-hero.png)
 
-### New encrypted conversation
+### Homeserver setup
 
-![Create encrypted conversation](screenshots/demo-create-chat.png)
+![Homeserver setup](screenshots/sign-in.png)
+
+Bare server names, full Matrix IDs, and full URLs are all accepted; connection
+details resolve via `.well-known/matrix/client`.
 
 ### Conversation list
 
-![Live encrypted conversation list](screenshots/demo-conversations.png)
+![Conversation list](screenshots/conversations.png)
 
-### Encrypted message send
+### New encrypted conversation
 
-![Live encrypted conversation](screenshots/demo-conversation.png)
-
-### Conversation-list UI fixture
-
-![Conversation-list fixture](screenshots/home-ui-fixture.png)
-
-This static Compose fixture exercises the empty/data list presentation. Live
-Synapse room creation and list appearance are shown separately above.
-
-### New-chat dialog and recipient validation
-
-![New-chat dialog](screenshots/new-chat-dialog.png)
+![Create encrypted conversation](screenshots/new-chat.png)
 
 The UI test checks that Create remains disabled without a Matrix user ID and
 becomes enabled after a valid ID is entered.
+
+### Encrypted message send
+
+![Encrypted conversation](screenshots/conversation.png)
+
+Grouped bubbles (primary for sent, `surfaceContainerHigh` for received),
+overlapping reaction pills, timestamps per cluster, and the filled pill
+composer with its circular send button.
 
 ### Reaction picker
 
@@ -47,22 +46,24 @@ becomes enabled after a valid ID is entered.
 The UI test long-presses a message, selects 😂, and verifies the event ID and
 reaction passed to the handler.
 
-### Conversation UI fixture
+### Live Synapse walkthrough
 
-![Conversation screen fixture](screenshots/conversation-ui-fixture.png)
+![Create encrypted conversation with Bob](screenshots/demo-create-chat.png)
 
-This uses sample content to verify message styling and sent state. It is a UI
-fixture, not a live Matrix conversation.
+![Live demo conversation list](screenshots/demo-conversations.png)
+
+![Live encrypted message](screenshots/demo-conversation.png)
 
 ## Automation coverage and limits
 
-The UI suite verifies homeserver URL validation, new-chat recipient validation,
-long-press reaction selection, legal notices, and sign-in/home/conversation
-fixtures. The live Synapse walkthrough proves password authentication, encrypted
-room creation, navigation, and encrypted message send/render in the local
-timeline, plus delivery/decryption of that message and a 👍 reaction on Bob's
-independent SDK client after Bob joins the room. It does not verify reliable
-background room-list synchronization.
+The UI suite verifies homeserver validation (including bare server names and
+Matrix-ID-derived servers), new-chat recipient validation, long-press reaction
+selection, legal notices, and the sign-in/home/conversation screens. The live
+Synapse walkthrough proves password authentication, encrypted room creation,
+navigation, and encrypted message send/render in the local timeline, plus
+delivery/decryption of that message and a 👍 reaction on Bob's independent SDK
+client after Bob joins the room. It does not verify reliable background
+room-list synchronization.
 
 Synapse is not configured with MatrixRTC/LiveKit; this does not verify calls.
 Push notifications, Android Auto, widgets, dictation, and AI are roadmap items,
