@@ -23,3 +23,4 @@ Send is an original Kotlin/Compose Matrix Android client with a conversation-fir
 - Public repository: https://github.com/hanthor/send-android
 - GitHub Actions provisions Gradle `9.6.0` through the committed Gradle wrapper and Android API 37; builds/tests/lint run in GitHub CI, not locally, per request.
 - CI uploads the debug APK as the `Send-debug-APK` artifact and sign-in/home/conversation fixture screenshots as `Send-UI-Screenshots` for 30 days. Screenshots use sample content, not a live Matrix account; an APK is only ready to test when the corresponding CI run succeeds.
+- Latest verification: [GitHub Actions run 38418776919](https://github.com/hanthor/send-android/actions/runs/38418776919) passed assemble, unit tests, lint, local Synapse integration, emulator UI tests, and screenshot capture. It uploaded the test APK and screenshot artifacts.
