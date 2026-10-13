@@ -69,7 +69,11 @@ class ZLocalSynapseIntegrationTest {
         }
         composeRule.onNodeWithText(message).assertIsDisplayed()
         captureWalkthroughScreenshot("send-demo-conversation.png")
-        composeRule.onNodeWithText(message).performTouchInput { longClick() }
+        composeRule.onNodeWithText(message).performTouchInput {
+            down(center)
+            advanceEventTime(1_000)
+            up()
+        }
         composeRule.onNodeWithText("👍").performClick()
         composeRule.waitUntil(timeoutMillis = 30_000) {
             composeRule.onAllNodesWithText("👍").fetchSemanticsNodes().isNotEmpty()
