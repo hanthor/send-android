@@ -37,7 +37,7 @@ jobs:
           if [ -z "$ready" ]; then docker compose -f dev/matrix/compose.yaml logs synapse; exit 1; fi
           docker compose -f dev/matrix/compose.yaml exec -T synapse \
             register_new_matrix_user -c /data/homeserver.yaml \
-            -u alice -p local-dev-password http://localhost:8008
+            -u alice -p local-dev-password --no-admin http://localhost:8008
       - name: Assemble, test, and lint
         run: ./gradlew --no-daemon "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g" :app:assembleDebug :app:testDebugUnitTest :app:lintDebug
       - name: Run emulator UI smoke tests and capture screenshots

@@ -10,7 +10,7 @@ docker compose -f dev/matrix/compose.yaml up -d
 curl --fail http://127.0.0.1:8008/_matrix/client/versions
 docker compose -f dev/matrix/compose.yaml exec synapse \
   register_new_matrix_user -c /data/homeserver.yaml \
-  -u alice -p local-dev-password http://localhost:8008
+  -u alice -p local-dev-password --no-admin http://localhost:8008
 ```
 
 The GitHub Actions workflow also starts this disposable Synapse instance, creates the same test account, and signs in through the Android emulator. This exercises the debug-only HTTP route end to end.
