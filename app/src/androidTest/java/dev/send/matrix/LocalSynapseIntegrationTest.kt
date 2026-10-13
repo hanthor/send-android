@@ -74,8 +74,7 @@ class ZLocalSynapseIntegrationTest {
         } catch (timeout: Exception) {
             val texts = composeRule.onAllNodesWithText("", substring = true).fetchSemanticsNodes()
                 .mapNotNull { runCatching { it.config[androidx.compose.ui.semantics.SemanticsProperties.Text] }.getOrNull() }
-            println("SEND_DIAG visible texts after login: $texts")
-            throw timeout
+            throw AssertionError("Login-to-home timed out. Visible texts: $texts", timeout)
         }
         composeRule.onNodeWithContentDescription("Search").assertIsDisplayed()
         val repository = MatrixRepository.get(
