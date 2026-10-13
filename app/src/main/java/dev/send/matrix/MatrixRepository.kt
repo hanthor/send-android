@@ -319,9 +319,9 @@ class MatrixRepository(context: Context) {
                 isSpace = false,
             ),
         )
-        val createdRoom = sdk.getRoom(roomId) ?: error("The encrypted conversation was created but could not be loaded.")
-        val matrixRoom = toMatrixRoom(createdRoom)
-        _joinedRooms.value = (_joinedRooms.value.filterNot { it.id == roomId } + matrixRoom)
+        val displayName = recipient.substringAfter('@').substringBefore(':')
+        val createdRoom = MatrixRoom(roomId, displayName, encrypted = true, direct = true)
+        _joinedRooms.value = (_joinedRooms.value.filterNot { it.id == roomId } + createdRoom)
         roomId
     }
 
