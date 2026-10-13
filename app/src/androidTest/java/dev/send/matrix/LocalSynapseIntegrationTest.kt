@@ -126,7 +126,7 @@ class ZLocalSynapseIntegrationTest {
             .slidingSyncVersionBuilder(SlidingSyncVersionBuilder.NATIVE)
             .sqliteStore(SqliteStoreBuilder(root.resolve("store.db").absolutePath, "").key(ByteArray(32)))
             .sessionPaths(root.resolve("cache").absolutePath, root.resolve("crypto").absolutePath)
-            .build()
+            .let { builder -> runBlocking(Dispatchers.IO) { builder.build() } }
         var sync: SyncService? = null
         try {
             runBlocking(Dispatchers.IO) {
