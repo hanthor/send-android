@@ -11,7 +11,7 @@ import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.performTextInput
-import androidx.compose.ui.test.assertExists
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import java.io.File
@@ -90,9 +90,13 @@ class UiComparisonScreenshotTest {
         }
 
         saveScreenshot("send-conversation-screen.png")
-        composeRule.onNodeWithText("Sent").assertExists()
-        composeRule.onNodeWithText("Hey, are you free to talk?").performTouchInput { longClick() }
-        composeRule.onNodeWithText("😂").assertExists().performClick()
+        composeRule.onNodeWithText("Sent").assertIsDisplayed()
+        composeRule.onNodeWithText("Hey, are you free to talk?").performTouchInput {
+            down()
+            advanceEventTime(1_000)
+            up()
+        }
+        composeRule.onNodeWithText("😂").performClick()
         composeRule.runOnIdle {
             assertEquals("\$event-one" to "😂", selectedReaction)
         }
