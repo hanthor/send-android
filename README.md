@@ -1,9 +1,75 @@
 # Send
 
-Send is a standalone Android Matrix client with a conversation-first interface.
-It uses the Matrix Rust SDK (Kotlin/Android binding) for messaging and
-Element Call Android for native MatrixRTC audio calls. Only end-to-end
-encrypted rooms can be opened for messaging.
+[![Android CI](https://github.com/hanthor/send-android/actions/workflows/android.yml/badge.svg)](https://github.com/hanthor/send-android/actions/workflows/android.yml)
+[![License: AGPL-3.0-only](https://img.shields.io/badge/License-AGPL--3.0--only-blue.svg)](LICENSE)
+
+**Messages that stay yours.** Send is a standalone Android Matrix client with a
+Google Messages–style Material 3 interface: expressive, fast, and end-to-end
+encrypted by default. It uses the Matrix Rust SDK (Kotlin/Android binding) for
+messaging and Element Call Android for native MatrixRTC audio calls. Only
+end-to-end encrypted rooms can be opened for messaging.
+
+| Onboarding hero | Conversations | Encrypted chat |
+|---|---|---|
+| [![Pixel onboarding hero](docs/screenshots/onboarding-hero.png)](docs/screenshots/onboarding-hero.png) | [![Conversation list](docs/screenshots/conversations.png)](docs/screenshots/conversations.png) | [![Encrypted conversation](docs/screenshots/conversation.png)](docs/screenshots/conversation.png) |
+
+## Features
+
+- **Pixel-style onboarding** — animated Material scallop hero with orbital chat
+  bubbles and an E2EE lock badge, then a one-tap setup card.
+- **No `https://` typing** — enter a bare server (`reilly.asia`), a full Matrix
+  ID (`@you:reilly.asia`), or a full URL. Connection details resolve via
+  `.well-known/matrix/client`, with `https://<server>` fallback.
+- **Password-manager friendly** — a full Matrix ID in the username field
+  supplies the server automatically.
+- **Three ways in** — QR-code pairing, Single Sign-On, or username + password.
+- **Google Messages look** — floating pill search with live filtering,
+  deterministic pastel contact avatars, grouped chat bubbles (20 dp outer /
+  4 dp touching corners), filled pill composer, horizontal reaction bar with
+  overlapping reaction pills, dark-mode dynamic color.
+- **Encrypted everything** — unencrypted rooms stay hidden; reactions,
+  pagination, and outgoing audio calls included.
+
+## Signing in
+
+| Setup card | New encrypted chat | Reactions |
+|---|---|---|
+| [![Homeserver setup](docs/screenshots/sign-in.png)](docs/screenshots/sign-in.png) | [![New encrypted conversation](docs/screenshots/new-chat.png)](docs/screenshots/new-chat.png) | [![Reaction bar](docs/screenshots/reaction-picker.png)](docs/screenshots/reaction-picker.png) |
+
+1. Tap **Get started** (defaults to `matrix.org`, or pick a preset chip).
+2. Type any of: `reilly.asia`, `@you:reilly.asia`, `https://matrix.example.org`.
+3. Sign in with a QR code, SSO, or password — then start an encrypted chat.
+
+## Live demo (disposable Synapse)
+
+CI spins up a local Synapse, seeds demo accounts, creates an encrypted room,
+and sends a real message through the Matrix Rust SDK:
+
+| Create chat | Demo list | Demo message |
+|---|---|---|
+| [![Create encrypted conversation with Bob](docs/screenshots/demo-create-chat.png)](docs/screenshots/demo-create-chat.png) | [![Live demo conversation list](docs/screenshots/demo-conversations.png)](docs/screenshots/demo-conversations.png) | [![Live encrypted message](docs/screenshots/demo-conversation.png)](docs/screenshots/demo-conversation.png) |
+
+All PNGs are captured on the Android emulator at original resolution. Full-size
+sets ship with every green CI run as the `Send-UI-Screenshots` artifact.
+
+## Build and verify
+
+Builds and automated tests run in GitHub Actions (see
+[.github/workflows/android.yml](.github/workflows/android.yml)):
+
+- `./gradlew :app:assembleDebug :app:testDebugUnitTest :app:lintDebug`
+- Emulator instrumentation against disposable Synapse: real password sign-in,
+  bare-server and Matrix-ID login enablement, encrypted-room creation,
+  encrypted message send, reactions, and screenshot capture.
+- Green runs upload the debug APK (`Send-debug-APK`), test results
+  (`Send-Android-Test-Results`), and screenshots (`Send-UI-Screenshots`).
+
+## Docs
+
+- [Feature screenshot walkthrough](docs/SCREENSHOT_WALKTHROUGH.md) — automated scenarios and full-size screenshots.
+- [DEVELOPMENT.md](DEVELOPMENT.md) — disposable local Synapse backend and UI workflow.
+- [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) — implemented paths and known limits.
+- [ANDROID_INTEGRATIONS.md](ANDROID_INTEGRATIONS.md) — staged native-platform backlog.
 
 ## License
 
@@ -19,53 +85,3 @@ distributed builds. Other bundled libraries (Matrix Rust SDK, ZXing Android
 Embedded, AndroidX) are Apache-2.0; see
 [app/src/main/assets/THIRD_PARTY_NOTICES.txt](app/src/main/assets/THIRD_PARTY_NOTICES.txt)
 and the in-app "About & licenses" dialog.
-
-## Screenshots
-
-The sign-in screenshot is a Compose UI fixture. Screenshots showing the demo
-conversation list and conversation are captured from the live Android app
-connected to disposable Synapse. All PNGs retain their original emulator
-resolution and are linked to the full-size files.
-
-### Sign-in options
-
-[![Send sign-in screen](docs/screenshots/sign-in.png)](docs/screenshots/sign-in.png)
-
-### New encrypted conversation
-
-[![Create encrypted conversation with Bob](docs/screenshots/demo-create-chat.png)](docs/screenshots/demo-create-chat.png)
-
-### Live demo conversation list
-
-[![Live Send demo conversation list](docs/screenshots/demo-conversations.png)](docs/screenshots/demo-conversations.png)
-
-### Encrypted message send
-
-[![Live encrypted Send conversation](docs/screenshots/demo-conversation.png)](docs/screenshots/demo-conversation.png)
-
-The emulator walkthrough signs in as the demo user, creates an encrypted
-conversation with Bob, sends a sample message through the Matrix Rust SDK, and
-verifies it appears in the local timeline. QR/SSO/password sign-in,
-encrypted-room list and creation, encrypted text send, pagination, reactions,
-and outgoing audio-call controls are implemented. Incoming-message sync and
-calls need their respective working backend paths; calls require MatrixRTC
-infrastructure.
-
-## Build and verify
-
-Builds and automated tests run in GitHub Actions (see
-[.github/workflows/android.yml](.github/workflows/android.yml)):
-
-- `./gradlew :app:assembleDebug :app:testDebugUnitTest :app:lintDebug`
-- Android emulator instrumentation against disposable Synapse, including real
-  password sign-in, encrypted-room creation, and encrypted message send.
-- Successful runs upload the debug APK (`Send-debug-APK`), test results
-  (`Send-Android-Test-Results`), and full-resolution screenshots
-  (`Send-UI-Screenshots`).
-
-## Docs
-
-- [Feature screenshot walkthrough](docs/SCREENSHOT_WALKTHROUGH.md) — automated scenarios and full-size screenshots.
-- [DEVELOPMENT.md](DEVELOPMENT.md) — disposable local Synapse backend and UI workflow.
-- [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) — implemented paths and known limits.
-- [ANDROID_INTEGRATIONS.md](ANDROID_INTEGRATIONS.md) — staged native-platform backlog.
