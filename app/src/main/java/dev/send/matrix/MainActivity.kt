@@ -11,6 +11,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.browser.customtabs.CustomTabsIntent
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -33,6 +35,8 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -49,6 +53,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.platform.LocalContext
+import android.text.format.DateUtils
 import androidx.core.content.ContextCompat
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
@@ -63,6 +69,7 @@ private val Lavender = Color(0xFFE8EEFF)
 private val Ink = Color(0xFF202124)
 private val Muted = Color(0xFF65676B)
 private val Canvas = Color(0xFFF7F8FA)
+private val QuickReactions = listOf("👍", "❤️", "😂")
 
 class MainActivity : ComponentActivity() {
     private val repository by lazy { MatrixRepository.get(applicationContext) }
@@ -278,11 +285,11 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
                         catch (failure: Exception) { error = failure.message ?: "Older messages could not be loaded." }
                     }
                 },
-                onReact = { eventId ->
+                onReact = { eventId, emoji ->
                     val currentRoom = room
                     val currentTimeline = timeline
                     if (currentRoom != null && currentTimeline != null) scope.launch {
-                        try { repository.react(currentTimeline, currentRoom, eventId, "👍") }
+                        try { repository.react(currentTimeline, currentRoom, eventId, emoji) }
                         catch (failure: Exception) { error = failure.message ?: "Reaction could not be sent." }
                     }
                 },
@@ -454,6 +461,7 @@ private fun Initial(name: String) {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun ConversationScreen(
     title: String,
@@ -464,7 +472,7 @@ internal fun ConversationScreen(
     onBack: () -> Unit,
     onSend: () -> Unit,
     onOlder: () -> Unit,
-    onReact: (String) -> Unit,
+    onReact: (String, String) -> Unit,
     callState: ElementCallSnapshot?,
     onAudioCall: () -> Unit,
     onMute: () -> Unit,
@@ -472,6 +480,9 @@ internal fun ConversationScreen(
     onHangUp: () -> Unit,
     error: String,
 ) {
+    var reactionTargetId by remember { mutableStateOf<String?>(null) }
+    val context = LocalContext.current
+
     Column(Modifier.fillMaxSize().imePadding().padding(horizontal = 18.dp, vertical = 20.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = onBack) { Text("‹", fontSize = 28.sp) }
@@ -479,13 +490,19 @@ internal fun ConversationScreen(
                 Text(title, fontWeight = FontWeight.Medium, fontSize = 18.sp)
                 Text("🔒  End-to-end encrypted", fontSize = 12.sp, color = Muted)
             }
-        }
             if (isDirect) {
                 TextButton(onClick = onAudioCall, enabled = callState == null) { Text("Call") }
             }
-        TextButton(onClick = onOlder, modifier = Modifier.align(Alignment.CenterHorizontally)) { Text("Load older messages") }
+        }
+        TextButton(onClick = onOlder, modifier = Modifier.align(Alignment.CenterHorizontally)) {
+            Text("Load older messages")
+        }
         callState?.let { call ->
-            Surface(Modifier.fillMaxWidth().padding(vertical = 8.dp), shape = RoundedCornerShape(18.dp), color = Color(0xFFE9E5F4)) {
+            Surface(
+                Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                shape = RoundedCornerShape(18.dp),
+                color = Color(0xFFE9E5F4),
+            ) {
                 Column(Modifier.padding(14.dp)) {
                     Text(
                         when (val connection = call.connection) {
@@ -511,21 +528,68 @@ internal fun ConversationScreen(
                 }
             }
         }
-        LazyColumn(Modifier.weight(1f).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp), reverseLayout = true) {
+        LazyColumn(
+            Modifier.weight(1f).fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            reverseLayout = true,
+        ) {
             items(messages.asReversed(), key = { it.id }) { message ->
                 Column(Modifier.fillMaxWidth(), horizontalAlignment = if (message.own) Alignment.End else Alignment.Start) {
-                    Surface(color = if (message.own) Lavender else Color(0xFFE9E5F4), shape = RoundedCornerShape(18.dp)) {
-                        Text(message.text, Modifier.padding(horizontal = 15.dp, vertical = 11.dp))
+                    androidx.compose.foundation.layout.Box {
+                        Surface(
+                            modifier = Modifier.combinedClickable(
+                                onClick = {},
+                                onLongClick = { reactionTargetId = message.id },
+                            ),
+                            color = if (message.own) Lavender else Color(0xFFE9E5F4),
+                            shape = RoundedCornerShape(18.dp),
+                        ) {
+                            Text(message.text, Modifier.padding(horizontal = 15.dp, vertical = 11.dp))
+                        }
+                        DropdownMenu(
+                            expanded = reactionTargetId == message.id,
+                            onDismissRequest = { reactionTargetId = null },
+                        ) {
+                            QuickReactions.forEach { emoji ->
+                                DropdownMenuItem(
+                                    text = { Text(emoji) },
+                                    onClick = {
+                                        reactionTargetId = null
+                                        onReact(message.id, emoji)
+                                    },
+                                )
+                            }
+                        }
                     }
-                    if (message.reactions.isNotEmpty()) Text(message.reactions.joinToString(" "), color = Muted, fontSize = 12.sp)
-                    TextButton(onClick = { onReact(message.id) }) { Text("👍 React") }
+                    if (message.reactions.isNotEmpty()) {
+                        Text(message.reactions.joinToString(" "), color = Muted, fontSize = 12.sp)
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            DateUtils.formatDateTime(context, message.timestampMillis, DateUtils.FORMAT_SHOW_TIME),
+                            color = Muted,
+                            fontSize = 11.sp,
+                        )
+                        if (message.own) Text(" · Sent", color = Muted, fontSize = 11.sp)
+                    }
                 }
             }
         }
-        if (error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(vertical = 6.dp))
+        if (error.isNotBlank()) {
+            Text(error, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(vertical = 6.dp))
+        }
         Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(value = draft, onValueChange = onDraft, placeholder = { Text("Message") }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(26.dp), maxLines = 4)
-            TextButton(onClick = onSend, enabled = draft.isNotBlank(), modifier = Modifier.padding(start = 4.dp)) { Text("Send") }
+            OutlinedTextField(
+                value = draft,
+                onValueChange = onDraft,
+                placeholder = { Text("Message") },
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(26.dp),
+                maxLines = 4,
+            )
+            TextButton(onClick = onSend, enabled = draft.isNotBlank(), modifier = Modifier.padding(start = 4.dp)) {
+                Text("Send")
+            }
         }
     }
 }

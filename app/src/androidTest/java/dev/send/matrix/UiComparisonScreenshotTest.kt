@@ -9,12 +9,15 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.assertExists
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import java.io.File
 import org.junit.Rule
 import org.junit.Test
+import org.junit.Assert.assertEquals
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
@@ -45,7 +48,8 @@ class UiComparisonScreenshotTest {
     }
 
     @Test
-    fun capturesConversationScreenForVisualComparison() {
+    fun capturesConversationAndLongPressSendsSelectedReaction() {
+        var selectedReaction: Pair<String, String>? = null
         composeRule.setContent {
             MaterialTheme {
                 ConversationScreen(
@@ -54,13 +58,27 @@ class UiComparisonScreenshotTest {
                     draft = "",
                     onDraft = {},
                     messages = listOf(
-                        MatrixMessage("\$event-one", "@alice:example.org", "Hey, are you free to talk?", own = false, reactions = listOf("❤️")),
-                        MatrixMessage("\$event-two", "@me:example.org", "Sure, what's up?", own = true, reactions = emptyList()),
+                        MatrixMessage(
+                            id = "\$event-one",
+                            sender = "@alice:example.org",
+                            text = "Hey, are you free to talk?",
+                            own = false,
+                            timestampMillis = 1_746_000_000_000L,
+                            reactions = listOf("❤️"),
+                        ),
+                        MatrixMessage(
+                            id = "\$event-two",
+                            sender = "@me:example.org",
+                            text = "Sure, what's up?",
+                            own = true,
+                            timestampMillis = 1_746_000_060_000L,
+                            reactions = emptyList(),
+                        ),
                     ),
                     onBack = {},
                     onSend = {},
                     onOlder = {},
-                    onReact = {},
+                    onReact = { eventId, emoji -> selectedReaction = eventId to emoji },
                     callState = null,
                     onAudioCall = {},
                     onMute = {},
@@ -72,6 +90,12 @@ class UiComparisonScreenshotTest {
         }
 
         saveScreenshot("send-conversation-screen.png")
+        composeRule.onNodeWithText("Sent").assertExists()
+        composeRule.onNodeWithText("Hey, are you free to talk?").performTouchInput { longClick() }
+        composeRule.onNodeWithText("😂").assertExists().performClick()
+        composeRule.runOnIdle {
+            assertEquals("\$event-one" to "😂", selectedReaction)
+        }
     }
 
     private fun saveScreenshot(fileName: String) {

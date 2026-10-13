@@ -30,7 +30,14 @@ import org.matrix.rustcomponents.sdk.RoomPreset
 import org.matrix.rustcomponents.sdk.RoomVisibility
 
 data class MatrixRoom(val id: String, val name: String, val encrypted: Boolean, val direct: Boolean)
-data class MatrixMessage(val id: String, val sender: String, val text: String, val own: Boolean, val reactions: List<String>)
+data class MatrixMessage(
+    val id: String,
+    val sender: String,
+    val text: String,
+    val own: Boolean,
+    val timestampMillis: Long,
+    val reactions: List<String>,
+)
 
 class MatrixRepository(context: Context) {
     private val appContext = context.applicationContext
@@ -373,7 +380,7 @@ class MatrixRepository(context: Context) {
         val message = (content.content.kind as? org.matrix.rustcomponents.sdk.MsgLikeKind.Message)?.content ?: return null
         val id = (event.eventOrTransactionId as? org.matrix.rustcomponents.sdk.EventOrTransactionId.EventId)?.eventId
             ?: return null
-        return MatrixMessage(id, event.sender, message.body, event.isOwn, event.reactions.map { it.key })
+        return MatrixMessage(id, event.sender, message.body, event.isOwn, event.timestamp.toLong(), event.reactions.map { it.key })
     }
 
     suspend fun sendText(timeline: Timeline, room: Room, text: String) = withContext(Dispatchers.IO) {
