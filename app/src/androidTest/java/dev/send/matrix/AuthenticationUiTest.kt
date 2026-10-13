@@ -4,8 +4,8 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
-import androidx.compose.ui.test.onNodeWithText
-import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performScrollTo
@@ -22,7 +22,7 @@ class AuthenticationUiTest {
 
     @Test
     fun authenticationActionsRequireHomeserverAndPasswordFields() {
-        composeRule.onNodeWithText("Use username and password").performClick()
+        composeRule.onNodeWithText("Use username and password").performTouchInput { click() }
         composeRule.mainClock.advanceTimeBy(600)
         composeRule.onAllNodes(hasSetTextAction()).assertCountEquals(3)
         composeRule.onAllNodes(hasSetTextAction()).get(0).performTextInput("https://matrix.example.org")
@@ -35,7 +35,7 @@ class AuthenticationUiTest {
 
     @Test
     fun rejectsPlainHttpHomeserverBeforeLogin() {
-        composeRule.onNodeWithText("Use username and password").performClick()
+        composeRule.onNodeWithText("Use username and password").performTouchInput { click() }
         composeRule.mainClock.advanceTimeBy(600)
         composeRule.onAllNodes(hasSetTextAction()).assertCountEquals(3)
         composeRule.onAllNodes(hasSetTextAction()).get(0).performTextInput("http://matrix.example.org")
