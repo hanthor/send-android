@@ -43,9 +43,10 @@ class ZLocalSynapseIntegrationTest {
             InstrumentationRegistry.getInstrumentation().targetContext,
         )
         composeRule.waitUntil(timeoutMillis = 60_000) {
-            repository.joinedRooms.value.any { it.name == "Unencrypted test fixture" && !it.encrypted }
+            repository.joinedRooms.value.any { !it.encrypted }
         }
-        composeRule.onAllNodesWithText("Unencrypted test fixture").assertCountEquals(0)
+        val unencryptedRoom = repository.joinedRooms.value.first { !it.encrypted }
+        composeRule.onAllNodesWithText(unencryptedRoom.name).assertCountEquals(0)
 
         composeRule.onNodeWithText("New chat").performClick()
         composeRule.onNodeWithText("Matrix user ID").performTextInput("@bob:send.test")
