@@ -7,6 +7,8 @@ import android.os.Bundle
 import android.os.Build
 import android.text.format.DateUtils
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -48,6 +50,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.WindowInsets
@@ -66,6 +69,10 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.SentimentSatisfied
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
@@ -193,7 +200,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        acceptSsoCallback(intent?.data)
+        enableEdgeToEdge()
         setContent {
             val dark = isSystemInDarkTheme()
             val colors = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -324,9 +331,13 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
         controller = callSession?.controller,
         style = sendCallStyle,
     ) { overlayModifier ->
-    Surface(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).then(overlayModifier), color = MaterialTheme.colorScheme.surface, contentColor = MaterialTheme.colorScheme.onSurface) {
+    Surface(Modifier.fillMaxSize().then(overlayModifier), color = MaterialTheme.colorScheme.surface, contentColor = MaterialTheme.colorScheme.onSurface) {
         when {
-            loading -> Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+            loading -> Column(
+                Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
                 Text("Connecting to Matrix…", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 if (error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error)
             }
@@ -544,7 +555,7 @@ internal fun SignInScreen(
 private fun OnboardingHeroStep(onHomeserver: (String) -> Unit, homeserverBlank: Boolean, onNext: () -> Unit, onLegal: () -> Unit) {
     val colors = MaterialTheme.colorScheme
     Column(
-        modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 20.dp),
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 20.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Surface(
@@ -558,7 +569,9 @@ private fun OnboardingHeroStep(onHomeserver: (String) -> Unit, homeserverBlank: 
                 Text(text = "Send · Matrix E2EE", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold, color = colors.onSurface)
             }
         }
-        Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+        Spacer(Modifier.height(8.dp))
+        // Fixed height: never collapses on narrow viewports, scrolls instead.
+        Box(modifier = Modifier.height(270.dp).fillMaxWidth().padding(horizontal = 8.dp), contentAlignment = Alignment.Center) {
             PixelOnboardingHero()
         }
         Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -789,7 +802,7 @@ private fun OnboardingSetupStep(
 private fun FeatureChip(label: String) {
     val colors = MaterialTheme.colorScheme
     Surface(shape = RoundedCornerShape(50), color = colors.surfaceContainerHigh) {
-        Text(text = label, style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant, modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp))
+        Text(text = label, style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant, maxLines = 1, modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp))
     }
 }
 
@@ -940,8 +953,9 @@ internal fun HomeScreen(
                 color = MaterialTheme.colorScheme.surfaceContainerHigh,
             ) {
                 Row(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    SendBrandLogo(size = 28.dp)
+                    Spacer(modifier = Modifier.width(12.dp))
                     Icon(imageVector = Icons.Filled.Search, contentDescription = "Search", tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(modifier = Modifier.width(16.dp))
                     TextField(
                         value = query,
                         onValueChange = { query = it },
@@ -989,7 +1003,7 @@ internal fun HomeScreen(
                 }
             } else {
                 items(visibleRooms, key = { it.id }) { chat ->
-                    ConversationRow(name = chat.name, snippet = "End-to-end encrypted", timestamp = "›", onClick = { onOpen(chat) })
+                    ConversationRow(name = chat.name, snippet = "End-to-end encrypted", onClick = { onOpen(chat) })
                 }
             }
         }
@@ -998,40 +1012,126 @@ internal fun HomeScreen(
         LegalNoticesDialog(onDismiss = { showLegal = false })
     }
     if (showingNewChat) {
-        androidx.compose.material3.AlertDialog(
-            onDismissRequest = { if (!creatingDirectRoom) showingNewChat = false },
-            title = { Text("New encrypted conversation") },
-            text = {
-                OutlinedTextField(
-                    value = matrixUserId,
-                    onValueChange = { matrixUserId = it },
-                    label = { Text("Matrix user ID") },
-                    placeholder = { Text("@alice:example.org") },
-                    singleLine = true,
-                )
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        onCreateDirectRoom(matrixUserId)
-                        showingNewChat = false
-                    },
-                    enabled = !creatingDirectRoom && matrixUserId.trim().let {
-                        it.startsWith("@") && it.indexOf(':') > 1 && !it.any(Char::isWhitespace)
-                    },
-                ) {
-                    Text(if (creatingDirectRoom) "Creating…" else "Create")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showingNewChat = false }, enabled = !creatingDirectRoom) { Text("Cancel") }
+        BackHandler(enabled = !creatingDirectRoom) { showingNewChat = false }
+        NewConversationScreen(
+            value = matrixUserId,
+            onValue = { matrixUserId = it },
+            creating = creatingDirectRoom,
+            onBack = { if (!creatingDirectRoom) showingNewChat = false },
+            onCreate = {
+                onCreateDirectRoom(matrixUserId)
+                showingNewChat = false
             },
         )
     }
 }
 
 @Composable
-private fun ConversationRow(name: String, snippet: String, timestamp: String, onClick: () -> Unit) {
+private fun NewConversationScreen(
+    value: String,
+    onValue: (String) -> Unit,
+    creating: Boolean,
+    onBack: () -> Unit,
+    onCreate: () -> Unit,
+) {
+    // Full-screen Messages-style picker: To: bar on top, contact row below. No popup dialog.
+    val colors = MaterialTheme.colorScheme
+    val valid = !creating && value.trim().let {
+        it.startsWith("@") && it.indexOf(':') > 1 && !it.any(Char::isWhitespace)
+    }
+    Scaffold(
+        containerColor = colors.surface,
+        topBar = {
+            Surface(color = colors.surface, modifier = Modifier.statusBarsPadding()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    IconButton(onClick = onBack, enabled = !creating) {
+                        Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                    Text(
+                        text = "New conversation",
+                        style = MaterialTheme.typography.titleLarge,
+                        color = colors.onSurface,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = onCreate, enabled = valid) {
+                        Text(if (creating) "Creating…" else "Create")
+                    }
+                }
+            }
+        },
+    ) { innerPadding ->
+        androidx.compose.foundation.layout.Column(
+            modifier = Modifier.fillMaxSize().padding(innerPadding).padding(horizontal = 16.dp, vertical = 8.dp),
+        ) {
+            Surface(
+                modifier = Modifier.fillMaxWidth().height(56.dp),
+                shape = RoundedCornerShape(28.dp),
+                color = colors.surfaceContainerHigh,
+            ) {
+                Row(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(text = "To", style = MaterialTheme.typography.bodyLarge, color = colors.onSurfaceVariant)
+                    Spacer(modifier = Modifier.width(12.dp))
+                    TextField(
+                        value = value,
+                        onValueChange = onValue,
+                        placeholder = { Text("Matrix user ID") },
+                        singleLine = true,
+                        enabled = !creating,
+                        modifier = Modifier.weight(1f),
+                        colors = TextFieldDefaults.colors(
+                            focusedContainerColor = Color.Transparent,
+                            unfocusedContainerColor = Color.Transparent,
+                            focusedIndicatorColor = Color.Transparent,
+                            unfocusedIndicatorColor = Color.Transparent,
+                        ),
+                    )
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            if (value.isBlank()) {
+                Text(
+                    text = "Enter a full Matrix ID like @bob:example.org to start an encrypted conversation.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = colors.onSurfaceVariant,
+                )
+            } else if (valid) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).clickable { onCreate() }.padding(horizontal = 4.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    val (avatarBg, avatarFg) = avatarPalette(value.trim())
+                    Box(
+                        modifier = Modifier.size(48.dp).background(avatarBg, CircleShape),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(text = "?", style = MaterialTheme.typography.titleMedium, color = avatarFg)
+                    }
+                    Spacer(modifier = Modifier.width(16.dp))
+                    androidx.compose.foundation.layout.Column(modifier = Modifier.weight(1f)) {
+                        Text(text = "Create chat with ${value.trim()}", style = MaterialTheme.typography.titleMedium, color = colors.onSurface)
+                        Text(text = "End-to-end encrypted", style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant)
+                    }
+                }
+            } else {
+                Text(
+                    text = "That doesn't look like a Matrix ID yet — keep typing.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = colors.onSurfaceVariant,
+                )
+            }
+            if (creating) {
+                Spacer(Modifier.height(12.dp))
+                Text(text = "Creating encrypted conversation…", style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ConversationRow(name: String, snippet: String, onClick: () -> Unit) {
     Row(
         modifier = Modifier.fillMaxWidth().clickable { onClick() }.padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -1058,7 +1158,12 @@ private fun ConversationRow(name: String, snippet: String, timestamp: String, on
                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
-                Text(text = timestamp, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Icon(
+                    imageVector = Icons.Filled.Lock,
+                    contentDescription = "Encrypted",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(14.dp).padding(start = 8.dp),
+                )
             }
             Spacer(modifier = Modifier.height(2.dp))
             Text(
@@ -1091,9 +1196,10 @@ internal fun ConversationScreen(
     val context = LocalContext.current
     androidx.activity.compose.BackHandler { onBack() }
     Scaffold(
-        containerColor = MaterialTheme.colorScheme.surface,
+        containerColor = MaterialTheme.colorScheme.surfaceContainer,
         topBar = {
-            Surface(color = MaterialTheme.colorScheme.surface, modifier = Modifier.statusBarsPadding()) {
+            // Slightly elevated bar; the body sits in a 24.dp-top-corner sheet below it.
+            Surface(color = MaterialTheme.colorScheme.surfaceContainer, tonalElevation = 2.dp, modifier = Modifier.statusBarsPadding()) {
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -1101,14 +1207,15 @@ internal fun ConversationScreen(
                     IconButton(onClick = onBack) {
                         Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
+                    val (avatarBg, avatarFg) = avatarPalette(title)
                     Box(
-                        modifier = Modifier.size(40.dp).background(MaterialTheme.colorScheme.secondaryContainer, CircleShape),
+                        modifier = Modifier.size(40.dp).background(avatarBg, CircleShape),
                         contentAlignment = Alignment.Center,
                     ) {
                         Text(
-                            text = title.firstOrNull()?.toString().orEmpty(),
+                            text = title.firstOrNull()?.uppercase().orEmpty(),
                             style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                            color = avatarFg,
                         )
                     }
                     Spacer(modifier = Modifier.width(12.dp))
@@ -1125,36 +1232,66 @@ internal fun ConversationScreen(
             }
         },
         bottomBar = {
-            Surface(color = MaterialTheme.colorScheme.surface, modifier = Modifier.imePadding()) {
+            // Composer lives in the body sheet; nav padding keeps the 3-button bar clear.
+            Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, modifier = Modifier.navigationBarsPadding().imePadding()) {
                 androidx.compose.foundation.layout.Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
                     if (error.isNotBlank()) {
                         Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(bottom = 6.dp))
                     }
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        TextField(
-                            value = draft,
-                            onValueChange = onDraft,
-                            placeholder = { Text("Message") },
+                        // One sleek 48.dp pill: attach, field, emoji, gallery — all inside.
+                        Surface(
                             modifier = Modifier.weight(1f).heightIn(min = 48.dp),
                             shape = RoundedCornerShape(24.dp),
-                            maxLines = 4,
-                            colors = TextFieldDefaults.colors(
-                                focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
-                                unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
-                                focusedIndicatorColor = Color.Transparent,
-                                unfocusedIndicatorColor = Color.Transparent,
-                            ),
-                        )
+                            color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                        ) {
+                            Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                IconButton(onClick = {}) {
+                                    Icon(imageVector = Icons.Filled.Add, contentDescription = "Attach", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                TextField(
+                                    value = draft,
+                                    onValueChange = onDraft,
+                                    placeholder = { Text("Message") },
+                                    modifier = Modifier.weight(1f),
+                                    maxLines = 4,
+                                    colors = TextFieldDefaults.colors(
+                                        focusedContainerColor = Color.Transparent,
+                                        unfocusedContainerColor = Color.Transparent,
+                                        focusedIndicatorColor = Color.Transparent,
+                                        unfocusedIndicatorColor = Color.Transparent,
+                                    ),
+                                )
+                                IconButton(onClick = {}) {
+                                    Icon(imageVector = Icons.Filled.SentimentSatisfied, contentDescription = "Emoji", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                IconButton(onClick = {}) {
+                                    Icon(imageVector = Icons.Filled.Image, contentDescription = "Gallery", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                        }
                         Spacer(modifier = Modifier.width(8.dp))
-                        FilledIconButton(onClick = onSend, enabled = draft.isNotBlank()) {
-                            Icon(imageVector = Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
+                        // Circular action: voice note when empty, Send arrow when typing.
+                        if (draft.isBlank()) {
+                            IconButton(onClick = {}) {
+                                Icon(imageVector = Icons.Filled.Mic, contentDescription = "Voice message", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        } else {
+                            FilledIconButton(onClick = onSend) {
+                                Icon(imageVector = Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
+                            }
                         }
                     }
                 }
             }
         },
     ) { innerPadding ->
-        androidx.compose.foundation.layout.Column(modifier = Modifier.fillMaxSize().padding(innerPadding)) {
+        Surface(
+            modifier = Modifier.fillMaxSize().padding(innerPadding),
+            shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerLow,
+        ) {
+        androidx.compose.foundation.layout.Column(modifier = Modifier.fillMaxSize()) {
             TextButton(onClick = onOlder, modifier = Modifier.align(Alignment.CenterHorizontally)) {
                 Text("Load older messages")
             }
@@ -1173,10 +1310,25 @@ internal fun ConversationScreen(
                     val nextSame = chronoIndex < chronological.lastIndex && chronological[chronoIndex + 1].own == message.own
                     val isFirstInGroup = !prevSame
                     val isLastInGroup = !nextSame
+                    // Centered section header whenever the calendar day changes.
+                    val dayKey = android.text.format.DateFormat.format("yyyyMMdd", message.timestampMillis).toString()
+                    val prevDayKey = chronological.getOrNull(chronoIndex - 1)?.let {
+                        android.text.format.DateFormat.format("yyyyMMdd", it.timestampMillis).toString()
+                    }
+                    val isNewDay = prevDayKey != dayKey
                     androidx.compose.foundation.layout.Column(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalAlignment = if (message.own) Alignment.End else Alignment.Start,
                     ) {
+                        if (isNewDay) {
+                            Text(
+                                text = dayHeaderLabel(context, message.timestampMillis),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
+                            )
+                        }
                         MessageBubble(
                             text = message.text,
                             isFromMe = message.own,
@@ -1219,21 +1371,31 @@ internal fun ConversationScreen(
                                 )
                             }
                         }
-                        if (isLastInGroup) {
-                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp)) {
-                                Text(
-                                    DateUtils.formatDateTime(context, message.timestampMillis, DateUtils.FORMAT_SHOW_TIME),
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    fontSize = 11.sp,
-                                )
-                                if (message.own) Text(" · Sent", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
-                            }
+                        // Messages-style delivery state under own clusters; times live in day headers.
+                        if (message.own && isLastInGroup) {
+                            Text(
+                                "Sent",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp),
+                            )
                         }
                     }
                 }
             }
         }
     }
+}
+}
+private fun dayHeaderLabel(context: android.content.Context, timestampMillis: Long): String {
+    // "Tuesday, Oct 6 • 4:46 PM" section headers, Messages-style.
+    val day = DateUtils.formatDateTime(
+        context,
+        timestampMillis,
+        DateUtils.FORMAT_SHOW_WEEKDAY or DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_ABBREV_MONTH,
+    )
+    val time = DateUtils.formatDateTime(context, timestampMillis, DateUtils.FORMAT_SHOW_TIME)
+    return "$day • $time"
 }
 
 @Composable
