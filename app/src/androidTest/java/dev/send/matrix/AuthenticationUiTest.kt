@@ -25,7 +25,7 @@ class AuthenticationUiTest {
 
     @Test
     fun authenticationActionsRequireHomeserverAndPasswordFields() {
-        composeRule.onNodeWithText("Get started").performClick()
+        composeRule.onNodeWithText("Get started").performScrollTo().performClick()
         composeRule.onNodeWithText("Use username and password").performScrollTo().performTouchInput { click() }
         composeRule.mainClock.advanceTimeBy(600)
         composeRule.onAllNodes(hasSetTextAction()).assertCountEquals(3)
@@ -40,7 +40,7 @@ class AuthenticationUiTest {
 
     @Test
     fun bareServerNamesAndMatrixIdsEnableSignInActions() {
-        composeRule.onNodeWithText("Get started").performClick()
+        composeRule.onNodeWithText("Get started").performScrollTo().performClick()
         composeRule.onNodeWithText("Use username and password").performScrollTo().performTouchInput { click() }
         composeRule.mainClock.advanceTimeBy(600)
         // Bare server name: no https:// required.
@@ -57,7 +57,7 @@ class AuthenticationUiTest {
 
     @Test
     fun rejectsPlainHttpHomeserverBeforeLogin() {
-        composeRule.onNodeWithText("Get started").performClick()
+        composeRule.onNodeWithText("Get started").performScrollTo().performClick()
         composeRule.onNodeWithText("Use username and password").performScrollTo().performTouchInput { click() }
         composeRule.mainClock.advanceTimeBy(600)
         composeRule.onAllNodes(hasSetTextAction()).assertCountEquals(3)

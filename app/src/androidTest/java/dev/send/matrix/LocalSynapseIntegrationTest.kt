@@ -59,7 +59,7 @@ class ZLocalSynapseIntegrationTest {
 
     @Test
     fun signsInCreatesRoomAndVerifiesEncryptedDeliveryAndReactionOnBob() {
-        composeRule.onNodeWithText("Get started").performClick()
+        composeRule.onNodeWithText("Get started").performScrollTo().performClick()
         composeRule.onNodeWithText("Use username and password").performScrollTo().performTouchInput { click() }
         composeRule.mainClock.advanceTimeBy(600)
         composeRule.onAllNodes(hasSetTextAction()).assertCountEquals(3)

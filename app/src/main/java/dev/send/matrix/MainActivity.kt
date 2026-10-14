@@ -571,8 +571,8 @@ private fun OnboardingHeroStep(onHomeserver: (String) -> Unit, homeserverBlank: 
         }
         Spacer(Modifier.height(8.dp))
         // Fixed height: never collapses on narrow viewports, scrolls instead.
-        Box(modifier = Modifier.height(270.dp).fillMaxWidth().padding(horizontal = 8.dp), contentAlignment = Alignment.Center) {
-            PixelOnboardingHero()
+        Box(modifier = Modifier.height(240.dp).fillMaxWidth().padding(horizontal = 8.dp), contentAlignment = Alignment.Center) {
+            PixelOnboardingHero(modifier = Modifier.size(230.dp))
         }
         Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
@@ -590,12 +590,12 @@ private fun OnboardingHeroStep(onHomeserver: (String) -> Unit, homeserverBlank: 
                 textAlign = TextAlign.Center,
                 modifier = Modifier.padding(horizontal = 12.dp),
             )
-            Spacer(Modifier.height(28.dp))
+            Spacer(Modifier.height(20.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 FeatureChip("End-to-End Encrypted")
                 FeatureChip("Open Matrix Standard")
             }
-            Spacer(Modifier.height(28.dp))
+            Spacer(Modifier.height(20.dp))
             Button(
                 onClick = {
                     if (homeserverBlank) onHomeserver("matrix.org")
@@ -865,7 +865,7 @@ internal fun PixelOnboardingHero(modifier: Modifier = Modifier) {
     val bobA by transition.animateFloat(initialValue = -1f, targetValue = 1f, animationSpec = infiniteRepeatable(animation = tween(1800, easing = FastOutSlowInEasing), repeatMode = RepeatMode.Reverse), label = "BobA")
     val bobB by transition.animateFloat(initialValue = 1f, targetValue = -1f, animationSpec = infiniteRepeatable(animation = tween(2200, easing = FastOutSlowInEasing), repeatMode = RepeatMode.Reverse), label = "BobB")
     val orbit by transition.animateFloat(initialValue = 0f, targetValue = (2f * PI).toFloat(), animationSpec = infiniteRepeatable(animation = tween(9000, easing = LinearEasing), repeatMode = RepeatMode.Restart), label = "LockOrbit")
-    Box(modifier = modifier.size(280.dp), contentAlignment = Alignment.Center) {
+    Box(modifier = Modifier.size(280.dp).then(modifier), contentAlignment = Alignment.Center) {
         Canvas(modifier = Modifier.fillMaxSize().graphicsLayer { rotationZ = rotation }) {
             val cx = size.width / 2f
             val cy = size.height / 2f
