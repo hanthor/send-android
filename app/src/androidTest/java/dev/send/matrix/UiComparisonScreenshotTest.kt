@@ -50,7 +50,7 @@ class UiComparisonScreenshotTest {
         }
 
         saveScreenshot("send-login-hero-screen.png")
-        composeRule.onNodeWithText("Get started").performClick()
+        composeRule.onNodeWithText("Get started").performScrollTo().performClick()
         saveScreenshot("send-login-screen.png")
         composeRule.onNodeWithText("Scan QR code").assertIsDisplayed()
         composeRule.onNodeWithText("Continue with SSO").assertIsDisplayed()
