@@ -51,7 +51,7 @@ Verified by Android CI run [38739979359](https://github.com/hanthor/send-android
 - Not in CI: media (Alice's call stays in `ConnectingMedia` against Bob's SDK-only membership; nobody publishes media, and the RTC core's logs are off), lock-screen/full-screen display (CI's screen is on and unlocked, so the ring is a heads-up), ringtone/vibration. AndroidX Core-Telecom isn't used: Element Call owns call audio (its own audio-device controller, focus and microphone/camera foreground service), which a self-managed Telecom call would also claim. Track Element Call out of release-candidate; re-pin when stable.
 
 ### 4. Conversation behaviour parity — done
-Verified by Android CI run [38756437669](https://github.com/hanthor/send-android/actions/runs/38756437669) (`ZZConversationActionsIntegrationTest`, `ConversationActionsUiTest`).
+Verified by Android CI run [38758467321](https://github.com/hanthor/send-android/actions/runs/38758467321) (`ZZConversationActionsIntegrationTest`, `ConversationActionsUiTest`).
 - [x] Long-press: Messages' contextual action bar (Close, Reply, Copy, Edit for own text, Forward, Delete for own with confirm, Info) with the quick-reaction row floating over the bubble (+ full picker for more reactions).
 - [x] Swipe a bubble right to reply (resistance, haptic tick at the threshold, `SendMotion` spring back); "Replying to …" strip above the composer; sent replies (`Timeline.sendReply`) quote the original inside the bubble and tapping the quote scrolls to it, paginating back until it is loaded.
 - [x] Edit (`Timeline.edit` with `EditedContent.RoomMessage`) in the composer with an "Editing message" strip; edited messages say "Edited". Delete for everyone (`Timeline.redactEvent`) renders a muted "Message deleted" bubble.
