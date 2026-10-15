@@ -39,24 +39,25 @@ dismiss_onboarding() {
   done
 }
 
+reboot_and_wait() {
+  adb reboot
+  adb wait-for-device
+  until [ "$(adb shell getprop sys.boot_completed | tr -d '\r')" = 1 ]; do sleep 2; done
+}
+# adbd restarts after boot and on `adb root`; retry until it is root and reachable.
+as_root() {
+  for _ in $(seq 1 15); do
+    if adb root && adb wait-for-device && [ "$(adb shell id -u | tr -d '\r')" = 0 ]; then return 0; fi
+    sleep 3
+  done
+  return 1
+}
+
 if ! adb install -r -g "$apk"; then
   # google_apis ships an older Messages as a system app under another key. Remove it
   # (emulator runs with -writable-system) so the current Google-signed build installs.
   system_apk=$(adb shell pm path "$pkg" | head -1 | sed 's/^package://' | tr -d '\r')
   echo "Removing preinstalled $(dirname "$system_apk")"
-  reboot_and_wait() {
-    adb reboot
-    adb wait-for-device
-    until [ "$(adb shell getprop sys.boot_completed | tr -d '\r')" = 1 ]; do sleep 2; done
-  }
-  # adbd restarts after boot and on `adb root`; retry until it is root and reachable.
-  as_root() {
-    for _ in $(seq 1 15); do
-      if adb root && adb wait-for-device && [ "$(adb shell id -u | tr -d '\r')" = 0 ]; then return 0; fi
-      sleep 3
-    done
-    return 1
-  }
   # First remount disables verity and enables overlayfs; it only takes effect after a reboot.
   as_root
   adb remount || true
@@ -240,7 +241,10 @@ capture_panel() {
 }
 capture_panel emoji-picker "Show attach emoji and stickers screen" "Emoji" "Emoji, stickers & GIFs" ||
   skip emoji-picker "composer emoji button did not open a panel"
-# A real photo on the device so the media panel has something to show.
+# A real photo on the device so the media panel has something to show. Send's audit shots
+# (already pulled) leave the device too, so the gallery shows only this photo.
+adb shell "content delete --uri content://media/external/file --where \"relative_path LIKE 'Download/Send%'\"" || true
+adb shell rm -rf /sdcard/Download/Send || true
 python3 - <<'EOF'
 from PIL import Image
 Image.new("RGB", (640, 480), (66, 133, 244)).save("/tmp/gm-sample.jpg")
@@ -291,32 +295,32 @@ capture_voice_locked || skip voice-locked "hold + slide-up onto the lock did not
 # picture message from 555-0100 is written straight into the telephony provider; Messages imports
 # it like any message delivered while it was not running.
 inject_photo_mms() {
-  adb root >/dev/null && adb wait-for-device || return 1
-  [ "$(adb shell id -u | tr -d '\r')" = 0 ] || { echo "adbd is not root"; return 1; }
+  as_root || { why="adbd could not restart as root to write the telephony provider"; return 1; }
   local tid mid pid now
   tid=$(adb shell "content query --uri 'content://mms-sms/threadID?recipient=5550100'" | grep -o '_id=[0-9]*' | head -1 | cut -d= -f2)
-  [ -n "$tid" ] || { echo "no thread id"; return 1; }
+  [ -n "$tid" ] || { why="telephony provider returned no thread for 555-0100"; return 1; }
   now=$(date +%s)
   adb shell content insert --uri content://mms --bind thread_id:l:"$tid" --bind date:l:"$now" --bind date_sent:l:"$now" \
     --bind msg_box:i:1 --bind read:i:0 --bind seen:i:0 --bind m_type:i:132 --bind v:i:18 --bind text_only:i:0 \
     --bind ct_t:s:application/vnd.wap.multipart.related --bind m_id:s:gm"$now"
   mid=$(adb shell "content query --uri content://mms --projection _id --sort '_id DESC'" | grep -o '_id=[0-9]*' | head -1 | cut -d= -f2)
-  [ -n "$mid" ] || { echo "MMS insert failed"; return 1; }
+  [ -n "$mid" ] || { why="telephony provider rejected the MMS row"; return 1; }
   adb shell content insert --uri "content://mms/$mid/addr" --bind address:s:5550100 --bind type:i:137 --bind charset:i:106
   adb shell content insert --uri "content://mms/$mid/part" --bind seq:i:0 --bind ct:s:image/jpeg --bind name:s:photo.jpg --bind cl:s:photo.jpg
   pid=$(adb shell "content query --uri content://mms/$mid/part --projection _id" | grep -o '_id=[0-9]*' | head -1 | cut -d= -f2)
-  [ -n "$pid" ] || { echo "MMS part insert failed"; return 1; }
-  adb shell "content write --uri content://mms/part/$pid" </tmp/gm-sample.jpg || return 1
+  [ -n "$pid" ] || { why="telephony provider rejected the MMS image part"; return 1; }
+  adb shell "content write --uri content://mms/part/$pid" </tmp/gm-sample.jpg || { why="could not write the MMS image part"; return 1; }
   adb shell "content query --uri content://mms/$mid/part --projection _id:ct:_data"
 }
 capture_media_viewer() {
   inject_photo_mms || return 1
-  open_thread 555-0100 || return 1
-  $ui tap-any "~photo" "~image" "~picture" "id:image_attachment_view" || return 1
+  open_thread 555-0100 || { why="Messages did not import the injected 555-0100 photo thread"; return 1; }
+  $ui tap-any "~photo" "~image" "~picture" "id:image_attachment_view" || { why="no photo bubble in the 555-0100 thread"; return 1; }
   sleep 2.5
   shot media-viewer
 }
-capture_media_viewer || skip media-viewer "could not place a received photo in a thread (no MMS on the emulator) or open it"
+why="screencap failed"
+capture_media_viewer || skip media-viewer "no photo message to open: $why (the emulator has no MMS)"
 
 # Typing dots are an RCS signal sent by the other participant's client; the emulator has no
 # RCS registration and no second RCS party, and plain SMS never carries typing state.
@@ -333,12 +337,14 @@ sleep 2
 shot notification
 adb shell cmd statusbar collapse
 
-# Selection captures run last: the long-press overlay once took the software-GPU emulator
-# down, which must not cost the captures above.
-# Long-press an incoming bubble: contextual action bar + reaction row.
+# Selection captures run last: the long-press overlay took the software-GPU emulator down
+# twice (it hung, then disappeared, mid-screencap), which must not cost the captures above.
+# Cross-window blur (the likely culprit on swiftshader) is turned off for it, so Messages
+# draws its plain scrim instead of blurring the thread behind the selection.
 capture_message_actions() {
   open_thread 555-1234 || return 1
   read -r x y < <($ui center "Hey, are you free to talk?") || return 1
+  adb shell wm disable-blur 1 || true
   long_press "$x" "$y"
   sleep 1.5
   shot message-actions
