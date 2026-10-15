@@ -71,29 +71,43 @@ dismiss_onboarding
 sleep 2
 shot home
 
-# Conversation open transition: record, then open the seeded thread.
-adb shell screenrecord --time-limit 5 /sdcard/gm-open.mp4 &
-rec=$!
-sleep 1
-$ui tap-any "555-1234" "(555) 1234" "5551234" "+1 555-123-4" || $ui tap-any "Hey, are you free to talk?" "Made it home. Thanks for today!" || echo "::warning::conversation row not found"
-wait $rec || true
-adb pull /sdcard/gm-open.mp4 "$out/gm-open.mp4" >/dev/null
-sleep 1
+# Open transition: locate the row first (uiautomator dumps take seconds), then record
+# and tap immediately so the whole animation lands inside the recording.
+row=$($ui center "555-1234" "(555) 1234" "5551234" "+1 555-123-4" || $ui center "Hey, are you free to talk?" "Made it home. Thanks for today!" || true)
+if [ -n "$row" ]; then
+  adb shell screenrecord --time-limit 4 /sdcard/gm-open.mp4 &
+  rec=$!
+  sleep 1
+  adb shell input tap $row
+  wait $rec || true
+  adb pull /sdcard/gm-open.mp4 "$out/gm-open.mp4" >/dev/null
+else
+  echo "::warning::conversation row not found"
+fi
+sleep 2
 shot conversation
 
-# Composer morph: mic -> send when a draft exists.
+# Composer with a draft (send-state of the action button).
 adb shell input text "Sure%swhat's%sup?"
 sleep 1
 shot composer-typing
-adb shell input keyevent KEYCODE_BACK
-adb shell input keyevent KEYCODE_BACK
-sleep 1
-adb shell input keyevent KEYCODE_BACK
-sleep 2
 
-# New conversation screen from the FAB.
-$ui tap-any "Start chat" "New conversation" "Start new conversation" || echo "::warning::Start chat not found"
-sleep 2
-shot new-chat
+# New conversation screen from the FAB: relaunch to the list instead of guessing back presses.
+adb shell am force-stop "$pkg"
+adb shell monkey -p "$pkg" -c android.intent.category.LAUNCHER 1 >/dev/null
+$ui wait "Start chat" --timeout 30 || echo "::warning::conversation list did not reappear"
+fab=$($ui center "Start chat" "New conversation" "Start new conversation" || true)
+if [ -n "$fab" ]; then
+  adb shell screenrecord --time-limit 4 /sdcard/gm-new-chat.mp4 &
+  rec=$!
+  sleep 1
+  adb shell input tap $fab
+  wait $rec || true
+  adb pull /sdcard/gm-new-chat.mp4 "$out/gm-new-chat.mp4" >/dev/null
+  sleep 1
+  shot new-chat
+else
+  echo "::warning::Start chat not found"
+fi
 
 ls -la "$out"

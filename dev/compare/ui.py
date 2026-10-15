@@ -48,6 +48,12 @@ def main() -> int:
         adb("shell", "input", "tap", str(x), str(y))
         print(f"tapped {node.get('text') or node.get('content-desc')!r} at {x},{y}")
         return 0
+    if cmd == "center":
+        node = find(hierarchy(), args)
+        if node is None:
+            return 1
+        print(*center(node))
+        return 0
     if cmd == "wait":
         label = args[0]
         timeout = float(args[2]) if len(args) > 2 and args[1] == "--timeout" else 30

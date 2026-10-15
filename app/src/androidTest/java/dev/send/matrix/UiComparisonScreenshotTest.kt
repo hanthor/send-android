@@ -31,7 +31,7 @@ class UiComparisonScreenshotTest {
     @Test
     fun capturesMaterialSignInScreen() {
         composeRule.setContent {
-            MaterialTheme {
+            SendTheme {
                 SignInScreen(
                     homeserver = "",
                     onHomeserver = {},
@@ -61,7 +61,7 @@ class UiComparisonScreenshotTest {
     @Test
     fun newChatRequiresAValidMatrixUserIdAndCapturesHomeScreen() {
         composeRule.setContent {
-            MaterialTheme {
+            SendTheme {
                 HomeScreen(
                     rooms = listOf(MatrixRoom("!alice:example.org", "Alice", encrypted = true, direct = true)),
                     onOpen = {},
@@ -74,7 +74,7 @@ class UiComparisonScreenshotTest {
         }
 
         saveScreenshot("send-home-screen.png")
-        composeRule.onNodeWithText("New chat", useUnmergedTree = true).performClick()
+        composeRule.onNodeWithText("Start chat", useUnmergedTree = true).performClick()
         composeRule.onNodeWithText("Create").assertIsNotEnabled()
         composeRule.onNodeWithText("Matrix user ID").performTextInput("@alice:example.org")
         saveScreenshot("send-new-chat-dialog.png")
@@ -85,7 +85,7 @@ class UiComparisonScreenshotTest {
     fun capturesConversationAndLongPressSendsSelectedReaction() {
         var selectedReaction: Pair<String, String>? = null
         composeRule.setContent {
-            MaterialTheme {
+            SendTheme {
                 ElementCallOverlay(controller = null) { _ ->
                     ConversationScreen(
                         title = "Alice",

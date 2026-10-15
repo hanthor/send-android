@@ -68,10 +68,9 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Call
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Image
-import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.automirrored.outlined.Chat
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.SentimentSatisfied
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Search
@@ -92,8 +91,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.dynamicDarkColorScheme
-import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -138,59 +135,58 @@ import io.element.android.call.impl.ElementCallPictureInPicture
 import io.element.android.call.api.ElementCallController
 private val QuickReactions = listOf("👍", "❤️", "😂", "😮", "😢", "🙏")
 
-// Google Messages Material 3 avatar palettes (container to content pairs).
-private val AvatarPalettesLight = listOf(
-    Color(0xFFD3E3FD) to Color(0xFF041E49),
-    Color(0xFFC4EED0) to Color(0xFF072711),
-    Color(0xFFFFEFC3) to Color(0xFF3E2723),
-    Color(0xFFF9DEDC) to Color(0xFF410E0B),
-    Color(0xFFE8DEF8) to Color(0xFF1D192B),
-    Color(0xFFD0F0F7) to Color(0xFF00363D),
+// Messages-style contact avatars: saturated solid fills with a white glyph.
+private val AvatarColors = listOf(
+    Color(0xFF4285F4), Color(0xFF5BB974), Color(0xFFFCC934), Color(0xFFEE675C),
+    Color(0xFFAF5CF7), Color(0xFF4ECDE6), Color(0xFFFA903E), Color(0xFFFF63B8),
 )
-private val AvatarPalettesDark = listOf(
-    Color(0xFF0842A0) to Color(0xFFD3E3FD),
-    Color(0xFF0F5223) to Color(0xFFC4EED0),
-    Color(0xFF5B4300) to Color(0xFFFFEFC3),
-    Color(0xFF8C1D18) to Color(0xFFF9DEDC),
-    Color(0xFF4A4458) to Color(0xFFE8DEF8),
-    Color(0xFF004F58) to Color(0xFFD0F0F7),
-)
+
+// Static palette measured from Google Messages on the comparison emulator (cool
+// neutral surfaces, tonal-blue accents, pink voice button). Messages does not
+// follow the wallpaper there, so neither does Send.
 private val GoogleLightColors = lightColorScheme(
-    primary = Color(0xFF0B57D0),
+    primary = Color(0xFF415F91),
     onPrimary = Color(0xFFFFFFFF),
-    primaryContainer = Color(0xFFD3E3FD),
-    onPrimaryContainer = Color(0xFF041E49),
-    secondaryContainer = Color(0xFFC2E7FF),
-    onSecondaryContainer = Color(0xFF001D35),
-    surface = Color(0xFFFDFCFB),
-    onSurface = Color(0xFF1F1F1F),
-    onSurfaceVariant = Color(0xFF444746),
-    surfaceContainerLow = Color(0xFFF7F9FC),
-    surfaceContainer = Color(0xFFF0F4F9),
-    surfaceContainerHigh = Color(0xFFE9EEF6),
-    surfaceContainerHighest = Color(0xFFDDE3EA),
+    primaryContainer = Color(0xFFD6E3FF),
+    onPrimaryContainer = Color(0xFF001B3E),
+    secondaryContainer = Color(0xFFDAE2F9),
+    onSecondaryContainer = Color(0xFF131C2B),
+    tertiaryContainer = Color(0xFFFAD8FD),
+    onTertiaryContainer = Color(0xFF2E0D33),
+    surface = Color(0xFFF9F9FF),
+    onSurface = Color(0xFF191C20),
+    onSurfaceVariant = Color(0xFF44474E),
+    surfaceContainerLow = Color(0xFFF3F3FA),
+    surfaceContainer = Color(0xFFEDEDF4),
+    surfaceContainerHigh = Color(0xFFE3E5ED),
+    surfaceContainerHighest = Color(0xFFDDDFE7),
 )
 private val GoogleDarkColors = darkColorScheme(
-    primary = Color(0xFFA8C7FA),
-    onPrimary = Color(0xFF062E6F),
-    primaryContainer = Color(0xFF0842A0),
-    onPrimaryContainer = Color(0xFFD3E3FD),
-    secondaryContainer = Color(0xFF004A77),
-    onSecondaryContainer = Color(0xFFC2E7FF),
-    surface = Color(0xFF131314),
-    onSurface = Color(0xFFE3E3E3),
-    onSurfaceVariant = Color(0xFFC4C7C5),
-    surfaceContainerLow = Color(0xFF1B1B1F),
-    surfaceContainer = Color(0xFF1E1F20),
-    surfaceContainerHigh = Color(0xFF282A2C),
-    surfaceContainerHighest = Color(0xFF333537),
+    primary = Color(0xFFAAC7FF),
+    onPrimary = Color(0xFF0A305F),
+    primaryContainer = Color(0xFF284777),
+    onPrimaryContainer = Color(0xFFD6E3FF),
+    secondaryContainer = Color(0xFF3E4759),
+    onSecondaryContainer = Color(0xFFDAE2F9),
+    tertiaryContainer = Color(0xFF5C3F61),
+    onTertiaryContainer = Color(0xFFFAD8FD),
+    surface = Color(0xFF111318),
+    onSurface = Color(0xFFE2E2E9),
+    onSurfaceVariant = Color(0xFFC4C6D0),
+    surfaceContainerLow = Color(0xFF191C20),
+    surfaceContainer = Color(0xFF1D2024),
+    surfaceContainerHigh = Color(0xFF282A2F),
+    surfaceContainerHighest = Color(0xFF33353A),
 )
 
 @Composable
+internal fun SendTheme(content: @Composable () -> Unit) {
+    MaterialTheme(colorScheme = if (isSystemInDarkTheme()) GoogleDarkColors else GoogleLightColors, content = content)
+}
+
 private fun avatarPalette(name: String): Pair<Color, Color> {
-    val palettes = if (isSystemInDarkTheme()) AvatarPalettesDark else AvatarPalettesLight
-    val index = (name.hashCode().let { if (it == Int.MIN_VALUE) 0 else kotlin.math.abs(it) }) % palettes.size
-    return palettes[index]
+    val index = (name.hashCode().let { if (it == Int.MIN_VALUE) 0 else kotlin.math.abs(it) }) % AvatarColors.size
+    return AvatarColors[index] to Color.White
 }
 
 class MainActivity : ComponentActivity() {
@@ -202,15 +198,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            val dark = isSystemInDarkTheme()
-            val colors = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                if (dark) dynamicDarkColorScheme(this) else dynamicLightColorScheme(this)
-            } else if (dark) {
-                GoogleDarkColors
-            } else {
-                GoogleLightColors
-            }
-            MaterialTheme(colorScheme = colors) { SendApp(repository, this@MainActivity) }
+            SendTheme { SendApp(repository, this@MainActivity) }
         }
     }
 
@@ -941,21 +929,23 @@ internal fun HomeScreen(
     var matrixUserId by rememberSaveable { mutableStateOf("") }
     var showLegal by rememberSaveable { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
+    var searching by rememberSaveable { mutableStateOf(false) }
     val encryptedRooms = rooms.filter { it.encrypted }
     val visibleRooms = if (query.isBlank()) encryptedRooms else encryptedRooms.filter { it.name.contains(query, ignoreCase = true) }
+    val colors = MaterialTheme.colorScheme
+    BackHandler(enabled = searching) { searching = false; query = "" }
     Scaffold(
-        containerColor = MaterialTheme.colorScheme.surface,
+        containerColor = colors.surfaceContainer,
         topBar = {
-            // Google Messages floating pill search bar: 56.dp, 28.dp corners, surfaceContainerHigh.
-            Surface(
-                modifier = Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp).height(56.dp),
-                shape = RoundedCornerShape(28.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            // Messages: plain top bar — wordmark left, search + account right; no pill.
+            Row(
+                modifier = Modifier.fillMaxWidth().statusBarsPadding().height(64.dp).padding(start = 16.dp, end = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Row(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    SendBrandLogo(size = 28.dp)
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Icon(imageVector = Icons.Filled.Search, contentDescription = "Search", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (searching) {
+                    IconButton(onClick = { searching = false; query = "" }) {
+                        Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Close search")
+                    }
                     TextField(
                         value = query,
                         onValueChange = { query = it },
@@ -969,8 +959,20 @@ internal fun HomeScreen(
                             unfocusedIndicatorColor = Color.Transparent,
                         ),
                     )
+                } else {
+                    SendBrandLogo(size = 28.dp)
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text(
+                        text = "Send",
+                        style = MaterialTheme.typography.titleLarge.copy(fontSize = 22.sp),
+                        color = colors.onSurfaceVariant,
+                        modifier = Modifier.weight(1f),
+                    )
+                    IconButton(onClick = { searching = true }) {
+                        Icon(imageVector = Icons.Filled.Search, contentDescription = "Search", tint = colors.onSurface)
+                    }
                     IconButton(onClick = { showLegal = true }) {
-                        Icon(imageVector = Icons.Filled.AccountCircle, contentDescription = "Profile", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(30.dp))
+                        Icon(imageVector = Icons.Filled.AccountCircle, contentDescription = "Account", tint = colors.primary, modifier = Modifier.size(32.dp))
                     }
                 }
             }
@@ -978,25 +980,31 @@ internal fun HomeScreen(
         floatingActionButton = {
             ExtendedFloatingActionButton(
                 onClick = { showingNewChat = true },
-                containerColor = MaterialTheme.colorScheme.primaryContainer,
-                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                containerColor = colors.primaryContainer,
+                contentColor = colors.onPrimaryContainer,
                 shape = RoundedCornerShape(16.dp),
-                icon = { Icon(Icons.Filled.Edit, contentDescription = null) },
-                text = { Text("New chat") },
+                icon = { Icon(Icons.AutoMirrored.Outlined.Chat, contentDescription = null) },
+                text = { Text("Start chat", style = MaterialTheme.typography.titleMedium) },
             )
         },
     ) { innerPadding ->
-        LazyColumn(
+        // List sits on a rounded-top sheet below the header, as in Messages.
+        Surface(
             modifier = Modifier.fillMaxSize().padding(innerPadding),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 8.dp),
+            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+            color = colors.surface,
         ) {
-            if (error.isNotBlank()) item { Text(error, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) }
-            if (notice.isNotBlank()) item { Text(notice, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) }
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(top = 8.dp, bottom = 96.dp),
+        ) {
+            if (error.isNotBlank()) item { Text(error, color = colors.error, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) }
+            if (notice.isNotBlank()) item { Text(notice, color = colors.onSurfaceVariant, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) }
             if (visibleRooms.isEmpty()) {
                 item {
                     Text(
                         if (encryptedRooms.isNotEmpty()) "No conversations match “$query”." else if (rooms.any { !it.encrypted }) "Unencrypted rooms are hidden. Send only opens end-to-end encrypted conversations." else "No conversations are available yet.",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = colors.onSurfaceVariant,
                         style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 24.dp),
                     )
@@ -1006,6 +1014,7 @@ internal fun HomeScreen(
                     ConversationRow(name = chat.name, snippet = "End-to-end encrypted", onClick = { onOpen(chat) })
                 }
             }
+        }
         }
     }
     if (showLegal) {
@@ -1133,26 +1142,16 @@ private fun NewConversationScreen(
 @Composable
 private fun ConversationRow(name: String, snippet: String, onClick: () -> Unit) {
     Row(
-        modifier = Modifier.fillMaxWidth().clickable { onClick() }.padding(horizontal = 16.dp, vertical = 12.dp),
+        modifier = Modifier.fillMaxWidth().clickable { onClick() }.padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        val (avatarBg, avatarFg) = avatarPalette(name)
-        Box(
-            modifier = Modifier.size(48.dp).background(avatarBg, CircleShape),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                text = name.firstOrNull()?.uppercase().orEmpty(),
-                style = MaterialTheme.typography.titleMedium,
-                color = avatarFg,
-            )
-        }
+        Avatar(name = name, size = 52.dp)
         Spacer(modifier = Modifier.width(16.dp))
         androidx.compose.foundation.layout.Column(modifier = Modifier.weight(1f)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     text = name,
-                    style = MaterialTheme.typography.titleMedium,
+                    style = MaterialTheme.typography.titleMedium.copy(fontSize = 18.sp),
                     color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 1,
                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
@@ -1168,11 +1167,25 @@ private fun ConversationRow(name: String, snippet: String, onClick: () -> Unit) 
             Spacer(modifier = Modifier.height(2.dp))
             Text(
                 text = snippet,
-                style = MaterialTheme.typography.bodyMedium,
+                style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
                 overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
             )
+        }
+    }
+}
+
+@Composable
+private fun Avatar(name: String, size: androidx.compose.ui.unit.Dp) {
+    // Messages: saturated solid circle, white initial (person glyph when there is no name).
+    val (bg, fg) = avatarPalette(name)
+    Box(modifier = Modifier.size(size).background(bg, CircleShape), contentAlignment = Alignment.Center) {
+        val initial = name.firstOrNull { it.isLetterOrDigit() }?.uppercase()
+        if (initial != null) {
+            Text(text = initial, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Medium, color = fg)
+        } else {
+            Icon(imageVector = Icons.Filled.Person, contentDescription = null, tint = fg, modifier = Modifier.size(size * 0.6f))
         }
     }
 }
@@ -1193,68 +1206,78 @@ internal fun ConversationScreen(
     error: String,
 ) {
     var reactionTargetId by remember { mutableStateOf<String?>(null) }
+    var showMenu by remember { mutableStateOf(false) }
     val context = LocalContext.current
     androidx.activity.compose.BackHandler { onBack() }
     Scaffold(
         containerColor = MaterialTheme.colorScheme.surfaceContainer,
         topBar = {
-            // Slightly elevated bar; the body sits in a 24.dp-top-corner sheet below it.
-            Surface(color = MaterialTheme.colorScheme.surfaceContainer, tonalElevation = 2.dp, modifier = Modifier.statusBarsPadding()) {
+            // Messages: back, avatar, title only, call, overflow. Body is a rounded sheet below.
+            Surface(color = MaterialTheme.colorScheme.surfaceContainer, modifier = Modifier.statusBarsPadding()) {
                 Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 8.dp),
+                    modifier = Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     IconButton(onClick = onBack) {
                         Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
-                    val (avatarBg, avatarFg) = avatarPalette(title)
-                    Box(
-                        modifier = Modifier.size(40.dp).background(avatarBg, CircleShape),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            text = title.firstOrNull()?.uppercase().orEmpty(),
-                            style = MaterialTheme.typography.titleMedium,
-                            color = avatarFg,
-                        )
-                    }
-                    Spacer(modifier = Modifier.width(12.dp))
-                    androidx.compose.foundation.layout.Column(modifier = Modifier.weight(1f)) {
-                        Text(title, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface, maxLines = 1)
-                        Text("End-to-end encrypted", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
+                    Avatar(name = title, size = 40.dp)
+                    Spacer(modifier = Modifier.width(14.dp))
+                    Text(
+                        title,
+                        style = MaterialTheme.typography.titleLarge,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
                     if (isDirect) {
                         IconButton(onClick = onAudioCall) {
                             Icon(imageVector = Icons.Filled.Call, contentDescription = "Call")
+                        }
+                    }
+                    Box {
+                        IconButton(onClick = { showMenu = true }) {
+                            Icon(imageVector = Icons.Filled.MoreVert, contentDescription = "More options")
+                        }
+                        DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+                            androidx.compose.material3.DropdownMenuItem(
+                                text = { Text("End-to-end encrypted") },
+                                leadingIcon = { Icon(Icons.Filled.Lock, contentDescription = null) },
+                                enabled = false,
+                                onClick = {},
+                            )
+                            androidx.compose.material3.DropdownMenuItem(
+                                text = { Text("Load older messages") },
+                                onClick = { showMenu = false; onOlder() },
+                            )
                         }
                     }
                 }
             }
         },
         bottomBar = {
-            // Composer lives in the body sheet; nav padding keeps the 3-button bar clear.
-            Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, modifier = Modifier.navigationBarsPadding().imePadding()) {
-                androidx.compose.foundation.layout.Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+            Surface(color = MaterialTheme.colorScheme.surface, modifier = Modifier.navigationBarsPadding().imePadding()) {
+                androidx.compose.foundation.layout.Column(modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 6.dp, bottom = 10.dp)) {
                     if (error.isNotBlank()) {
                         Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(bottom = 6.dp))
                     }
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        // One sleek 48.dp pill: attach, field, emoji, gallery — all inside.
+                    var showEmoji by remember { mutableStateOf(false) }
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
+                        // Messages composer: 56dp pill with the field and inline emoji action.
                         Surface(
-                            modifier = Modifier.weight(1f).heightIn(min = 48.dp),
-                            shape = RoundedCornerShape(24.dp),
-                            color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                            modifier = Modifier.weight(1f).heightIn(min = 56.dp),
+                            shape = RoundedCornerShape(28.dp),
+                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
                         ) {
-                            Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                                IconButton(onClick = {}) {
-                                    Icon(imageVector = Icons.Filled.Add, contentDescription = "Attach", tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
+                            Row(Modifier.fillMaxWidth().padding(start = 8.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                                 TextField(
                                     value = draft,
                                     onValueChange = onDraft,
                                     placeholder = { Text("Message") },
                                     modifier = Modifier.weight(1f),
                                     maxLines = 4,
+                                    textStyle = MaterialTheme.typography.bodyLarge,
                                     colors = TextFieldDefaults.colors(
                                         focusedContainerColor = Color.Transparent,
                                         unfocusedContainerColor = Color.Transparent,
@@ -1262,24 +1285,41 @@ internal fun ConversationScreen(
                                         unfocusedIndicatorColor = Color.Transparent,
                                     ),
                                 )
-                                IconButton(onClick = {}) {
-                                    Icon(imageVector = Icons.Filled.SentimentSatisfied, contentDescription = "Emoji", tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                                IconButton(onClick = {}) {
-                                    Icon(imageVector = Icons.Filled.Image, contentDescription = "Gallery", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Box {
+                                    IconButton(onClick = { showEmoji = true }) {
+                                        Icon(imageVector = Icons.Filled.SentimentSatisfied, contentDescription = "Emoji", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    DropdownMenu(
+                                        expanded = showEmoji,
+                                        onDismissRequest = { showEmoji = false },
+                                        shape = RoundedCornerShape(24.dp),
+                                        containerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                                    ) {
+                                        Row(modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
+                                            QuickReactions.forEach { emoji ->
+                                                TextButton(onClick = { onDraft(draft + emoji); showEmoji = false }) {
+                                                    Text(emoji, fontSize = 20.sp)
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
                         Spacer(modifier = Modifier.width(8.dp))
-                        // Circular action: voice note when empty, Send arrow when typing.
-                        if (draft.isBlank()) {
-                            IconButton(onClick = {}) {
-                                Icon(imageVector = Icons.Filled.Mic, contentDescription = "Voice message", tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                        } else {
-                            FilledIconButton(onClick = onSend) {
-                                Icon(imageVector = Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
-                            }
+                        // Messages' 56dp circular action button.
+                        FilledIconButton(
+                            onClick = onSend,
+                            enabled = draft.isNotBlank(),
+                            modifier = Modifier.size(56.dp),
+                            colors = androidx.compose.material3.IconButtonDefaults.filledIconButtonColors(
+                                containerColor = MaterialTheme.colorScheme.primary,
+                                contentColor = MaterialTheme.colorScheme.onPrimary,
+                                disabledContainerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                                disabledContentColor = MaterialTheme.colorScheme.onTertiaryContainer,
+                            ),
+                        ) {
+                            Icon(imageVector = Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
                         }
                     }
                 }
@@ -1288,13 +1328,10 @@ internal fun ConversationScreen(
     ) { innerPadding ->
         Surface(
             modifier = Modifier.fillMaxSize().padding(innerPadding),
-            shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
-            color = MaterialTheme.colorScheme.surfaceContainerLow,
+            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+            color = MaterialTheme.colorScheme.surface,
         ) {
         androidx.compose.foundation.layout.Column(modifier = Modifier.fillMaxSize()) {
-            TextButton(onClick = onOlder, modifier = Modifier.align(Alignment.CenterHorizontally)) {
-                Text("Load older messages")
-            }
             LazyColumn(
                 modifier = Modifier.weight(1f).fillMaxWidth(),
                 reverseLayout = true,
@@ -1371,13 +1408,14 @@ internal fun ConversationScreen(
                                 )
                             }
                         }
-                        // Messages-style delivery state under own clusters; times live in day headers.
-                        if (message.own && isLastInGroup) {
+                        // Messages: time under every cluster, plus delivery state for own messages.
+                        if (isLastInGroup) {
+                            val time = DateUtils.formatDateTime(context, message.timestampMillis, DateUtils.FORMAT_SHOW_TIME)
                             Text(
-                                "Sent",
-                                style = MaterialTheme.typography.labelSmall,
+                                if (message.own) "$time · Sent" else time,
+                                style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp),
+                                modifier = Modifier.padding(start = 26.dp, end = 26.dp, top = 2.dp, bottom = 8.dp),
                             )
                         }
                     }
@@ -1388,13 +1426,14 @@ internal fun ConversationScreen(
 }
 }
 private fun dayHeaderLabel(context: android.content.Context, timestampMillis: Long): String {
-    // "Tuesday, Oct 6 • 4:46 PM" section headers, Messages-style.
+    // Messages: time only for today, otherwise "Tuesday, Oct 6 • 4:46 PM".
+    val time = DateUtils.formatDateTime(context, timestampMillis, DateUtils.FORMAT_SHOW_TIME)
+    if (DateUtils.isToday(timestampMillis)) return time
     val day = DateUtils.formatDateTime(
         context,
         timestampMillis,
         DateUtils.FORMAT_SHOW_WEEKDAY or DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_ABBREV_MONTH,
     )
-    val time = DateUtils.formatDateTime(context, timestampMillis, DateUtils.FORMAT_SHOW_TIME)
     return "$day • $time"
 }
 
@@ -1422,8 +1461,9 @@ fun MessageBubble(text: String, isFromMe: Boolean, isFirstInGroup: Boolean, isLa
     ) {
         Surface(
             shape = shape,
-            color = if (isFromMe) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHigh,
-            contentColor = if (isFromMe) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+            // Messages uses tonal blue for sent bubbles, not a saturated primary fill.
+            color = if (isFromMe) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
+            contentColor = if (isFromMe) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.widthIn(max = 280.dp).combinedClickable(onClick = {}, onLongClick = onLongPress),
         ) {
             Text(text = text, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
