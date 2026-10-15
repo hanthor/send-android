@@ -24,7 +24,7 @@ Each phase ships through PRs with Android CI green; anything CI's emulator
 cannot drive is called out and verified on a device.
 
 ### 1. E2EE account essentials (blocks everything) — done
-Verified by [Android CI run 38710089747](https://github.com/hanthor/send-android/actions/runs/38710089747) (`ZZAccountSecurityIntegrationTest`, `SecurityUiTest`).
+Verified by Android CI runs [38710089747](https://github.com/hanthor/send-android/actions/runs/38710089747) and [38711983718](https://github.com/hanthor/send-android/actions/runs/38711983718) (`ZZAccountSecurityIntegrationTest`, `SecurityUiTest`).
 - [x] Logout (SDK logout + local store wipe).
 - [x] Device verification (SAS emoji) and cross-signing bootstrap.
 - [x] Key backup + recovery key setup/restore; clear "can't decrypt" bubbles with recovery prompt.
