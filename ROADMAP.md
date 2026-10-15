@@ -14,7 +14,7 @@ Baseline: Google Messages `20260924` compared on the same emulator
 | Motion | ~45% | Screen open/close transitions, M3 spring tokens, expand/collapse springs | FAB collapse on scroll, list item animations, predictive back, shared-element avatar, bubble entry, swipe gestures |
 | System integration | 0% | — | Notifications, push, inline reply, shortcuts, share target, bubbles |
 | Calling | ~20% | Outgoing 1:1 audio via Element Call, mute/routing, PiP, ongoing-call notification | Incoming ring, accept/decline, video, CallStyle/Telecom, call events in timeline, group calls |
-| Account & E2EE safety | ~35% | Password/QR/SSO login, well-known discovery, session restore, Keystore-wrapped store | Logout, device verification, key backup / recovery key, decryption-failure UX |
+| Account & E2EE safety | ~85% | Password/QR/SSO login, well-known discovery, session restore, Keystore-wrapped store, sign-out with store wipe, cross-signing bootstrap, recovery/key backup setup and restore, SAS emoji verification, unverified-session banner, "Waiting for this message…" bubbles | Change/reset recovery key, reset identity when no verified device or key is left, session list (other devices) |
 
 Overall: **looks ~85–90% like Messages, behaves ~35–40% like it.**
 
@@ -23,11 +23,13 @@ Overall: **looks ~85–90% like Messages, behaves ~35–40% like it.**
 Each phase ships through PRs with Android CI green; anything CI's emulator
 cannot drive is called out and verified on a device.
 
-### 1. E2EE account essentials (blocks everything)
-- Logout (SDK logout + local store wipe).
-- Device verification (SAS emoji) and cross-signing bootstrap.
-- Key backup + recovery key setup/restore; clear "can't decrypt" bubbles with recovery prompt.
-- *Acceptance:* a second Alice device verifies, restores history from backup, and decrypts in CI.
+### 1. E2EE account essentials (blocks everything) — done
+Verified by [Android CI run 38710089747](https://github.com/hanthor/send-android/actions/runs/38710089747) (`ZZAccountSecurityIntegrationTest`, `SecurityUiTest`).
+- [x] Logout (SDK logout + local store wipe).
+- [x] Device verification (SAS emoji) and cross-signing bootstrap.
+- [x] Key backup + recovery key setup/restore; clear "can't decrypt" bubbles with recovery prompt.
+- [x] *Acceptance:* a second Alice device verifies, restores history from backup, and decrypts in CI.
+- Not end to end in CI: the app as the *requesting* side of SAS ("Verify this device"); CI drives that side with a second SDK client and the app accepts. Fixtures cover the app's screens for it.
 
 ### 2. Notifications & push
 - Pusher via `Client.setPusher` (UnifiedPush first, FCM optional); background sync fallback.
