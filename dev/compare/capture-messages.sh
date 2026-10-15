@@ -29,21 +29,22 @@ if ! adb install -r -g "$apk"; then
   # (emulator runs with -writable-system) so the current Google-signed build installs.
   system_apk=$(adb shell pm path "$pkg" | head -1 | sed 's/^package://' | tr -d '\r')
   echo "Removing preinstalled $(dirname "$system_apk")"
-  adb root
-  adb wait-for-device
-  if ! adb remount; then
+  reboot_and_wait() {
     adb reboot
     adb wait-for-device
     until [ "$(adb shell getprop sys.boot_completed | tr -d '\r')" = 1 ]; do sleep 2; done
-    adb root
-    adb wait-for-device
-    adb remount
-  fi
+  }
+  # First remount disables verity and enables overlayfs; it only takes effect after a reboot.
+  adb root
+  adb wait-for-device
+  adb remount || true
+  reboot_and_wait
+  adb root
+  adb wait-for-device
+  adb remount
   adb shell rm -rf "$(dirname "$system_apk")"
   adb shell pm uninstall "$pkg" || true
-  adb reboot
-  adb wait-for-device
-  until [ "$(adb shell getprop sys.boot_completed | tr -d '\r')" = 1 ]; do sleep 2; done
+  reboot_and_wait
   adb install -r -g "$apk"
 fi
 adb shell dumpsys package "$pkg" | grep -m1 versionName | tr -d ' ' >"$out/gm-version.txt" || true
