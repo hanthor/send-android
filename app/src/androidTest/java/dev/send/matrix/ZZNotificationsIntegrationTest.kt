@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.content.Intent
 import android.os.Bundle
 import android.service.notification.StatusBarNotification
+import androidx.compose.ui.test.ComposeTimeoutException
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -143,15 +144,16 @@ class ZZNotificationsIntegrationTest {
                 .setPendingIntentBackgroundActivityStartMode(ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED)
                 .toBundle(),
         )
-        waitFor("the tapped conversation on screen", 60_000, ::conversationState) {
-            NotificationRouter.visibleRoomId == roomId && repository.messages.value.any { it.text == third }
+        // Compose waits: the app's UI has to run (and recompose) to act on the tapped intent.
+        waitForUi("the tapped conversation on screen", 60_000, ::conversationState) {
+            NotificationRouter.visibleRoomId == roomId && composeRule.onAllNodesWithText(third).fetchSemanticsNodes().isNotEmpty()
         }
-        composeRule.waitUntil(timeoutMillis = 30_000) { composeRule.onAllNodesWithText(third).fetchSemanticsNodes().isNotEmpty() }
         waitFor("the opened conversation's notification to clear", 10_000, { notificationState(roomId) }) { conversationNotification(roomId) == null }
         val fourth = "Seen in the app $stamp"
         bobSends(fourth)
-        waitFor("Bob's message in the open conversation", 60_000, ::conversationState) { repository.messages.value.any { it.text == fourth } }
-        composeRule.waitUntil(timeoutMillis = 30_000) { composeRule.onAllNodesWithText(fourth).fetchSemanticsNodes().isNotEmpty() }
+        waitForUi("Bob's message in the open conversation", 60_000, ::conversationState) {
+            composeRule.onAllNodesWithText(fourth).fetchSemanticsNodes().isNotEmpty()
+        }
         Thread.sleep(QUIET_PERIOD_MS)
         assertNull(notificationState(roomId), conversationNotification(roomId))
 
@@ -283,6 +285,15 @@ class ZZNotificationsIntegrationTest {
             "messages=${repository.messages.value.map { "${it.sender}:${it.decryptionFailure ?: it.text}" }}"
 
     private fun activityState(): Lifecycle.State? = runCatching { composeRule.activityRule.scenario.state }.getOrNull()
+
+    /** Compose's waitUntil (which keeps the app's UI composing), reporting app state on timeout. */
+    private fun waitForUi(what: String, timeoutMillis: Long, state: () -> String, condition: () -> Boolean) {
+        try {
+            composeRule.waitUntil(timeoutMillis = timeoutMillis, condition = condition)
+        } catch (timeout: ComposeTimeoutException) {
+            throw AssertionError("Timed out waiting for $what; ${state()}", timeout)
+        }
+    }
 
     /** Polls off the main thread: the activity may be stopped, so Compose's idling isn't used here. */
     private fun waitFor(what: String, timeoutMillis: Long, state: () -> String, condition: () -> Boolean) {

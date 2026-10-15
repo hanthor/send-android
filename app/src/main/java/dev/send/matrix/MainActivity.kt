@@ -250,6 +250,35 @@ class MainActivity : ComponentActivity() {
         pipController?.let { ElementCallPictureInPicture.onUserLeaveHint(this, it) }
     }
 
+    override fun onResume() {
+        super.onResume()
+        NotificationRouter.activityResumed = true
+        conversationVisible(NotificationRouter.openRoomId)
+    }
+
+    override fun onPause() {
+        NotificationRouter.activityResumed = false
+        super.onPause()
+    }
+
+    override fun onDestroy() {
+        // A recreated activity's UI reports its conversation again.
+        NotificationRouter.openRoomId = null
+        super.onDestroy()
+    }
+
+    /** SendApp reports the conversation it shows (null for the list); see [NotificationRouter.visibleRoomId]. */
+    internal fun showConversation(roomId: String?) {
+        NotificationRouter.openRoomId = roomId
+        if (lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) conversationVisible(roomId)
+    }
+
+    /** The user sees [roomId]: its notification goes, and the system ties its shortcut/notification to this screen. */
+    private fun conversationVisible(roomId: String?) {
+        if (roomId != null) MessageNotifier.cancel(this, roomId)
+        setLocusContext(roomId?.let { android.content.LocusId(it) }, null)
+    }
+
     override fun onNewIntent(intent: android.content.Intent) {
         super.onNewIntent(intent)
         // A conversation request is consumed into UI state, so it doesn't replace the activity's launch intent.
@@ -330,19 +359,12 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
         PushRegistration.start(activity)
         if (!notificationsAllowed(activity) && !notificationPermissionPrompted(activity)) showNotificationPrompt = true
     }
-    // The conversation the user is looking at: it doesn't notify, its notification is cleared, read receipts
-    // follow it, and the system matches its shortcut/notification to this screen (LocusId).
+    // Read receipts follow the conversation the user is looking at.
     val conversationOnScreen = activeRoomId.takeIf {
         it.isNotBlank() && timeline != null && lifecycleState.isAtLeast(Lifecycle.State.RESUMED)
     }
-    DisposableEffect(conversationOnScreen) {
-        NotificationRouter.visibleRoomId = conversationOnScreen
-        if (conversationOnScreen != null) MessageNotifier.cancel(activity, conversationOnScreen)
-        activity.setLocusContext(conversationOnScreen?.let { android.content.LocusId(it) }, null)
-        onDispose {
-            if (NotificationRouter.visibleRoomId == conversationOnScreen) NotificationRouter.visibleRoomId = null
-        }
-    }
+    val conversationShown = activeRoomId.takeIf { it.isNotBlank() && timeline != null }
+    LaunchedEffect(conversationShown) { activity.showConversation(conversationShown) }
     val messages by repository.messages.collectAsState()
     // Opening a conversation (and every new arrival while it is open) sends a read receipt so unread badges clear.
     val latestMessageId = messages.lastOrNull()?.id

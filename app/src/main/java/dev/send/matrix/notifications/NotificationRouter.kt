@@ -25,8 +25,13 @@ internal object NotificationRouter {
     private val notifiedLock = Any()
     private var notified: LinkedHashSet<String>? = null
 
-    /** The conversation open in the resumed activity: its messages show there, so they don't notify. */
-    @Volatile var visibleRoomId: String? = null
+    /** Conversation the activity shows (UI state), whether or not the activity is in the foreground. */
+    @Volatile var openRoomId: String? = null
+    /** Set from MainActivity's onResume/onPause, so it is current even while Compose isn't drawing. */
+    @Volatile var activityResumed = false
+
+    /** The conversation the user is looking at: its messages show there, so they don't notify. */
+    val visibleRoomId: String? get() = openRoomId.takeIf { activityResumed }
 
     /** Called on the SDK's sync thread: copies the event out, then decides off that thread. */
     fun onSyncNotification(context: Context, item: NotificationItem, roomId: String) {
@@ -110,7 +115,7 @@ internal object NotificationRouter {
             prefs(context).edit().remove(KEY_SINCE).remove(KEY_NOTIFIED).commit()
             notified = null
         }
-        visibleRoomId = null
+        openRoomId = null
     }
 
     private fun since(context: Context): Long {
