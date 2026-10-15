@@ -1480,7 +1480,7 @@ private fun NewConversationScreen(
                         Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                     Text(
-                        text = if (groupMode) "New group" else "New chat",
+                        text = if (groupMode) "New group chat" else "New chat",
                         style = MaterialTheme.typography.titleLarge,
                         color = colors.onSurface,
                         modifier = Modifier.weight(1f),
@@ -1673,12 +1673,6 @@ private fun ConversationRow(room: MatrixRoom, muted: Boolean, onClick: () -> Uni
             }
             Spacer(modifier = Modifier.height(2.dp))
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = Icons.Filled.Lock,
-                    contentDescription = "Encrypted",
-                    tint = colors.onSurfaceVariant,
-                    modifier = Modifier.padding(end = 4.dp).size(14.dp),
-                )
                 Text(
                     text = room.lastMessage ?: "End-to-end encrypted",
                     style = MaterialTheme.typography.bodyLarge,
@@ -1882,20 +1876,37 @@ internal fun ConversationScreen(
                                 IconButton(onClick = { documentPicker.launch(arrayOf("*/*")) }) {
                                     Icon(imageVector = Icons.Outlined.AddCircleOutline, contentDescription = "Attach file", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
-                                TextField(
+                                // Same decoration as TextField but with Messages' tight inner padding so the
+                                // placeholder stays on one line next to three inline actions.
+                                val composerInteraction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+                                val composerColors = TextFieldDefaults.colors(
+                                    focusedContainerColor = Color.Transparent,
+                                    unfocusedContainerColor = Color.Transparent,
+                                    focusedIndicatorColor = Color.Transparent,
+                                    unfocusedIndicatorColor = Color.Transparent,
+                                )
+                                androidx.compose.foundation.text.BasicTextField(
                                     value = draft,
                                     onValueChange = onDraft,
-                                    placeholder = { Text("Message") },
                                     modifier = Modifier.weight(1f),
                                     maxLines = 4,
-                                    textStyle = MaterialTheme.typography.bodyLarge,
-                                    colors = TextFieldDefaults.colors(
-                                        focusedContainerColor = Color.Transparent,
-                                        unfocusedContainerColor = Color.Transparent,
-                                        focusedIndicatorColor = Color.Transparent,
-                                        unfocusedIndicatorColor = Color.Transparent,
-                                    ),
-                                )
+                                    textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
+                                    cursorBrush = androidx.compose.ui.graphics.SolidColor(MaterialTheme.colorScheme.primary),
+                                    interactionSource = composerInteraction,
+                                ) { innerTextField ->
+                                    TextFieldDefaults.DecorationBox(
+                                        value = draft,
+                                        innerTextField = innerTextField,
+                                        enabled = true,
+                                        singleLine = false,
+                                        visualTransformation = androidx.compose.ui.text.input.VisualTransformation.None,
+                                        interactionSource = composerInteraction,
+                                        placeholder = { Text("Message", maxLines = 1, softWrap = false) },
+                                        colors = composerColors,
+                                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp, vertical = 16.dp),
+                                        container = {},
+                                    )
+                                }
                                 Box {
                                     IconButton(onClick = { showEmoji = true }) {
                                         Icon(imageVector = Icons.Filled.SentimentSatisfied, contentDescription = "Emoji", tint = MaterialTheme.colorScheme.onSurfaceVariant)

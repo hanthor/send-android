@@ -30,7 +30,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.InsertDriveFile
-import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.outlined.Image as ImageIcon
@@ -448,7 +450,8 @@ internal fun VoiceRecordButton(
         modifier = Modifier
             .size(56.dp)
             .scale(if (recording) 1.15f else 1f)
-            .background(if (recording) colors.primary else colors.tertiaryContainer, CircleShape)
+            // Messages: tonal pink at rest, solid red while recording.
+            .background(if (recording) colors.error else colors.tertiaryContainer, CircleShape)
             .semantics {
                 contentDescription = "Voice message"
                 role = Role.Button
@@ -479,9 +482,10 @@ internal fun VoiceRecordButton(
         contentAlignment = Alignment.Center,
     ) {
         Icon(
-            Icons.Filled.Mic,
+            // Messages uses a waveform glyph rather than a microphone.
+            Icons.Filled.GraphicEq,
             contentDescription = null,
-            tint = if (recording) colors.onPrimary else colors.onTertiaryContainer,
+            tint = if (recording) colors.onError else colors.onTertiaryContainer,
         )
     }
 }
@@ -491,13 +495,18 @@ internal fun VoiceRecordButton(
 internal fun RecordingIndicator(elapsedMillis: Long, cancelling: Boolean, modifier: Modifier = Modifier) {
     val colors = MaterialTheme.colorScheme
     Row(modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(10.dp).background(colors.error, CircleShape))
-        Spacer(Modifier.width(10.dp))
-        Text(formatDuration(elapsedMillis), style = MaterialTheme.typography.bodyLarge, color = colors.onSurface)
-        Spacer(Modifier.width(12.dp))
+        Box(Modifier.size(8.dp).background(colors.error, CircleShape))
+        Spacer(Modifier.width(8.dp))
+        val seconds = elapsedMillis / 1000
+        Text("%02d:%02d".format(seconds / 60, seconds % 60), style = MaterialTheme.typography.bodyLarge, color = colors.onSurface)
+        Spacer(Modifier.width(16.dp))
+        // Messages: trash + chevron hint the slide-to-cancel gesture.
+        Icon(Icons.Outlined.Delete, contentDescription = null, tint = if (cancelling) colors.error else colors.onSurfaceVariant, modifier = Modifier.size(20.dp))
+        Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = null, tint = colors.onSurfaceVariant, modifier = Modifier.size(20.dp))
+        Spacer(Modifier.width(8.dp))
         Text(
-            if (cancelling) "Release to cancel" else "Release to send · slide away to cancel",
-            style = MaterialTheme.typography.bodyMedium,
+            if (cancelling) "Release to cancel" else "Slide to cancel",
+            style = MaterialTheme.typography.bodyLarge,
             color = if (cancelling) colors.error else colors.onSurfaceVariant,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
