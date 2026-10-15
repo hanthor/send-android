@@ -18,6 +18,7 @@ send_tests=(
   dev.send.matrix.NotificationsUiTest
   dev.send.matrix.ConversationActionsUiTest
   dev.send.matrix.ListManagementUiTest
+  dev.send.matrix.DetailsSettingsUiTest
 )
 if ./gradlew --no-daemon "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g" :app:assembleDebug :app:assembleDebugAndroidTest &&
   adb install -r -g app/build/outputs/apk/debug/app-debug.apk &&

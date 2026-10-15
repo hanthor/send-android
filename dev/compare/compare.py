@@ -32,7 +32,7 @@ PAIRS = {
     "media-viewer": ("gm-media-viewer", "send-media-viewer-device"),
     "typing": ("gm-typing", "send-typing-device"),
     "account": ("gm-account", "send-account-device"),
-    "settings": ("gm-settings", "send-security-device"),
+    "settings": ("gm-settings", "send-settings-device"),
     "notification": ("gm-notification", "send-notification-device"),
     # Conversation list management (phase 5).
     "swipe-archive": ("gm-swipe-archive", "send-swipe-archive-device"),
@@ -45,6 +45,18 @@ PAIRS = {
     "blocked-contacts": ("gm-blocked-contacts", "send-blocked-contacts-device"),
     "starred": ("gm-starred", "send-starred-messages-device"),
     "message-selection": ("gm-message-selection", "send-message-selection-device"),
+    # Conversation details, profile and settings (phase 6).
+    "details-dm": ("gm-details", "send-details-dm-device"),
+    "details-group": ("gm-details", "send-details-group-device"),
+    "details-notifications": ("gm-details-notifications", "send-details-notifications-device"),
+    "people-sheet": ("gm-people-sheet", "send-people-sheet-device"),
+    "media-grid": ("gm-media-grid", "send-media-grid-device"),
+    "add-people": ("gm-add-people", "send-add-people-device"),
+    "profile": ("gm-account", "send-profile-device"),
+    "settings-dark": ("gm-settings", "send-settings-dark-device"),
+    "settings-theme": ("gm-settings-theme", "send-settings-theme-device"),
+    "settings-previews": ("gm-settings-previews", "send-settings-previews-device"),
+    "devices": ("gm-device-pairing", "send-devices-device"),
 }
 
 # element -> labels matched against text / content-desc (first hit wins), or an EditText class match.
@@ -74,6 +86,9 @@ ELEMENTS = {
     "block action": ["block"],
     "star action": ["star", "unstar", "star message"],
     "select more action": ["select more", "select"],
+    # Conversation details.
+    "details action": ["details"],
+    "add people action": ["add people", "add members"],
 }
 
 

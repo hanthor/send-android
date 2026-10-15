@@ -533,4 +533,149 @@ capture_blocked() {
 }
 capture_blocked || skip blocked-contacts "$why"
 
+# ---- Conversation details, people, settings and device pairing (phase 6), all best-effort. ----
+# They run last: some rows hand over to system Settings, which outlives a Messages force-stop.
+screen_height=$(adb shell wm size | grep -o '[0-9]*x[0-9]*' | tail -1 | cut -dx -f2 || true)
+screen_height=${screen_height:-2400}
+focused() { adb shell dumpsys window | grep -E 'mCurrentFocus|mFocusedApp' | tr -s ' ' || true; }
+in_messages() { [[ $(focused) == *"$pkg"* ]]; }
+scroll_up() {
+  adb shell input swipe $((screen_width / 2)) $((screen_height * 3 / 4)) $((screen_width / 2)) $((screen_height / 4)) 400
+  sleep 1.5
+}
+scroll_down() {
+  adb shell input swipe $((screen_width / 2)) $((screen_height / 4)) $((screen_width / 2)) $((screen_height * 3 / 4)) 400
+  sleep 1.5
+}
+
+# Thread ⋮ (More) → Details.
+open_details() {
+  open_thread "$1" || { why="could not open the $1 thread"; return 1; }
+  $ui tap-any "More" "More options" || { why="conversation overflow (More) not found"; return 1; }
+  { $ui wait "Details" --timeout 10 && $ui tap-any "Details"; } || { why="no Details entry in the conversation overflow"; return 1; }
+  sleep 2.5
+}
+capture_details() {
+  open_details 555-1234 || return 1
+  shot details || { why="screencap of Details failed"; return 1; }
+  scroll_up
+  shot details-scrolled || true
+  if cmp -s "$out/gm-details.xml" "$out/gm-details-scrolled.xml"; then
+    rm -f "$out/gm-details-scrolled.png" "$out/gm-details-scrolled.xml"
+    skip details-scrolled "the Details page does not scroll: every row fits on screen"
+  fi
+}
+capture_details || { skip details "$why"; skip details-scrolled "$why"; }
+
+# Details → Notifications: Messages' own page, or the system notification channel page.
+capture_details_notifications() {
+  open_details 555-1234 || return 1
+  if ! $ui center "Notifications" >/dev/null; then scroll_up; fi
+  $ui tap-any "Notifications" "~notifications" || { why="no Notifications row on Details"; return 1; }
+  sleep 2.5
+  if ! in_messages; then
+    skip details-notifications "Details → Notifications leaves Messages for system Settings ($(focused))"
+    adb shell input keyevent KEYCODE_BACK
+    return 0
+  fi
+  shot details-notifications
+}
+capture_details_notifications || skip details-notifications "$why"
+
+# Details → the participant row: a contact card/sheet if Messages shows one in-app.
+capture_people_sheet() {
+  open_details 555-1234 || return 1
+  # The last 555-1234 label on the page is the participant row (the first may be the header).
+  local row x1 y1 x2 y2
+  row=$($ui labels | grep -F "'555-1234'" | tail -1 | grep -o '\[[0-9]*,[0-9]*\]\[[0-9]*,[0-9]*\]' || true)
+  [ -n "$row" ] || { why="no 555-1234 participant row on Details"; return 1; }
+  read -r x1 y1 x2 y2 <<<"$(echo "$row" | tr '[],' '   ')"
+  adb shell input tap $(((x1 + x2) / 2)) $(((y1 + y2) / 2))
+  sleep 2.5
+  if ! in_messages; then
+    skip people-sheet "the participant row leaves Messages ($(focused))"
+    adb shell input keyevent KEYCODE_BACK
+    return 0
+  fi
+  shot people-sheet
+}
+capture_people_sheet || skip people-sheet "$why"
+
+# Thread ⋮ (More) → Add people.
+capture_add_people() {
+  open_thread 555-1234 || { why="could not open the 555-1234 thread"; return 1; }
+  $ui tap-any "More" "More options" || { why="conversation overflow (More) not found"; return 1; }
+  { $ui wait "Add people" --timeout 10 && $ui tap-any "Add people"; } || { why="no Add people entry in the conversation overflow"; return 1; }
+  sleep 2.5
+  shot add-people
+}
+capture_add_people || skip add-people "$why"
+
+# The 555-0100 thread holds the injected photo: its Details may list shared media.
+capture_media_grid() {
+  open_details 555-0100 || return 1
+  if ! $ui tap-any "~view all" "~photos" "~media"; then
+    scroll_up
+    $ui tap-any "~view all" "~photos" "~media" || { why="Details of the photo thread lists no media section"; return 1; }
+  fi
+  sleep 2.5
+  shot media-grid
+}
+capture_media_grid || skip media-grid "$why"
+
+# Account menu → Messages settings: Choose theme dialog, Automatic previews page, the rows below the fold
+# and Notifications.
+open_settings() {
+  open_account_menu || { why="account menu unavailable"; return 1; }
+  $ui tap-any "Messages settings" || { why="no Messages settings in the account menu"; return 1; }
+  $ui wait "Choose theme" "Notifications" --timeout 15 || { why="Messages settings did not open"; return 1; }
+  sleep 1
+}
+capture_settings_theme() {
+  open_settings || return 1
+  $ui tap-any "Choose theme" || { why="no Choose theme row in Messages settings"; return 1; }
+  sleep 2
+  shot settings-theme
+  $ui tap-any "Cancel" || adb shell input keyevent KEYCODE_BACK
+}
+capture_settings_theme || skip settings-theme "$why"
+capture_settings_previews() {
+  open_settings || return 1
+  scroll_up
+  $ui tap-any "Automatic previews" || { why="no Automatic previews row in Messages settings"; return 1; }
+  sleep 2
+  shot settings-previews
+}
+capture_settings_previews || skip settings-previews "$why"
+capture_settings_scrolled() {
+  open_settings || return 1
+  scroll_up
+  scroll_up
+  scroll_up
+  shot settings-scrolled
+}
+capture_settings_scrolled || skip settings-scrolled "$why"
+capture_settings_notifications() {
+  open_settings || return 1
+  $ui tap-any "Notifications" || { why="no Notifications row in Messages settings"; return 1; }
+  sleep 2.5
+  if ! in_messages; then
+    skip settings-notifications "Messages settings → Notifications leaves Messages for system Settings ($(focused))"
+    adb shell input keyevent KEYCODE_BACK
+    return 0
+  fi
+  shot settings-notifications
+}
+capture_settings_notifications || skip settings-notifications "$why"
+
+# Account menu → Device pairing.
+capture_device_pairing() {
+  open_account_menu || { why="account menu unavailable"; return 1; }
+  $ui tap-any "Device pairing" || { why="no Device pairing entry in the account menu"; return 1; }
+  sleep 3
+  in_messages || { why="Device pairing left Messages ($(focused))"; return 1; }
+  shot device-pairing
+}
+capture_device_pairing || skip device-pairing "$why"
+
 ls -la "$out"
