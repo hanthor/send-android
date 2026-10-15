@@ -553,7 +553,8 @@ open_details() {
   open_thread "$1" || { why="could not open the $1 thread"; return 1; }
   $ui tap-any "More" "More options" || { why="conversation overflow (More) not found"; return 1; }
   { $ui wait "Details" --timeout 10 && $ui tap-any "Details"; } || { why="no Details entry in the conversation overflow"; return 1; }
-  sleep 2.5
+  # The large header avatar fades in after the page.
+  sleep 4
 }
 capture_details() {
   open_details 555-1234 || return 1
@@ -562,40 +563,44 @@ capture_details() {
   shot details-scrolled || true
   if cmp -s "$out/gm-details.xml" "$out/gm-details-scrolled.xml"; then
     rm -f "$out/gm-details-scrolled.png" "$out/gm-details-scrolled.xml"
-    skip details-scrolled "the Details page does not scroll: every row fits on screen"
+    skip details-scrolled "the 555-1234 Details page does not scroll: every row fits on screen (see gm-details-media-scrolled for a scrolling one)"
   fi
 }
 capture_details || { skip details "$why"; skip details-scrolled "$why"; }
 
-# Details → Notifications: Messages' own page, or the system notification channel page.
+# Details → Notifications: the per-conversation notification channel. Messages hands it to the system
+# channel page (Show notifications, Priority / Default / Silent, Pop on screen, Sound…); that page is
+# what Messages users see, so it is captured either way.
 capture_details_notifications() {
   open_details 555-1234 || return 1
   if ! $ui center "Notifications" >/dev/null; then scroll_up; fi
   $ui tap-any "Notifications" "~notifications" || { why="no Notifications row on Details"; return 1; }
-  sleep 2.5
-  if ! in_messages; then
-    skip details-notifications "Details → Notifications leaves Messages for system Settings ($(focused))"
-    adb shell input keyevent KEYCODE_BACK
-    return 0
-  fi
+  sleep 3
+  in_messages || echo "Details → Notifications opened system Settings: $(focused)"
   shot details-notifications
+  adb shell input keyevent KEYCODE_BACK
 }
 capture_details_notifications || skip details-notifications "$why"
 
-# Details → the participant row: a contact card/sheet if Messages shows one in-app.
+# Details → the participant row (bottom "1 other person" card): a contact card/sheet if Messages
+# shows one in-app, else the row's ⋮ ("555-1234, More") participant menu.
 capture_people_sheet() {
   open_details 555-1234 || return 1
-  # The last 555-1234 label on the page is the participant row (the first may be the header).
-  local row x1 y1 x2 y2
-  row=$($ui labels | grep -F "'555-1234'" | tail -1 | grep -o '\[[0-9]*,[0-9]*\]\[[0-9]*,[0-9]*\]' || true)
-  [ -n "$row" ] || { why="no 555-1234 participant row on Details"; return 1; }
-  read -r x1 y1 x2 y2 <<<"$(echo "$row" | tr '[],' '   ')"
+  # The lowest 555-1234 label is the participant row (the others are the header and the app bar).
+  local x1 y1 x2 y2
+  read -r x1 y1 x2 y2 < <($ui labels | grep -F "'555-1234'" | grep -o '\[[0-9]*,[0-9]*\]\[[0-9]*,[0-9]*\]' |
+    tr '[],' '   ' | sort -n -k2 | tail -1) || { why="no 555-1234 participant row on Details"; return 1; }
   adb shell input tap $(((x1 + x2) / 2)) $(((y1 + y2) / 2))
   sleep 2.5
   if ! in_messages; then
     skip people-sheet "the participant row leaves Messages ($(focused))"
     adb shell input keyevent KEYCODE_BACK
     return 0
+  fi
+  if $ui center "Snooze chat" >/dev/null; then
+    echo "participant row tap stayed on Details; opening its ⋮ menu"
+    $ui tap-any "555-1234, More" "~, more" || { why="the participant row opens nothing and has no ⋮"; return 1; }
+    sleep 1.5
   fi
   shot people-sheet
 }
@@ -611,14 +616,15 @@ capture_add_people() {
 }
 capture_add_people || skip add-people "$why"
 
-# The 555-0100 thread holds the injected photo: its Details may list shared media.
+# The 555-0100 thread holds the injected photo: its Details adds an Images section (count, ›, thumbnails)
+# whose header opens the media grid.
 capture_media_grid() {
   open_details 555-0100 || return 1
-  if ! $ui tap-any "~view all" "~photos" "~media"; then
-    scroll_up
-    $ui tap-any "~view all" "~photos" "~media" || { why="Details of the photo thread lists no media section"; return 1; }
-  fi
-  sleep 2.5
+  shot details-media
+  scroll_up
+  shot details-media-scrolled
+  $ui tap-any "Images" "~images" "~photos" "~media" || { why="Details of the photo thread lists no Images section"; return 1; }
+  sleep 3
   shot media-grid
 }
 capture_media_grid || skip media-grid "$why"
@@ -642,8 +648,14 @@ capture_settings_theme || skip settings-theme "$why"
 capture_settings_previews() {
   open_settings || return 1
   scroll_up
+  # The fling may still be settling and swallow the first tap: tap again while the list is still shown.
   $ui tap-any "Automatic previews" || { why="no Automatic previews row in Messages settings"; return 1; }
   sleep 2
+  if $ui center "Protection & Safety" "Swipe actions" >/dev/null; then
+    $ui tap-any "Automatic previews" || true
+    sleep 2
+  fi
+  $ui center "Protection & Safety" "Swipe actions" >/dev/null && { why="tapping Automatic previews stayed on Messages settings"; return 1; }
   shot settings-previews
 }
 capture_settings_previews || skip settings-previews "$why"
