@@ -16,6 +16,7 @@ import javax.crypto.spec.GCMParameterSpec
 import java.io.File
 import java.security.MessageDigest
 import java.time.Duration
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -27,7 +28,26 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
+import dev.send.matrix.notifications.MessageNotifier
+import dev.send.matrix.notifications.NotificationRouter
+import dev.send.matrix.notifications.PushRegistration
+import org.matrix.rustcomponents.sdk.HttpPusherData
+import org.matrix.rustcomponents.sdk.NotificationClient
+import org.matrix.rustcomponents.sdk.NotificationItem
+import org.matrix.rustcomponents.sdk.NotificationProcessSetup
+import org.matrix.rustcomponents.sdk.NotificationSettings
+import org.matrix.rustcomponents.sdk.NotificationSettingsDelegate
+import org.matrix.rustcomponents.sdk.NotificationStatus
+import org.matrix.rustcomponents.sdk.PushFormat
+import org.matrix.rustcomponents.sdk.PusherIdentifiers
+import org.matrix.rustcomponents.sdk.PusherKind
+import org.matrix.rustcomponents.sdk.ReceiptThread
+import org.matrix.rustcomponents.sdk.RoomNotificationMode
+import org.matrix.rustcomponents.sdk.RoomSendQueueUpdate
+import org.matrix.rustcomponents.sdk.SendQueueListener
+import org.matrix.rustcomponents.sdk.SyncNotificationListener
 import org.matrix.rustcomponents.sdk.BackupState
 import org.matrix.rustcomponents.sdk.BackupStateListener
 import org.matrix.rustcomponents.sdk.EnableRecoveryProgress
@@ -179,7 +199,22 @@ class MatrixRepository(context: Context) {
     private val repositoryScope = CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
     @Volatile private var callSession: NativeMatrixCallSession? = null
     @Volatile private var client: Client? = null
+    /**
+     * Built once per session and shared: [startSync] runs it, and the notification client (push / background
+     * fetches) uses it for its single-process setup even when it isn't running. [syncStarted] tells the two apart.
+     */
     @Volatile private var syncService: org.matrix.rustcomponents.sdk.SyncService? = null
+    @Volatile private var syncStarted = false
+    private val syncLock = Mutex()
+    /** Serialises [restore] so a notification action, a worker and the activity never build two clients on one store. */
+    private val restoreLock = Mutex()
+    @Volatile private var notificationClient: NotificationClient? = null
+    private val notificationClientLock = Mutex()
+    @Volatile private var notificationSettings: NotificationSettings? = null
+    private val notificationSettingsLock = Mutex()
+    private val _mutedRoomIds = MutableStateFlow<Set<String>>(emptySet())
+    /** Rooms whose user-defined push rule is MUTE (`NotificationSettings`); kept current by the settings delegate. */
+    val mutedRoomIds: StateFlow<Set<String>> = _mutedRoomIds.asStateFlow()
     @Volatile private var roomListService: org.matrix.rustcomponents.sdk.RoomListService? = null
     private var roomList: org.matrix.rustcomponents.sdk.RoomList? = null
     private var roomEntriesResult: org.matrix.rustcomponents.sdk.RoomListEntriesWithDynamicAdaptersResult? = null
@@ -313,17 +348,33 @@ class MatrixRepository(context: Context) {
      * cold start. Returns false when there is nothing to restore.
      */
     suspend fun restore(): Boolean = withContext(Dispatchers.IO) {
-        if (client != null) return@withContext true
-        val session = savedSession() ?: return@withContext false
-        val sdk = createClient(session.homeserverUrl)
-        return@withContext try {
-            sdk.restoreSession(session)
-            client = sdk
-            true
-        } catch (error: Exception) {
-            sdk.close()
-            throw error
+        restoreLock.withLock {
+            if (client != null) return@withLock true
+            val session = savedSession() ?: return@withLock false
+            val sdk = createClient(session.homeserverUrl)
+            try {
+                sdk.restoreSession(session)
+                client = sdk
+                attachNotificationHandler(sdk)
+                true
+            } catch (error: Exception) {
+                if (client === sdk) client = null
+                sdk.close()
+                throw error
+            }
         }
+    }
+
+    /**
+     * Routes notifications computed from sync responses (push rules evaluated on the decrypted event when the
+     * key is already here) to [NotificationRouter], which posts them while the app is in the background.
+     */
+    private suspend fun attachNotificationHandler(sdk: Client) {
+        sdk.registerNotificationHandler(object : SyncNotificationListener {
+            override fun onNotification(notification: NotificationItem, roomId: String) {
+                if (client === sdk) NotificationRouter.onSyncNotification(appContext, notification, roomId)
+            }
+        })
     }
 
 
@@ -412,8 +463,11 @@ class MatrixRepository(context: Context) {
         }
     }
 
-    private fun saveAuthenticatedClient(sdk: Client) {
+    private suspend fun saveAuthenticatedClient(sdk: Client) {
+        attachNotificationHandler(sdk)
         persistSession(sdk.session())
+        // Notifications only cover what arrives after this sign-in, not the history a new device syncs.
+        NotificationRouter.onSignedIn(appContext)
         replaceAuthenticatedClient(sdk)
     }
 
@@ -434,8 +488,17 @@ class MatrixRepository(context: Context) {
         timelineHandle = null
         closeSecurityResources()
         closeRoomListResources()
+        notificationClient?.close()
+        notificationClient = null
+        notificationSettings?.let { settings ->
+            settings.setDelegate(null)
+            settings.close()
+        }
+        notificationSettings = null
+        _mutedRoomIds.value = emptySet()
         syncService?.close()
         syncService = null
+        syncStarted = false
         callSession?.close()
         callSession = null
         client?.close()
@@ -480,23 +543,193 @@ class MatrixRepository(context: Context) {
         cancelSsoLogin()
     }
 
+    /**
+     * Runs the sync service (room list, encryption, security state). Once started, calling it again restarts a
+     * sync that stopped on an error or while the process was frozen in the background; the SDK ignores the call
+     * while it is running.
+     */
     suspend fun startSync() = withContext(Dispatchers.IO) {
-        if (syncService != null) return@withContext
-        val sdk = requireClient()
-        val service = sdk.syncService().finish()
-        try {
-            startRoomList(service)
-            service.start()
-            syncService = service
-            startSecurity(sdk)
-        } catch (error: Exception) {
-            closeSecurityResources()
-            closeRoomListResources()
-            service.close()
-            syncService = null
-            throw error
+        syncLock.withLock {
+            val sdk = requireClient()
+            val running = syncService
+            if (syncStarted && running != null) {
+                running.start()
+                return@withLock
+            }
+            val service = ensureSyncService(sdk)
+            try {
+                startRoomList(service)
+                service.start()
+                syncStarted = true
+                startSecurity(sdk)
+            } catch (error: Exception) {
+                closeSecurityResources()
+                closeRoomListResources()
+                throw error
+            }
+        }
+        refreshMutedRooms()
+    }
+
+    /** Whether this session's sync service has been started (by the app or a background worker). */
+    val isSyncStarted: Boolean get() = syncStarted
+
+    private suspend fun ensureSyncService(sdk: Client): org.matrix.rustcomponents.sdk.SyncService =
+        syncService ?: sdk.syncService().finish().also { syncService = it }
+
+    /**
+     * Notification client sharing this process's sync service (`NotificationProcessSetup.SingleProcess`): while
+     * sync runs it waits for that sync's room keys; when it doesn't (cold push, background fetch), the SDK runs the
+     * encryption sync itself before decrypting.
+     */
+    private suspend fun requireNotificationClient(): NotificationClient = notificationClientLock.withLock {
+        notificationClient ?: run {
+            val sdk = requireClient()
+            val service = syncLock.withLock { ensureSyncService(sdk) }
+            sdk.notificationClient(NotificationProcessSetup.SingleProcess(service)).also { notificationClient = it }
         }
     }
+
+    /** Fetches and decrypts one event for a notification (push or an event sync delivered still encrypted). */
+    internal suspend fun fetchNotification(roomId: String, eventId: String): NotificationItem? = withContext(Dispatchers.IO) {
+        when (val status = requireNotificationClient().getNotification(roomId, eventId)) {
+            is NotificationStatus.Event -> status.item
+            else -> null
+        }
+    }
+
+    internal fun ownUserId(): String? = client?.let { sdk -> runCatching { sdk.userId() }.getOrNull() }
+
+    /** True when this account's read receipt in [roomId] was sent at or after [timestampMillis] (read on any device). */
+    internal suspend fun hasReadSince(roomId: String, timestampMillis: Long): Boolean = withContext(Dispatchers.IO) {
+        val sdk = client ?: return@withContext false
+        try {
+            sdk.getRoom(roomId)?.use { room ->
+                val userId = sdk.userId()
+                listOf(ReceiptThread.Unthreaded, ReceiptThread.Main).any { thread ->
+                    val readAt = room.loadUserReceipt(ReceiptType.READ, thread, userId)?.receipt?.timestamp?.toLong()
+                    readAt != null && readAt >= timestampMillis
+                }
+            } ?: false
+        } catch (error: Exception) {
+            android.util.Log.w(TAG, "Read receipt for $roomId unavailable", error)
+            false
+        }
+    }
+
+    private suspend fun requireNotificationSettings(): NotificationSettings = notificationSettingsLock.withLock {
+        notificationSettings ?: requireClient().getNotificationSettings().also { settings ->
+            settings.setDelegate(object : NotificationSettingsDelegate {
+                // Push rules changed (here or on another device).
+                override fun settingsDidChange() {
+                    if (notificationSettings === settings) refreshMutedRooms()
+                }
+            })
+            notificationSettings = settings
+        }
+    }
+
+    private fun refreshMutedRooms() {
+        repositoryScope.launch {
+            try {
+                val settings = requireNotificationSettings()
+                val muted = settings.getRoomsWithUserDefinedRules(true).filterTo(mutableSetOf()) { roomId ->
+                    runCatching { settings.getUserDefinedRoomNotificationMode(roomId) }.getOrNull() == RoomNotificationMode.MUTE
+                }
+                if (notificationSettings === settings) _mutedRoomIds.value = muted
+            } catch (error: Exception) {
+                android.util.Log.w(TAG, "Muted conversations could not be read", error)
+            }
+        }
+    }
+
+    /** Whether the user muted [roomId]; checked again before posting, as push rules from sync may lag a change. */
+    internal suspend fun isRoomMuted(roomId: String): Boolean = withContext(Dispatchers.IO) {
+        try {
+            requireNotificationSettings().getUserDefinedRoomNotificationMode(roomId) == RoomNotificationMode.MUTE
+        } catch (error: Exception) {
+            android.util.Log.w(TAG, "Notification mode for $roomId unavailable", error)
+            false
+        }
+    }
+
+    /**
+     * Mutes a conversation with a user-defined MUTE push rule (no push, no sync notification), or removes it so
+     * the account's default mode for this kind of room applies again.
+     */
+    suspend fun setRoomMuted(roomId: String, muted: Boolean) = withContext(Dispatchers.IO) {
+        val settings = requireNotificationSettings()
+        if (muted) {
+            settings.setRoomNotificationMode(roomId, RoomNotificationMode.MUTE)
+            MessageNotifier.cancel(appContext, roomId)
+        } else {
+            val room = requireClient().getRoom(roomId) ?: error("Conversation is unavailable.")
+            room.use { settings.unmuteRoom(roomId, it.isEncrypted(), it.activeMembersCount() <= 2uL) }
+        }
+        _mutedRoomIds.value = if (muted) _mutedRoomIds.value + roomId else _mutedRoomIds.value - roomId
+    }
+
+    /**
+     * Sends a notification's inline reply as an encrypted text message (restoring the session first when the
+     * process was cold) and returns once the homeserver has accepted it.
+     */
+    suspend fun sendNotificationReply(roomId: String, text: String): Unit = withContext(Dispatchers.IO) {
+        check(restore()) { "Sign in to a Matrix account first." }
+        openEncryptedRoom(roomId).use { room ->
+            val sent = CompletableDeferred<Unit>()
+            val handle = room.subscribeToSendQueueUpdates(object : SendQueueListener {
+                override fun onUpdate(update: RoomSendQueueUpdate) {
+                    when (update) {
+                        is RoomSendQueueUpdate.SentEvent -> sent.complete(Unit)
+                        is RoomSendQueueUpdate.SendError ->
+                            if (!update.isRecoverable) sent.completeExceptionally(IllegalStateException("The reply could not be sent."))
+                        else -> Unit
+                    }
+                }
+            })
+            try {
+                timeline(room).use { timeline ->
+                    sendText(timeline, room, text)
+                    withTimeout(REPLY_SEND_TIMEOUT_MS) { sent.await() }
+                }
+            } finally {
+                handle.close()
+            }
+        }
+    }
+
+    /**
+     * Sends a read receipt from a notification: up to [eventId] (the newest notified event) when known, otherwise
+     * for the room's latest event. Restores the session first when the process was cold.
+     */
+    suspend fun markRoomRead(roomId: String, eventId: String?) = withContext(Dispatchers.IO) {
+        check(restore()) { "Sign in to a Matrix account first." }
+        requireClient().getRoom(roomId)?.use { room ->
+            if (eventId != null) room.sendSingleReceipt(ReceiptType.READ, ReceiptThread.Unthreaded, eventId)
+            else room.markAsRead(ReceiptType.READ)
+        } ?: error("Conversation is unavailable.")
+        refreshRoom(roomId)
+    }
+
+    /** Registers this device's HTTP pusher: the homeserver posts event-ID-only payloads to [gatewayUrl] for [pushkey]. */
+    internal suspend fun setHttpPusher(pushkey: String, gatewayUrl: String) = withContext(Dispatchers.IO) {
+        check(restore()) { "Sign in to a Matrix account first." }
+        requireClient().setPusher(
+            identifiers = PusherIdentifiers(pushkey, PUSHER_APP_ID),
+            kind = PusherKind.Http(HttpPusherData(gatewayUrl, PushFormat.EVENT_ID_ONLY, null)),
+            appDisplayName = "Send",
+            deviceDisplayName = "Send on ${android.os.Build.MODEL}",
+            profileTag = null,
+            lang = java.util.Locale.getDefault().toLanguageTag(),
+            append = false,
+        )
+    }
+
+    internal suspend fun deletePusher(pushkey: String) = withContext(Dispatchers.IO) {
+        requireClient().deletePusher(PusherIdentifiers(pushkey, PUSHER_APP_ID))
+    }
+
+    internal val isSignedIn: Boolean get() = client != null || savedSession() != null
 
     /** Subscribes to the SDK's recovery, key-backup and verification state and prepares the verification controller. */
     private fun startSecurity(sdk: Client) {
@@ -682,6 +915,8 @@ class MatrixRepository(context: Context) {
     suspend fun logout(serverSide: Boolean = true) = withContext(Dispatchers.IO) {
         val sdk = client
         if (sdk != null && serverSide) {
+            // Pushers outlive the access token on some servers; remove this device's while the session still works.
+            PushRegistration.removePusher(appContext, this@MatrixRepository)
             if (_backupState.value == BackupState.ENABLED) {
                 try {
                     withTimeoutOrNull(BACKUP_UPLOAD_TIMEOUT_MS) { encryption?.waitForBackupUploadSteadyState(null) }
@@ -698,6 +933,9 @@ class MatrixRepository(context: Context) {
         }
         closeSessionResources()
         wipeLocalSession()
+        PushRegistration.onSignedOut(appContext)
+        MessageNotifier.clearAll(appContext)
+        NotificationRouter.onSignedOut(appContext)
     }
 
     private fun wipeLocalSession() {
@@ -856,13 +1094,7 @@ class MatrixRepository(context: Context) {
     private fun describe(content: TimelineItemContent, own: Boolean): String? {
         val msgLike = content as? TimelineItemContent.MsgLike ?: return null
         val body = when (val kind = msgLike.content.kind) {
-            is MsgLikeKind.Message -> when (val type = kind.content.msgType) {
-                is MessageType.Image -> "Photo"
-                is MessageType.Video -> "Video"
-                is MessageType.Audio -> if (type.content.voice != null) "Voice message" else "Audio"
-                is MessageType.File -> type.content.filename
-                else -> kind.content.body
-            }
+            is MsgLikeKind.Message -> messageSummary(kind.content.msgType)
             is MsgLikeKind.Sticker -> "Sticker"
             is MsgLikeKind.UnableToDecrypt -> "Encrypted message"
             is MsgLikeKind.Redacted -> "Message deleted"
@@ -1385,6 +1617,9 @@ class MatrixRepository(context: Context) {
         private const val STORE_DIR = "matrix"
         private const val STORE_KEY_ALIAS = "send.matrix.store-key"
         private const val BACKUP_UPLOAD_TIMEOUT_MS = 30_000L
+        private const val REPLY_SEND_TIMEOUT_MS = 30_000L
+        /** Pusher app ID registered with the homeserver for this app's UnifiedPush endpoint. */
+        const val PUSHER_APP_ID = "dev.send.matrix"
         const val VOICE_MIMETYPE = "audio/ogg"
         @Volatile private var instance: MatrixRepository? = null
 
@@ -1396,6 +1631,20 @@ class MatrixRepository(context: Context) {
 
 internal fun isMatrixUserId(value: String): Boolean =
     value.startsWith("@") && value.indexOf(':') > 1 && !value.any(Char::isWhitespace)
+
+/** Text for a message in the conversation list and in notifications: media by kind, everything else by body. */
+internal fun messageSummary(type: MessageType): String = when (type) {
+    is MessageType.Image -> "Photo"
+    is MessageType.Video -> "Video"
+    is MessageType.Audio -> if (type.content.voice != null) "Voice message" else "Audio"
+    is MessageType.File -> type.content.filename
+    is MessageType.Text -> type.content.body
+    is MessageType.Emote -> type.content.body
+    is MessageType.Notice -> type.content.body
+    is MessageType.Location -> type.content.body
+    is MessageType.Gallery -> type.content.body
+    is MessageType.Other -> type.body
+}
 
 /** Strips path separators and control characters so a remote/picked name is safe as a cache file name. */
 internal fun safeFileName(name: String): String =

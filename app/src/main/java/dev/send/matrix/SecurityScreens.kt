@@ -50,6 +50,7 @@ import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Security
+import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.VerifiedUser
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -124,6 +125,9 @@ internal fun AccountSheet(
     onAbout: () -> Unit,
     onSignOut: () -> Unit,
     onDismiss: () -> Unit,
+    /** How notifications reach this device ("Push via ntfy", "Background sync…", "Off"); shown with [onNotifications]. */
+    notificationSummary: String? = null,
+    onNotifications: (() -> Unit)? = null,
 ) {
     val colors = MaterialTheme.colorScheme
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
@@ -151,6 +155,9 @@ internal fun AccountSheet(
                 }
                 Spacer(Modifier.height(8.dp))
                 AccountMenuRow(Icons.Outlined.Security, "Security", securitySummary, onSecurity)
+                if (onNotifications != null) {
+                    AccountMenuRow(Icons.Outlined.Notifications, "Notifications", notificationSummary, onNotifications)
+                }
                 AccountMenuRow(Icons.Outlined.Info, "About & licenses", null, onAbout)
                 AccountMenuRow(Icons.AutoMirrored.Outlined.Logout, "Sign out", null, onSignOut)
             }
