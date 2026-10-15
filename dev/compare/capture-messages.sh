@@ -24,9 +24,28 @@ dismiss_onboarding() {
   done
 }
 
-# The google_apis image preinstalls Messages under a different key, so a newer
-# store build may be rejected; fall back to whichever Messages is on the device.
-adb install -r -g "$apk" || echo "::notice::Using the emulator's preinstalled Google Messages"
+if ! adb install -r -g "$apk"; then
+  # google_apis ships an older Messages as a system app under another key. Remove it
+  # (emulator runs with -writable-system) so the current Google-signed build installs.
+  system_apk=$(adb shell pm path "$pkg" | head -1 | sed 's/^package://' | tr -d '\r')
+  echo "Removing preinstalled $(dirname "$system_apk")"
+  adb root
+  adb wait-for-device
+  if ! adb remount; then
+    adb reboot
+    adb wait-for-device
+    until [ "$(adb shell getprop sys.boot_completed | tr -d '\r')" = 1 ]; do sleep 2; done
+    adb root
+    adb wait-for-device
+    adb remount
+  fi
+  adb shell rm -rf "$(dirname "$system_apk")"
+  adb shell pm uninstall "$pkg" || true
+  adb reboot
+  adb wait-for-device
+  until [ "$(adb shell getprop sys.boot_completed | tr -d '\r')" = 1 ]; do sleep 2; done
+  adb install -r -g "$apk"
+fi
 adb shell dumpsys package "$pkg" | grep -m1 versionName | tr -d ' ' >"$out/gm-version.txt" || true
 cat "$out/gm-version.txt"
 adb shell pm grant "$pkg" android.permission.READ_SMS 2>/dev/null || true

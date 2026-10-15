@@ -50,8 +50,10 @@ jobs:
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
-          # AOSP image: no preinstalled Messages, so the current Google-signed build installs.
-          target: default
+          # Google APIs image (Play services, which current Messages requires); its stale
+          # built-in Messages is replaced from the writable system image by the capture script.
+          target: google_apis
+          emulator-options: -writable-system -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           arch: x86_64
           profile: pixel_6
           disable-animations: false
