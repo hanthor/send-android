@@ -18,7 +18,7 @@ shot() {
 # Tap through Messages' first-run prompts (default-SMS, RCS, sign-in, permissions).
 dismiss_onboarding() {
   for _ in $(seq 1 12); do
-    $ui tap-any "Use Messages without an account" "Not now" "Skip" "No thanks" "Got it" "Continue" "Allow" "OK" \
+    $ui tap-any "Wait" "Use Messages without an account" "Not now" "Skip" "No thanks" "Got it" "Continue" "Allow" "OK" \
       "Set default" "Set as default" "Agree" "Done" "Close" || break
     sleep 2
   done
@@ -47,6 +47,9 @@ if ! adb install -r -g "$apk"; then
   reboot_and_wait
   adb install -r -g "$apk"
 fi
+# Software-GPU emulators lag after reboots; ANR dialogs would cover the captures.
+adb shell settings put global hide_error_dialogs 1
+sleep 20
 adb shell dumpsys package "$pkg" | grep -m1 versionName | tr -d ' ' >"$out/gm-version.txt" || true
 cat "$out/gm-version.txt"
 adb shell pm grant "$pkg" android.permission.READ_SMS 2>/dev/null || true
