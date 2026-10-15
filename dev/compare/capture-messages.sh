@@ -34,13 +34,19 @@ if ! adb install -r -g "$apk"; then
     adb wait-for-device
     until [ "$(adb shell getprop sys.boot_completed | tr -d '\r')" = 1 ]; do sleep 2; done
   }
+  # adbd restarts after boot and on `adb root`; retry until it is root and reachable.
+  as_root() {
+    for _ in $(seq 1 15); do
+      if adb root && adb wait-for-device && [ "$(adb shell id -u | tr -d '\r')" = 0 ]; then return 0; fi
+      sleep 3
+    done
+    return 1
+  }
   # First remount disables verity and enables overlayfs; it only takes effect after a reboot.
-  adb root
-  adb wait-for-device
+  as_root
   adb remount || true
   reboot_and_wait
-  adb root
-  adb wait-for-device
+  as_root
   adb remount
   adb shell rm -rf "$(dirname "$system_apk")"
   adb shell pm uninstall "$pkg" || true
