@@ -50,7 +50,8 @@ jobs:
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
-          target: google_apis
+          # AOSP image: no preinstalled Messages, so the current Google-signed build installs.
+          target: default
           arch: x86_64
           profile: pixel_6
           disable-animations: false
@@ -58,6 +59,7 @@ jobs:
       - name: Build comparison report
         if: always()
         run: |
+          sudo apt-get install -y -qq ffmpeg >/dev/null
           pip install --quiet pillow
           python3 dev/compare/compare.py /tmp/compare/ref /tmp/compare/Send /tmp/compare/report "$(cat /tmp/compare/dpi)"
           cat /tmp/compare/report/report.md >>"$GITHUB_STEP_SUMMARY"
