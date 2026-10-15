@@ -143,13 +143,15 @@ class ZZNotificationsIntegrationTest {
                 .setPendingIntentBackgroundActivityStartMode(ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED)
                 .toBundle(),
         )
-        composeRule.waitUntil(timeoutMillis = 60_000) {
-            NotificationRouter.visibleRoomId == roomId && composeRule.onAllNodesWithText(third).fetchSemanticsNodes().isNotEmpty()
+        waitFor("the tapped conversation on screen", 60_000, ::conversationState) {
+            NotificationRouter.visibleRoomId == roomId && repository.messages.value.any { it.text == third }
         }
+        composeRule.waitUntil(timeoutMillis = 30_000) { composeRule.onAllNodesWithText(third).fetchSemanticsNodes().isNotEmpty() }
         waitFor("the opened conversation's notification to clear", 10_000, { notificationState(roomId) }) { conversationNotification(roomId) == null }
         val fourth = "Seen in the app $stamp"
         bobSends(fourth)
-        composeRule.waitUntil(timeoutMillis = 60_000) { composeRule.onAllNodesWithText(fourth).fetchSemanticsNodes().isNotEmpty() }
+        waitFor("Bob's message in the open conversation", 60_000, ::conversationState) { repository.messages.value.any { it.text == fourth } }
+        composeRule.waitUntil(timeoutMillis = 30_000) { composeRule.onAllNodesWithText(fourth).fetchSemanticsNodes().isNotEmpty() }
         Thread.sleep(QUIET_PERIOD_MS)
         assertNull(notificationState(roomId), conversationNotification(roomId))
 
@@ -235,8 +237,8 @@ class ZZNotificationsIntegrationTest {
 
     private fun goHome() {
         UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()).pressHome()
-        waitFor("the activity to stop", 10_000, { "state=${composeRule.activityRule.scenario.state}" }) {
-            composeRule.activityRule.scenario.state == Lifecycle.State.CREATED && NotificationRouter.visibleRoomId == null
+        waitFor("the activity to stop", 10_000, { "state=${activityState()}" }) {
+            activityState() == Lifecycle.State.CREATED && NotificationRouter.visibleRoomId == null
         }
     }
 
@@ -275,6 +277,12 @@ class ZZNotificationsIntegrationTest {
     private fun room(roomId: String): MatrixRoom? = repository.joinedRooms.value.firstOrNull { it.id == roomId }
 
     private fun roomsState(): String = "rooms=${repository.joinedRooms.value.map { "${it.name}:${it.unreadCount}:${it.lastMessage}" }}"
+
+    private fun conversationState(): String =
+        "visible=${NotificationRouter.visibleRoomId} activity=${activityState()} " +
+            "messages=${repository.messages.value.map { "${it.sender}:${it.decryptionFailure ?: it.text}" }}"
+
+    private fun activityState(): Lifecycle.State? = runCatching { composeRule.activityRule.scenario.state }.getOrNull()
 
     /** Polls off the main thread: the activity may be stopped, so Compose's idling isn't used here. */
     private fun waitFor(what: String, timeoutMillis: Long, state: () -> String, condition: () -> Boolean) {

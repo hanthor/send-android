@@ -252,15 +252,17 @@ class MainActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: android.content.Intent) {
         super.onNewIntent(intent)
+        // A conversation request is consumed into UI state, so it doesn't replace the activity's launch intent.
+        if (acceptConversation(intent)) return
         setIntent(intent)
         acceptSsoCallback(intent.data)
-        acceptConversation(intent)
     }
 
-    private fun acceptConversation(intent: android.content.Intent?) {
-        if (intent?.action == MessageNotifier.ACTION_OPEN_CONVERSATION) {
-            pendingConversation.value = intent.getStringExtra(MessageNotifier.EXTRA_ROOM_ID)
-        }
+    /** Queues the conversation a notification tap or shortcut asks for; false for any other intent. */
+    private fun acceptConversation(intent: android.content.Intent?): Boolean {
+        if (intent?.action != MessageNotifier.ACTION_OPEN_CONVERSATION) return false
+        pendingConversation.value = intent.getStringExtra(MessageNotifier.EXTRA_ROOM_ID)
+        return true
     }
 
     private fun acceptSsoCallback(uri: Uri?) {
