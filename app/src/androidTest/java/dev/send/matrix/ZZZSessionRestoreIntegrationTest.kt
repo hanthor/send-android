@@ -11,6 +11,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.rule.GrantPermissionRule
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -28,7 +29,10 @@ import org.matrix.rustcomponents.sdk.Room
  */
 @RunWith(AndroidJUnit4::class)
 class ZZZSessionRestoreIntegrationTest {
-    @get:Rule
+    @get:Rule(order = 0)
+    val notificationPermission: GrantPermissionRule = GrantPermissionRule.grant(android.Manifest.permission.POST_NOTIFICATIONS)
+
+    @get:Rule(order = 1)
     val composeRule = createAndroidComposeRule<MainActivity>()
 
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext

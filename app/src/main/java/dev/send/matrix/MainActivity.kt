@@ -84,6 +84,8 @@ import androidx.compose.material.icons.outlined.AddCircleOutline
 import androidx.compose.material.icons.outlined.GroupAdd
 import androidx.compose.material.icons.outlined.Groups
 import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.Notifications
+import androidx.compose.material.icons.outlined.NotificationsOff
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.InputChip
 import androidx.compose.material3.Button
@@ -139,6 +141,17 @@ import kotlin.math.sin
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import dev.send.matrix.notifications.MessageNotifier
+import dev.send.matrix.notifications.NotificationPermissionDialog
+import dev.send.matrix.notifications.NotificationRouter
+import dev.send.matrix.notifications.NotificationsDialog
+import dev.send.matrix.notifications.PushRegistration
+import dev.send.matrix.notifications.markNotificationPermissionPrompted
+import dev.send.matrix.notifications.notificationPermissionPrompted
+import dev.send.matrix.notifications.notificationSummary
+import dev.send.matrix.notifications.notificationsAllowed
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 import kotlinx.coroutines.CancellationException
@@ -203,7 +216,7 @@ internal fun SendTheme(content: @Composable () -> Unit) {
     MaterialTheme(colorScheme = if (isSystemInDarkTheme()) GoogleDarkColors else GoogleLightColors, content = content)
 }
 
-private fun avatarPalette(name: String): Pair<Color, Color> {
+internal fun avatarPalette(name: String): Pair<Color, Color> {
     val index = (name.hashCode().let { if (it == Int.MIN_VALUE) 0 else kotlin.math.abs(it) }) % AvatarColors.size
     return AvatarColors[index] to Color.White
 }
@@ -211,10 +224,14 @@ private fun avatarPalette(name: String): Pair<Color, Color> {
 class MainActivity : ComponentActivity() {
     private val repository by lazy { MatrixRepository.get(applicationContext) }
     val ssoCallback = mutableStateOf<Uri?>(null)
+    /** Conversation to open from a notification tap or conversation shortcut, consumed by SendApp. */
+    val pendingConversation = mutableStateOf<String?>(null)
     private var pipController: ElementCallController? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // A recreated activity restores the conversation it showed; only a fresh launch follows the intent.
+        if (savedInstanceState == null) acceptConversation(intent)
         enableEdgeToEdge()
         setContent {
             SendTheme { SendApp(repository, this@MainActivity) }
@@ -237,6 +254,13 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         acceptSsoCallback(intent.data)
+        acceptConversation(intent)
+    }
+
+    private fun acceptConversation(intent: android.content.Intent?) {
+        if (intent?.action == MessageNotifier.ACTION_OPEN_CONVERSATION) {
+            pendingConversation.value = intent.getStringExtra(MessageNotifier.EXTRA_ROOM_ID)
+        }
     }
 
     private fun acceptSsoCallback(uri: Uri?) {
@@ -278,6 +302,15 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
     var showSignOut by rememberSaveable { mutableStateOf(false) }
     var signingOut by remember { mutableStateOf(false) }
     var signOutError by rememberSaveable { mutableStateOf("") }
+    var showNotifications by rememberSaveable { mutableStateOf(false) }
+    var showNotificationPrompt by rememberSaveable { mutableStateOf(false) }
+    val mutedRoomIds by repository.mutedRoomIds.collectAsState()
+    val pushStatus by PushRegistration.status.collectAsState()
+    val lifecycleState by LocalLifecycleOwner.current.lifecycle.currentStateFlow.collectAsState()
+    val notificationsOn = remember(lifecycleState) { notificationsAllowed(activity) }
+    val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+        PushRegistration.refreshStatus(activity)
+    }
     LaunchedEffect(showSecurity) { if (showSecurity) repository.refreshSecurityStatus() }
     // Keyed on the repository's live session, not the saved signedIn flag: after process death signedIn is
     // restored as true before restore() has reopened the client.
@@ -288,11 +321,32 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
             callSession?.let { activity.attachCallController(it.controller) }
         } else callSession = null
     }
+    // With a live session: UnifiedPush registration (or the background-sync fallback) and, once after the
+    // first sign-in, an explanation before Android's notification permission prompt.
+    LaunchedEffect(sessionLive) {
+        if (!sessionLive) return@LaunchedEffect
+        PushRegistration.start(activity)
+        if (!notificationsAllowed(activity) && !notificationPermissionPrompted(activity)) showNotificationPrompt = true
+    }
+    // The conversation the user is looking at: it doesn't notify, its notification is cleared, read receipts
+    // follow it, and the system matches its shortcut/notification to this screen (LocusId).
+    val conversationOnScreen = activeRoomId.takeIf {
+        it.isNotBlank() && timeline != null && lifecycleState.isAtLeast(Lifecycle.State.RESUMED)
+    }
+    DisposableEffect(conversationOnScreen) {
+        NotificationRouter.visibleRoomId = conversationOnScreen
+        if (conversationOnScreen != null) MessageNotifier.cancel(activity, conversationOnScreen)
+        activity.setLocusContext(conversationOnScreen?.let { android.content.LocusId(it) }, null)
+        onDispose {
+            if (NotificationRouter.visibleRoomId == conversationOnScreen) NotificationRouter.visibleRoomId = null
+        }
+    }
     val messages by repository.messages.collectAsState()
     // Opening a conversation (and every new arrival while it is open) sends a read receipt so unread badges clear.
     val latestMessageId = messages.lastOrNull()?.id
-    LaunchedEffect(timeline, latestMessageId) {
+    LaunchedEffect(conversationOnScreen, latestMessageId) {
         val current = timeline ?: return@LaunchedEffect
+        if (conversationOnScreen == null) return@LaunchedEffect
         if (latestMessageId == null) return@LaunchedEffect
         try {
             repository.markAsRead(current, activeRoomId)
@@ -308,6 +362,34 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
         recoveryState == RecoveryState.INCOMPLETE -> "Enter recovery key"
         else -> null
     }
+    /** Opens [roomId] (encrypted rooms only); title and kind come from the list when known, else from the SDK. */
+    suspend fun openConversation(roomId: String, title: String?, direct: Boolean?) {
+        val selectedRoom = repository.openEncryptedRoom(roomId)
+        val selectedTimeline = repository.timeline(selectedRoom)
+        repository.observeTimeline(selectedTimeline)
+        room = selectedRoom
+        timeline = selectedTimeline
+        activeRoomId = roomId
+        roomTitle = title ?: selectedRoom.displayName().orEmpty().ifBlank { roomId }
+        activeRoomIsDirect = direct ?: repository.isDirectRoom(selectedRoom)
+    }
+    // Notification tap or conversation shortcut: open that conversation once the session is live.
+    val requestedConversation = activity.pendingConversation.value
+    LaunchedEffect(sessionLive, requestedConversation) {
+        val roomId = requestedConversation ?: return@LaunchedEffect
+        if (!sessionLive) return@LaunchedEffect
+        activity.pendingConversation.value = null
+        if (roomId == activeRoomId && timeline != null) return@LaunchedEffect
+        try {
+            val known = rooms.firstOrNull { it.id == roomId }
+            openConversation(roomId, known?.name, known?.direct)
+            error = ""
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            error = failure.message ?: "Conversation could not be opened."
+        }
+    }
     fun signOut(serverSide: Boolean) {
         signingOut = true
         signOutError = ""
@@ -316,6 +398,7 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
                 repository.logout(serverSide)
                 // Back to the sign-in hero with nothing from the old session left in UI state.
                 showSignOut = false
+                showNotifications = false
                 showSecurity = false
                 room = null
                 timeline = null
@@ -540,21 +623,29 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
                 error = error,
                 decryptionActionLabel = decryptionActionLabel,
                 onDecryptionAction = { showSecurity = true },
+                muted = activeRoomId in mutedRoomIds,
+                onToggleMute = {
+                    val roomId = activeRoomId
+                    val mute = roomId !in mutedRoomIds
+                    scope.launch {
+                        try {
+                            repository.setRoomMuted(roomId, mute)
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (failure: Exception) {
+                            error = failure.message ?: if (mute) "Conversation could not be muted." else "Conversation could not be unmuted."
+                        }
+                    }
+                },
             )
             else -> HomeScreen(
                 rooms = rooms,
+                mutedRoomIds = mutedRoomIds,
                 onOpen = { selected ->
                     scope.launch {
                         error = ""
                         try {
-                            val selectedRoom = repository.openEncryptedRoom(selected.id)
-                            val selectedTimeline = repository.timeline(selectedRoom)
-                            repository.observeTimeline(selectedTimeline)
-                            room = selectedRoom
-                            timeline = selectedTimeline
-                            activeRoomId = selected.id
-                            roomTitle = selected.name
-                            activeRoomIsDirect = selected.direct
+                            openConversation(selected.id, selected.name, selected.direct)
                         } catch (failure: Exception) {
                             error = failure.message ?: "Conversation could not be opened."
                         }
@@ -635,12 +726,28 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
                     userId = account?.userId.orEmpty(),
                     securitySummary = securitySummary(verificationState, recoveryState),
                     onSecurity = { showAccount = false; showSecurity = true },
+                    notificationSummary = notificationSummary(activity, notificationsOn, pushStatus),
+                    onNotifications = { showAccount = false; showNotifications = true },
                     onAbout = { showAccount = false; showAbout = true },
                     onSignOut = { showAccount = false; signOutError = ""; showSignOut = true },
                     onDismiss = { showAccount = false },
                 )
             }
             if (showAbout) LegalNoticesDialog(onDismiss = { showAbout = false })
+            if (showNotifications) NotificationsDialog(onDismiss = { showNotifications = false })
+            if (showNotificationPrompt) {
+                NotificationPermissionDialog(
+                    onTurnOn = {
+                        markNotificationPermissionPrompted(activity)
+                        showNotificationPrompt = false
+                        notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+                    },
+                    onNotNow = {
+                        markNotificationPermissionPrompted(activity)
+                        showNotificationPrompt = false
+                    },
+                )
+            }
             if (showSignOut) {
                 SignOutDialog(
                     recoveryEnabled = recoveryState == RecoveryState.ENABLED,
@@ -1123,6 +1230,8 @@ internal fun HomeScreen(
     onAccount: () -> Unit,
     /** Non-null while this session is unverified and another session could verify it; shows the banner. */
     onVerifyDevice: (() -> Unit)?,
+    /** Conversations muted with a MUTE push rule; their rows show the muted icon. */
+    mutedRoomIds: Set<String> = emptySet(),
 ) {
     var showingNewChat by rememberSaveable { mutableStateOf(false) }
     var matrixUserId by rememberSaveable { mutableStateOf("") }
@@ -1215,7 +1324,7 @@ internal fun HomeScreen(
                 }
             } else {
                 items(visibleRooms, key = { it.id }) { chat ->
-                    ConversationRow(room = chat, onClick = { onOpen(chat) })
+                    ConversationRow(room = chat, muted = chat.id in mutedRoomIds, onClick = { onOpen(chat) })
                 }
             }
         }
@@ -1435,7 +1544,7 @@ private fun NewConversationScreen(
 }
 
 @Composable
-private fun ConversationRow(room: MatrixRoom, onClick: () -> Unit) {
+private fun ConversationRow(room: MatrixRoom, muted: Boolean, onClick: () -> Unit) {
     val context = LocalContext.current
     val colors = MaterialTheme.colorScheme
     val unread = room.unreadCount > 0
@@ -1460,6 +1569,14 @@ private fun ConversationRow(room: MatrixRoom, onClick: () -> Unit) {
                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
+                if (muted) {
+                    Icon(
+                        imageVector = Icons.Outlined.NotificationsOff,
+                        contentDescription = "Muted",
+                        tint = colors.onSurfaceVariant,
+                        modifier = Modifier.padding(start = 6.dp).size(16.dp),
+                    )
+                }
                 room.lastTimestampMillis?.let { timestamp ->
                     Text(
                         text = conversationTimestamp(context, timestamp),
@@ -1557,6 +1674,9 @@ internal fun ConversationScreen(
     /** Label of the fix offered on undecryptable messages ("Verify this device", …), or null when none applies. */
     decryptionActionLabel: String?,
     onDecryptionAction: () -> Unit,
+    /** Whether this conversation is muted; with [onToggleMute] the ⋮ menu offers Mute / Unmute. */
+    muted: Boolean = false,
+    onToggleMute: (() -> Unit)? = null,
 ) {
     var reactionTargetId by remember { mutableStateOf<String?>(null) }
     var expandedTimeId by remember { mutableStateOf<String?>(null) }
@@ -1630,6 +1750,15 @@ internal fun ConversationScreen(
                                 text = { Text("Load older messages") },
                                 onClick = { showMenu = false; onOlder() },
                             )
+                            if (onToggleMute != null) {
+                                androidx.compose.material3.DropdownMenuItem(
+                                    text = { Text(if (muted) "Unmute" else "Mute") },
+                                    leadingIcon = {
+                                        Icon(if (muted) Icons.Outlined.Notifications else Icons.Outlined.NotificationsOff, contentDescription = null)
+                                    },
+                                    onClick = { showMenu = false; onToggleMute() },
+                                )
+                            }
                         }
                     }
                 }

@@ -32,7 +32,19 @@ Source: https://github.com/journeyapps/zxing-android-embedded
 Artifact: com.journeyapps:zxing-android-embedded:4.3.0
 License: Apache License 2.0 (http://www.apache.org/licenses/LICENSE-2.0).
 
-AndroidX libraries (Compose, Material 3, Activity, Browser, Test)
+UnifiedPush Android connector (push notifications)
+Copyright UnifiedPush contributors.
+Source: https://codeberg.org/UnifiedPush/android-connector
+Artifact: org.unifiedpush.android:connector:3.3.5
+License: Apache License 2.0 (http://www.apache.org/licenses/LICENSE-2.0).
+
+Tink (used by the UnifiedPush connector for Web Push decryption)
+Copyright Google LLC.
+Source: https://github.com/tink-crypto/tink-java
+Artifact: com.google.crypto.tink:tink (version selected by the connector)
+License: Apache License 2.0 (http://www.apache.org/licenses/LICENSE-2.0).
+
+AndroidX libraries (Compose, Material 3, Activity, Browser, Core, WorkManager, Test)
 Copyright The Android Open Source Project.
 Source: https://github.com/androidx/androidx
 License: Apache License 2.0 (http://www.apache.org/licenses/LICENSE-2.0).

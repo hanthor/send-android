@@ -11,6 +11,10 @@ element-call = "0.1.0-rc.7"
 browser = "1.9.0"
 androidx-test-junit = "1.2.1"
 androidx-test-runner = "1.6.2"
+androidx-core = "1.19.1"
+work = "2.12.0"
+unifiedpush-connector = "3.3.5"
+androidx-test-rules = "1.6.1"
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
@@ -36,6 +40,10 @@ element-call-impl = { module = "io.element.android:element-call" }
 element-call-matrix = { module = "io.element.android:element-call-matrix" }
 element-call-ui = { module = "io.element.android:element-call-ui" }
 compose-ui-test-junit4 = { module = "androidx.compose.ui:ui-test-junit4" }
+androidx-core = { module = "androidx.core:core", version.ref = "androidx-core" }
+androidx-work = { module = "androidx.work:work-runtime", version.ref = "work" }
+unifiedpush-connector = { module = "org.unifiedpush.android:connector", version.ref = "unifiedpush-connector" }
+androidx-test-rules = { module = "androidx.test:rules", version.ref = "androidx-test-rules" }
 compose-ui-test-manifest = { module = "androidx.compose.ui:ui-test-manifest" }
 androidx-test-junit = { module = "androidx.test.ext:junit", version.ref = "androidx-test-junit" }
 androidx-test-runner = { module = "androidx.test:runner", version.ref = "androidx-test-runner" }
