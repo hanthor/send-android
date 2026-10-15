@@ -387,17 +387,19 @@ row_1234() { $ui center "Made it home. Thanks for today!" "555-1234" "5551234"; 
 capture_swipe_archive() {
   relaunch
   read -r x y < <(row_9876) || { why="555-9876 row not found"; return 1; }
-  adb shell input motionevent DOWN "$x" "$y"
-  for step in 1 2 3 4 5 6 7; do adb shell input motionevent MOVE $((x + step * screen_width / 20)) "$y"; done
+  local start=$((screen_width / 10))
+  adb shell input motionevent DOWN "$start" "$y"
+  for step in 1 2 3 4 5 6 7; do adb shell input motionevent MOVE $((start + step * screen_width / 22)) "$y"; done
   sleep 0.7
-  shot swipe-archive || { why="screencap failed mid-swipe"; adb shell input motionevent UP "$x" "$y"; return 1; }
-  adb shell input motionevent MOVE "$x" "$y"
-  adb shell input motionevent UP "$x" "$y"
+  shot swipe-archive || { why="screencap failed mid-swipe"; adb shell input motionevent UP "$start" "$y"; return 1; }
+  adb shell input motionevent MOVE "$start" "$y"
+  adb shell input motionevent UP "$start" "$y"
   sleep 1
 }
 capture_swipe_archive || skip swipe-archive "$why"
 
-# Long-press a row: Messages' selection bar, its overflow, and the Delete / Block confirmations (all cancelled).
+# Long-press a row: Messages' selection bar, the Delete confirmation, the overflow and the Block confirmation
+# (all cancelled).
 capture_conversation_selection() {
   relaunch
   read -r x y < <(row_1234) || { why="555-1234 row not found"; return 1; }
@@ -405,6 +407,16 @@ capture_conversation_selection() {
   sleep 1.5
   $ui center "~archive" "~delete" "~pin" >/dev/null || { why="long-press did not start selection"; return 1; }
   shot conversation-selection
+  if $ui tap-any "Delete" "Move to Trash" "~delete" "~trash"; then
+    sleep 1.5
+    shot delete-conversation-confirm
+    $ui tap-any "Cancel" || adb shell input keyevent KEYCODE_BACK
+    sleep 1
+  else
+    skip delete-conversation-confirm "no Delete action in the selection bar"
+  fi
+  # Cancelling may end the selection; start it again for the overflow.
+  if ! $ui center "More options" "More" >/dev/null; then long_press "$x" "$y"; sleep 1.5; fi
   if $ui tap-any "More options" "More"; then
     sleep 1
     shot conversation-selection-menu
@@ -421,15 +433,6 @@ capture_conversation_selection() {
     skip conversation-selection-menu "no overflow in the selection bar"
     skip block-confirm "no overflow in the selection bar"
   fi
-  # Selection may have ended with the dialog; start it again for Delete.
-  if ! $ui center "~delete" >/dev/null; then long_press "$x" "$y"; sleep 1.5; fi
-  if $ui tap-any "Delete" "Move to Trash" "~delete"; then
-    sleep 1.5
-    shot delete-conversation-confirm
-    $ui tap-any "Cancel" || adb shell input keyevent KEYCODE_BACK
-  else
-    skip delete-conversation-confirm "no Delete action in the selection bar"
-  fi
 }
 capture_conversation_selection || skip conversation-selection "$why"
 
@@ -437,7 +440,7 @@ capture_conversation_selection || skip conversation-selection "$why"
 capture_archive() {
   relaunch
   read -r x y < <(row_9876) || { why="555-9876 row not found"; return 1; }
-  adb shell input swipe "$x" "$y" $((x + screen_width * 6 / 10)) "$y" 300
+  adb shell input swipe $((screen_width / 10)) "$y" $((screen_width * 9 / 10)) "$y" 400
   sleep 1
   $ui center "~archived" >/dev/null || { why="the swipe did not archive (no snackbar)"; return 1; }
   shot archive-snackbar
@@ -450,15 +453,6 @@ capture_archived() {
   shot archived
 }
 capture_archived || skip archived "$why"
-# Account menu → Spam & blocked, then its Blocked numbers list when the overflow offers it.
-capture_blocked() {
-  open_account_menu || { why="account menu unavailable"; return 1; }
-  $ui tap-any "Spam & blocked" "Spam and blocked" "~blocked" || { why="no Spam & blocked entry in the account menu"; return 1; }
-  sleep 2
-  if $ui tap-any "More options" "More" && $ui tap-any "Blocked numbers" "~blocked"; then sleep 2; fi
-  shot blocked-contacts
-}
-capture_blocked || skip blocked-contacts "$why"
 
 # Swipe a bubble right: Messages' swipe-to-reply puts a reply preview above the composer.
 capture_reply_swipe() {
@@ -527,5 +521,16 @@ capture_message_selection() {
   shot message-selection
 }
 capture_message_selection || skip message-selection "$why"
+
+# Account menu → Spam & blocked (Messages' own screen; its Blocked numbers entry opens the system list, which
+# outlives a Messages force-stop, so it isn't opened). Runs last for the same reason.
+capture_blocked() {
+  open_account_menu || { why="account menu unavailable"; return 1; }
+  $ui tap-any "Spam & blocked" "Spam and blocked" "~blocked" || { why="no Spam & blocked entry in the account menu"; return 1; }
+  sleep 2
+  shot blocked-contacts
+  adb shell input keyevent KEYCODE_BACK
+}
+capture_blocked || skip blocked-contacts "$why"
 
 ls -la "$out"
