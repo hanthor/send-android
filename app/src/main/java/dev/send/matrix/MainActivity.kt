@@ -279,8 +279,11 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
     var signingOut by remember { mutableStateOf(false) }
     var signOutError by rememberSaveable { mutableStateOf("") }
     LaunchedEffect(showSecurity) { if (showSecurity) repository.refreshSecurityStatus() }
-    LaunchedEffect(signedIn) {
-        if (signedIn) {
+    // Keyed on the repository's live session, not the saved signedIn flag: after process death signedIn is
+    // restored as true before restore() has reopened the client.
+    val sessionLive = account != null
+    LaunchedEffect(sessionLive) {
+        if (sessionLive) {
             callSession = repository.callSession()
             callSession?.let { activity.attachCallController(it.controller) }
         } else callSession = null
