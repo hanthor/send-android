@@ -10,7 +10,15 @@ import java.io.File
  * (`dev/compare/compare.py` pairs `send-<name>-device.png` with `gm-<name>.png`).
  */
 internal fun ComposeTestRule.auditShot(name: String) {
-    waitForIdle()
+    if (mainClock.autoAdvance) {
+        waitForIdle()
+    } else {
+        // A paused test clock (screens with endless timers) holds frames back from the display: pump some.
+        repeat(20) {
+            mainClock.advanceTimeByFrame()
+            Thread.sleep(32)
+        }
+    }
     val instrumentation = InstrumentationRegistry.getInstrumentation()
     val device = UiDevice.getInstance(instrumentation)
     val shot = File(instrumentation.targetContext.cacheDir, "send-$name-device.png")
