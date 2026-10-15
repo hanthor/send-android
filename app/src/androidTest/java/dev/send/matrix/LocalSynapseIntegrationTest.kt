@@ -94,12 +94,17 @@ class ZLocalSynapseIntegrationTest {
             repository.joinedRooms.value.any { it.direct && it.encrypted }
         }
         val demoRoom = repository.joinedRooms.value.first { it.direct && it.encrypted }
+        // The list shows a local placeholder name ("bob") until sync publishes the room's display name.
+        fun demoRoomName() = repository.joinedRooms.value.firstOrNull { it.id == demoRoom.id }?.name ?: demoRoom.name
         composeRule.waitUntil(timeoutMillis = 30_000) {
-            composeRule.onAllNodesWithText(demoRoom.name).fetchSemanticsNodes().isNotEmpty()
+            composeRule.onAllNodesWithText(demoRoomName()).fetchSemanticsNodes().isNotEmpty()
         }
         captureWalkthroughScreenshot("send-demo-conversations.png")
         joinReceiverRoom(demoRoom.id, message)
-        composeRule.onNodeWithText(demoRoom.name).performClick()
+        // Retried: the row can be renamed between reading the name and the click.
+        composeRule.waitUntil(timeoutMillis = 30_000) {
+            runCatching { composeRule.onNodeWithText(demoRoomName()).performClick() }.isSuccess
+        }
         composeRule.waitUntil(timeoutMillis = 30_000) {
             composeRule.onAllNodesWithText("Message").fetchSemanticsNodes().isNotEmpty()
         }
@@ -179,8 +184,7 @@ class ZLocalSynapseIntegrationTest {
             composeRule.onAllNodesWithContentDescription("unread", substring = true).fetchSemanticsNodes().isNotEmpty()
         }
         captureWalkthroughScreenshot("send-demo-unread.png")
-        val demoRoomName = repository.joinedRooms.value.first { it.id == demoRoom.id }.name
-        composeRule.onNodeWithText(demoRoomName).performClick()
+        composeRule.onNodeWithText(demoRoomName()).performClick()
         composeRule.waitUntil(timeoutMillis = 30_000) {
             composeRule.onAllNodesWithText(bobReply).fetchSemanticsNodes().isNotEmpty() &&
                 composeRule.onAllNodesWithText("Message").fetchSemanticsNodes().isNotEmpty()
