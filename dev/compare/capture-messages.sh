@@ -18,7 +18,7 @@ shot() {
 # Tap through Messages' first-run prompts (default-SMS, RCS, sign-in, permissions).
 dismiss_onboarding() {
   for _ in $(seq 1 12); do
-    $ui tap-any "Not now" "Skip" "No thanks" "Got it" "Continue" "Allow" "OK" \
+    $ui tap-any "Use Messages without an account" "Not now" "Skip" "No thanks" "Got it" "Continue" "Allow" "OK" \
       "Set default" "Set as default" "Agree" "Done" "Close" || break
     sleep 2
   done
@@ -32,6 +32,8 @@ cat "$out/gm-version.txt"
 adb shell pm grant "$pkg" android.permission.READ_SMS 2>/dev/null || true
 adb shell pm grant "$pkg" android.permission.POST_NOTIFICATIONS 2>/dev/null || true
 adb shell cmd role add-role-holder android.app.role.SMS "$pkg" 0 || true
+# Heads-up notifications from the seeded SMS would cover the captured screens.
+adb shell settings put global heads_up_notifications_enabled 0
 
 # Seed a realistic two-sided thread through the emulator modem.
 adb emu sms send 5551234 "Hey, are you free to talk?"
