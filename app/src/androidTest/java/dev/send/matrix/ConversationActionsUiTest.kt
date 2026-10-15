@@ -33,6 +33,8 @@ import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.UiDevice
 import java.io.File
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -413,17 +415,20 @@ class ConversationActionsUiTest {
         val lift = with(composeRule.density) { (VOICE_LOCK_DISTANCE + 56.dp).toPx() }
         // The recording timer ticks with delay(); with a manual clock the test can still reach idle.
         composeRule.mainClock.autoAdvance = false
-        composeRule.onNodeWithContentDescription("Voice message").performTouchInput {
+        fun lock() = composeRule.onNodeWithContentDescription("Voice message").performTouchInput {
             down(center)
             repeat(10) { step -> moveTo(Offset(centerX, centerY - lift * (step + 1) / 10f)) }
             up()
         }
+        lock()
         composeRule.mainClock.advanceTimeBy(1_000)
+        // Messages' recorder: composer stays, the panel and its Restart / Stop / Attach row sit below it.
         composeRule.onNodeWithContentDescription("Stop recording").assertIsDisplayed()
         composeRule.onNodeWithText("Restart").assertIsDisplayed()
         composeRule.onNodeWithText("Attach").assertIsDisplayed()
-        composeRule.onNodeWithContentDescription("Delete recording").assertIsDisplayed()
-        composeRule.onNodeWithContentDescription("Send voice message").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Audio recording waveform").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Hide voice recorder").assertIsDisplayed()
+        composeRule.onAllNodesWithContentDescription("Send voice message").assertCountEquals(0)
         composeRule.runOnIdle { assertTrue(capture.recording) }
         composeRule.auditShot("voice-locked")
         // Restart throws the take away and records again.
@@ -441,9 +446,22 @@ class ConversationActionsUiTest {
         composeRule.mainClock.advanceTimeBy(500)
         composeRule.onAllNodesWithText("Restart").assertCountEquals(0)
         composeRule.onNodeWithText("Voice message · ", substring = true).assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Delete recording").assertIsDisplayed()
         composeRule.onNodeWithContentDescription("Send voice message").performClick()
         composeRule.mainClock.advanceTimeBy(500)
         composeRule.runOnIdle { assertNotNull(callbacks.voice) }
+
+        // The round button closes the recorder again, discarding the take.
+        callbacks.voice = null
+        lock()
+        composeRule.mainClock.advanceTimeBy(500)
+        composeRule.onNodeWithContentDescription("Hide voice recorder").performClick()
+        composeRule.mainClock.advanceTimeBy(500)
+        composeRule.onAllNodesWithText("Restart").assertCountEquals(0)
+        composeRule.runOnIdle {
+            assertFalse(capture.recording)
+            assertNull(callbacks.voice)
+        }
         composeRule.mainClock.autoAdvance = true
     }
 
