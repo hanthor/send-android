@@ -161,19 +161,21 @@ internal fun ConversationDetailsScreen(
         scope.launch {
             busy = true
             dialogError = ""
-            try {
+            val message = try {
                 action()
                 dialog = null
                 reload++
-                if (done != null) snackbar.showSnackbar(done)
+                done
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (problem: Exception) {
                 dialogError = problem.message ?: failure
-                if (dialog == null) snackbar.showSnackbar(dialogError)
+                dialogError.takeIf { dialog == null }
             } finally {
                 busy = false
             }
+            // The snackbar outlives the change; the page is usable again meanwhile.
+            if (message != null) snackbar.showSnackbar(message)
         }
     }
     val avatarPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->

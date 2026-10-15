@@ -181,7 +181,8 @@ class DetailsSettingsUiTest {
         showConversation(fake)
         // Messages: tapping the contact in the header opens the details.
         composeRule.onNode(hasText("Alice") and hasClickAction()).performClick()
-        waitForText("End-to-end encrypted")
+        // The header (top of the page) fills in once details load; lower rows compose as they scroll in.
+        waitForText("@alice:example.org")
         composeRule.onNodeWithText("@alice:example.org").assertIsDisplayed()
         composeRule.onNodeWithText("Search").assertIsDisplayed()
         composeRule.onNodeWithText("Mute").assertIsDisplayed()
@@ -216,7 +217,7 @@ class DetailsSettingsUiTest {
         composeRule.onNodeWithContentDescription("More options").performClick()
         composeRule.onNodeWithText("Details").performClick()
         waitForText("4 people")
-        composeRule.onNodeWithText("Cabin trip, 14–16 Nov").assertIsDisplayed()
+        composeRule.onAllNodesWithText("Cabin trip, 14–16 Nov")[0].assertIsDisplayed()
         composeRule.auditShot("details-group")
 
         // Rename through the Group name row.
@@ -293,6 +294,8 @@ class DetailsSettingsUiTest {
         showConversation(FakeDetails(groupDetails), messages = chat + photos + document, loadMedia = { _, name -> byName.getValue(name) })
         composeRule.onNodeWithContentDescription("More options").performClick()
         composeRule.onNodeWithText("Details").performClick()
+        waitForText("4 people")
+        scrollDetailsTo("Media & files")
         waitForText("6 items")
         composeRule.onNodeWithText("6 items").performClick()
         composeRule.waitUntil(10_000) { composeRule.onAllNodesWithTag(MEDIA_GRID_TAG).fetchSemanticsNodes().isNotEmpty() }

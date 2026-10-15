@@ -341,7 +341,7 @@ internal fun ProfileScreen(
         if (uri != null) {
             launchGuarded(scope, { busy = it }, { error = it }, "Your photo couldn't be changed.") {
                 setAvatar(uri)
-                snackbar.showSnackbar("Profile photo updated")
+                scope.launch { snackbar.showSnackbar("Profile photo updated") }
             }
         }
     }
@@ -361,7 +361,7 @@ internal fun ProfileScreen(
                     onClick = {
                         launchGuarded(scope, { busy = it }, { error = it }, "Your photo couldn't be removed.") {
                             removeAvatar()
-                            snackbar.showSnackbar("Profile photo removed")
+                            scope.launch { snackbar.showSnackbar("Profile photo removed") }
                         }
                     },
                     enabled = !busy,
@@ -394,7 +394,7 @@ internal fun ProfileScreen(
                             onClick = {
                                 launchGuarded(scope, { busy = it }, { error = it }, "Your name couldn't be changed.") {
                                     setName(name)
-                                    snackbar.showSnackbar("Name updated")
+                                    scope.launch { snackbar.showSnackbar("Name updated") }
                                 }
                             },
                             enabled = !busy && name.isNotBlank() && name.trim() != savedName,
@@ -463,7 +463,7 @@ internal fun DevicesScreen(
                     passwordFor = null
                     browserFor = null
                     reload++
-                    snackbar.showSnackbar("Signed out of ${device.label}")
+                    scope.launch { snackbar.showSnackbar("Signed out of ${device.label}") }
                 }
                 is DeviceSignOut.Password -> passwordFor = device to result
                 is DeviceSignOut.Browser -> {

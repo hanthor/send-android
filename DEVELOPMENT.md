@@ -13,7 +13,8 @@ dev/matrix/seed-demo.sh
 dev/matrix/check-rtc.sh
 ```
 
-This creates `@alice:send.test` and `@bob:send.test` with password
+This creates `@alice:send.test`, `@bob:send.test` and `@carol:send.test` (only
+ever invited, by the details test) with password
 `local-dev-password` and sets Bob's display name. It also raises Synapse's
 login and message rate limits on this disposable server (and restarts it once),
 because the emulator tests sign in several devices within seconds. Sign into

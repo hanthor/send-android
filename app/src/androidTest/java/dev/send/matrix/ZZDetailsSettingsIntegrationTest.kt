@@ -90,10 +90,7 @@ class ZZDetailsSettingsIntegrationTest {
 
         // 1. Rename: Bob's client shows the new name.
         val newName = "Renamed $stamp"
-        scrollDetailsTo("Group name")
-        composeRule.onNodeWithText("Group name").performClick()
-        composeRule.onNodeWithTag(DETAILS_TEXT_INPUT_TAG).performTextReplacement(newName)
-        composeRule.onNodeWithText("Save").performClick()
+        editDetailsText("Group name", DETAILS_TEXT_INPUT_TAG, newName, "Save")
         waitFor("m.room.name on the homeserver", 60_000, { "name=${serverState(room, "m.room.name")}" }) {
             serverState(room, "m.room.name")?.optString("name") == newName
         }
@@ -103,19 +100,13 @@ class ZZDetailsSettingsIntegrationTest {
 
         // 2. Topic: Bob's client shows it.
         val topic = "Topic $stamp"
-        scrollDetailsTo("Description")
-        composeRule.onNodeWithText("Description").performClick()
-        composeRule.onNodeWithTag(DETAILS_TEXT_INPUT_TAG).performTextReplacement(topic)
-        composeRule.onNodeWithText("Save").performClick()
+        editDetailsText("Description", DETAILS_TEXT_INPUT_TAG, topic, "Save")
         waitFor("the topic on Bob's client", 60_000, { "bob=${bobRooms[room]?.topic()} server=${serverState(room, "m.room.topic")}" }) {
             bobRooms[room]?.topic() == topic
         }
 
         // 3. Add people: Carol's invite is on the server and listed as Invited.
-        scrollDetailsTo("Add people")
-        composeRule.onNodeWithText("Add people").performClick()
-        composeRule.onNodeWithTag(ADD_PEOPLE_INPUT_TAG).performTextInput(CAROL)
-        composeRule.onNodeWithText("Invite").performClick()
+        editDetailsText("Add people", ADD_PEOPLE_INPUT_TAG, CAROL, "Invite")
         waitFor("Carol's invite on the homeserver", 60_000, { "carol=${serverMembership(room, CAROL)}" }) {
             serverMembership(room, CAROL) == "invite"
         }
@@ -205,6 +196,16 @@ class ZZDetailsSettingsIntegrationTest {
         waitForUi("details to close", 10_000, ::state) {
             composeRule.onAllNodes(hasTestTag(DETAILS_LIST_TAG)).fetchSemanticsNodes().isEmpty()
         }
+    }
+
+    /** Opens a details row's one-field dialog, enters [value], confirms, and waits for the dialog to close (saved). */
+    private fun editDetailsText(row: String, inputTag: String, value: String, confirm: String) {
+        scrollDetailsTo(row)
+        composeRule.onNodeWithText(row).performClick()
+        waitForUi("the $row dialog", 10_000, ::state) { composeRule.onAllNodes(hasTestTag(inputTag)).fetchSemanticsNodes().isNotEmpty() }
+        composeRule.onNodeWithTag(inputTag).performTextReplacement(value)
+        composeRule.onNodeWithText(confirm).performClick()
+        waitForUi("the $row dialog to close", 60_000, ::state) { composeRule.onAllNodes(hasTestTag(inputTag)).fetchSemanticsNodes().isEmpty() }
     }
 
     private fun scrollDetailsTo(text: String) {
