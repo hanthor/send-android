@@ -84,6 +84,8 @@ class UiComparisonScreenshotTest {
                     creatingDirectRoom = false,
                     onCreateDirectRoom = {},
                     onCreateGroup = { name, members -> createdGroup = name to members },
+                    onAccount = {},
+                    onVerifyDevice = null,
                 )
             }
         }
@@ -150,6 +152,8 @@ class UiComparisonScreenshotTest {
                         loadMedia = { _, _ -> error("No media in this fixture.") },
                         uploading = false,
                         error = "",
+                        decryptionActionLabel = null,
+                        onDecryptionAction = {},
                     )
                 }
             }
@@ -229,6 +233,8 @@ class UiComparisonScreenshotTest {
                     loadMedia = { _, _ -> error("No media in this fixture.") },
                     uploading = false,
                     error = "",
+                    decryptionActionLabel = null,
+                    onDecryptionAction = {},
                 )
             }
         }

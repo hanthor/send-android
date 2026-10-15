@@ -44,6 +44,8 @@ private fun HomeScreenPreview() {
             creatingDirectRoom = false,
             onCreateDirectRoom = {},
             onCreateGroup = { _, _ -> },
+            onAccount = {},
+            onVerifyDevice = null,
         )
     }
 }
@@ -85,6 +87,8 @@ private fun ConversationScreenPreview() {
             loadMedia = { _, _ -> error("Previews do not load Matrix media.") },
             uploading = false,
             error = "",
+            decryptionActionLabel = null,
+            onDecryptionAction = {},
         )
     }
 }
