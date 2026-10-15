@@ -76,7 +76,7 @@ class UiComparisonScreenshotTest {
         saveScreenshot("send-home-screen.png")
         composeRule.onNodeWithText("Start chat", useUnmergedTree = true).performClick()
         composeRule.onNodeWithText("Create").assertIsNotEnabled()
-        composeRule.onNodeWithText("Matrix user ID").performTextInput("@alice:example.org")
+        composeRule.onNodeWithText("Type a Matrix ID").performTextInput("@alice:example.org")
         saveScreenshot("send-new-chat-dialog.png")
         composeRule.onNodeWithText("Create").assertIsEnabled()
     }
