@@ -16,6 +16,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -122,10 +123,11 @@ internal fun messageText(text: String, links: List<TextLink>, query: String, lin
 
 /**
  * Messages' quoted message inside a reply bubble: sender and a two-line snippet on a tinted block with an
- * accent bar. Tapping jumps to the original.
+ * accent bar. Tapping jumps to the original; a long press selects the reply like the rest of the bubble.
  */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-internal fun ReplyQuoteBlock(quote: ReplyQuote, isFromMe: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+internal fun ReplyQuoteBlock(quote: ReplyQuote, isFromMe: Boolean, onClick: () -> Unit, onLongClick: () -> Unit = {}, modifier: Modifier = Modifier) {
     val colors = MaterialTheme.colorScheme
     val content = if (isFromMe) colors.onPrimaryContainer else colors.onSurface
     val sender = when {
@@ -137,7 +139,7 @@ internal fun ReplyQuoteBlock(quote: ReplyQuote, isFromMe: Boolean, onClick: () -
         modifier = modifier
             .clip(RoundedCornerShape(12.dp))
             .background(content.copy(alpha = 0.08f))
-            .clickable(onClickLabel = "Go to original message", onClick = onClick)
+            .combinedClickable(onClickLabel = "Go to original message", onClick = onClick, onLongClick = onLongClick)
             .semantics { contentDescription = "Reply to $sender" }
             .heightIn(min = 40.dp),
         verticalAlignment = Alignment.CenterVertically,

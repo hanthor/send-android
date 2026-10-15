@@ -123,8 +123,7 @@ class ZZConversationActionsIntegrationTest {
         }
 
         // 2. Edit from the long-press actions: Bob sees the replacement; Alice's bubble says "Edited".
-        composeRule.onNodeWithText(reply).performTouchInput { longClick() }
-        composeRule.onNodeWithContentDescription("Edit").performClick()
+        selectAndTap(reply, "Edit")
         waitForUi("edit mode", 10_000, ::conversationState) { hasNodeWithText("Editing message") }
         val edited = "Edited by Alice $stamp"
         composeRule.onNode(hasSetTextAction()).performTextReplacement(edited)
@@ -135,8 +134,7 @@ class ZZConversationActionsIntegrationTest {
         }
 
         // 3. Delete for everyone: Bob sees the redaction; Alice sees "Message deleted".
-        composeRule.onNodeWithText(edited).performTouchInput { longClick() }
-        composeRule.onNodeWithContentDescription("Delete").performClick()
+        selectAndTap(edited, "Delete")
         composeRule.onNodeWithText("Delete").performClick()
         waitFor("Bob to see the redaction", 60_000, ::bobState) { bobEvents[replyId]?.redacted == true }
         waitForUi("the deleted bubble", 30_000, ::conversationState) { hasNodeWithText("Message deleted") }
@@ -182,8 +180,7 @@ class ZZConversationActionsIntegrationTest {
         composeRule.auditShot("live-read")
 
         // 6. Forward Bob's original into the second room: it arrives there for Bob, and that conversation opens.
-        composeRule.onNodeWithText(original).performTouchInput { longClick() }
-        composeRule.onNodeWithContentDescription("Forward").performClick()
+        selectAndTap(original, "Forward")
         waitForUi("the forward picker", 10_000, ::conversationState) { hasNodeWithText("Forward to") }
         composeRule.onNodeWithText("$FORWARD_ROOM $stamp").performClick()
         waitFor("Bob to receive the forwarded copy", 60_000, ::bobState) { bobEvent(second, original) != null }
@@ -197,6 +194,15 @@ class ZZConversationActionsIntegrationTest {
     private fun hasNodeWithText(text: String, substring: Boolean = false): Boolean =
         composeRule.onAllNodesWithText(text, substring = substring).fetchSemanticsNodes().isNotEmpty()
 
+    /** Long-presses the bubble showing [text] and taps [action] in the contextual action bar. */
+    private fun selectAndTap(text: String, action: String) {
+        composeRule.onNodeWithText(text).performTouchInput { longClick() }
+        waitForUi("the $action action for \"$text\"", 10_000, ::conversationState) {
+            composeRule.onAllNodesWithContentDescription(action).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithContentDescription(action).performClick()
+    }
+
     private fun bobEvent(roomId: String, body: String): BobEvent? = bobEvents.values.firstOrNull { it.roomId == roomId && it.body == body }
 
     private fun bobState(): String = "bob=${bobEvents.values.map { "${it.body}:${it.inReplyTo}:${it.edited}:${it.redacted}" }}"
@@ -204,7 +210,7 @@ class ZZConversationActionsIntegrationTest {
     private fun roomsState(): String = "rooms=${repository.joinedRooms.value.map { "${it.id}:${it.name}:${it.encrypted}" }}"
 
     private fun conversationState(): String =
-        "visible=${NotificationRouter.visibleRoomId} messages=${repository.messages.value.map { "${it.sender}:${it.text}:${it.status}:${it.readBy.keys}:${it.deleted}:${it.edited}" }}"
+        "visible=${NotificationRouter.visibleRoomId} messages=${repository.messages.value.map { "${it.sender}:${it.text}:${it.status}:${it.readBy.keys}:deleted=${it.deleted}:edited=${it.edited}:editable=${it.editable}" }}"
 
     /** Compose's waitUntil (keeps the app's UI composing), reporting app state on timeout. */
     private fun waitForUi(what: String, timeoutMillis: Long, state: () -> String, condition: () -> Boolean) {

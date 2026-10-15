@@ -1262,20 +1262,10 @@ class MatrixRepository(context: Context) {
         room
     }
 
-    /** The room's live timeline, tracking everyone's read receipts so own messages can show "Read". */
+    /** The room's live timeline; the SDK's default one tracks everyone's read receipts (so own messages can show "Read"). */
     suspend fun timeline(room: Room): Timeline = withContext(Dispatchers.IO) {
         check(room.isEncrypted()) { "This room is not end-to-end encrypted and cannot be opened for messaging." }
-        room.timelineWithConfiguration(
-            org.matrix.rustcomponents.sdk.TimelineConfiguration(
-                focus = org.matrix.rustcomponents.sdk.TimelineFocus.Live(hideThreadedEvents = false),
-                filter = org.matrix.rustcomponents.sdk.TimelineFilter.All,
-                internalIdPrefix = null,
-                dateDividerMode = org.matrix.rustcomponents.sdk.DateDividerMode.DAILY,
-                trackReadReceipts = uniffi.matrix_sdk_ui.TimelineReadReceiptTracking.ALL_EVENTS,
-                // No UTD hook manager is installed on the client, and the SDK refuses a timeline that would report to one.
-                reportUtds = false,
-            ),
-        )
+        room.timeline()
     }
 
     suspend fun observeTimeline(timeline: Timeline) = withContext(Dispatchers.IO) {

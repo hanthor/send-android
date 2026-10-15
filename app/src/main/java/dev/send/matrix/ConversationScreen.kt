@@ -945,7 +945,7 @@ fun MessageBubble(
         ) {
             Column(Modifier.padding(horizontal = if (replyTo != null || preview != null) 6.dp else 0.dp, vertical = if (replyTo != null || preview != null) 6.dp else 0.dp)) {
                 if (replyTo != null) {
-                    ReplyQuoteBlock(quote = replyTo, isFromMe = isFromMe, onClick = { onQuoteClick(replyTo.eventId) })
+                    ReplyQuoteBlock(quote = replyTo, isFromMe = isFromMe, onClick = { onQuoteClick(replyTo.eventId) }, onLongClick = onLongPress)
                 }
                 Text(
                     text = annotated,
