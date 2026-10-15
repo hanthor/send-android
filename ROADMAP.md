@@ -8,15 +8,15 @@ Baseline: Google Messages `20260924` compared on the same emulator
 
 | Area | Parity | Done | Missing |
 |---|---|---|---|
-| Core screen styling | ~90% | Home top bar + sheet, rows, avatars, palette, conversation header, bubbles, composer, New chat; back/call buttons and composer field measure identical dp | In-app media viewer, conversation details page, settings screens |
-| Messaging actions | ~40% | Text, photo/video/file, voice (hold-to-record), reactions, pagination, local echo + Sending/Sent/Not sent, mark-as-read | Reply (swipe), edit, delete, copy, forward, typing indicators, "Read" receipts, link previews, emoji/GIF picker, in-conversation search |
+| Core screen styling | ~90% | Home top bar + sheet, rows, avatars, palette, conversation header, bubbles, composer, New chat, in-app media viewer; back/call buttons and composer field measure identical dp | Conversation details page, settings screens |
+| Messaging actions | ~85% | Text, photo/video/file, voice (hold-to-record + slide-up lock), reactions (quick row + full picker), pagination, local echo + Sending/Sent/Not sent, mark-as-read, long-press actions (reply/copy/edit/forward/delete/info), swipe-to-reply with quotes, "Edited"/"Message deleted", typing dots, "Read"/"Seen by N", link previews, full emoji picker, in-conversation search | GIF/sticker picker, scheduled send, starred messages, auto-pagination on scroll |
 | Conversation list | ~40% | Search, snippet, relative time, unread badge, groups, mute (⋮ menu + muted icon) | Archive, pin, swipe actions, multi-select, block/spam, leave |
-| Motion | ~45% | Screen open/close transitions, M3 spring tokens, expand/collapse springs | FAB collapse on scroll, list item animations, predictive back, shared-element avatar, bubble entry, swipe gestures |
+| Motion | ~50% | Screen open/close transitions, M3 spring tokens, expand/collapse springs, swipe-to-reply spring with haptic threshold, voice-lock slide | FAB collapse on scroll, list item animations, predictive back, shared-element avatar, bubble entry, list swipe actions |
 | System integration | ~45% | MessagingStyle notifications, UnifiedPush pusher + background-sync fallback, inline reply, mark read, long-lived conversation shortcuts, notification deep links | Share target, bubbles, widgets, Android Auto, FCM |
 | Calling | ~65% | Outgoing/incoming 1:1 and group calls via Element Call, full-screen CallStyle ring with answer/decline, decline both ways, voice/video buttons, call rows in the timeline, join banner + list icon, mute/routing, PiP | Core-Telecom, missed-call notification, media verified in CI, group call notices, Element Call out of rc |
 | Account & E2EE safety | ~85% | Password/QR/SSO login, well-known discovery, session restore, Keystore-wrapped store, sign-out with store wipe, cross-signing bootstrap, recovery/key backup setup and restore, SAS emoji verification, unverified-session banner, "Waiting for this message…" bubbles | Change/reset recovery key, reset identity when no verified device or key is left, session list (other devices) |
 
-Overall: **looks ~85–90% like Messages, behaves ~45% like it.**
+Overall: **looks ~85–90% like Messages, behaves ~65% like it** (phases 1–4 done; list management, details/settings and motion remain).
 
 ## Phases
 
@@ -50,10 +50,21 @@ Verified by Android CI run [38739979359](https://github.com/hanthor/send-android
 - [x] *Acceptance:* Bob rings Alice in CI, Alice's device shows the CallStyle ring, decline reaches Bob, answer puts Alice's membership in Bob's session, Alice's call rings Bob and his decline ends it.
 - Not in CI: media (Alice's call stays in `ConnectingMedia` against Bob's SDK-only membership; nobody publishes media, and the RTC core's logs are off), lock-screen/full-screen display (CI's screen is on and unlocked, so the ring is a heads-up), ringtone/vibration. AndroidX Core-Telecom isn't used: Element Call owns call audio (its own audio-device controller, focus and microphone/camera foreground service), which a self-managed Telecom call would also claim. Track Element Call out of release-candidate; re-pin when stable.
 
-### 4. Conversation behaviour parity
-- Swipe-to-reply + reply previews, edit, delete (redact), copy, forward.
-- Typing indicators (`TypingNotificationsListener`) and "Read" receipts under own messages.
-- Link previews, in-app photo/video viewer, full emoji picker, in-conversation search.
+### 4. Conversation behaviour parity — done
+Verified by Android CI run [38756437669](https://github.com/hanthor/send-android/actions/runs/38756437669) (`ZZConversationActionsIntegrationTest`, `ConversationActionsUiTest`).
+- [x] Long-press: Messages' contextual action bar (Close, Reply, Copy, Edit for own text, Forward, Delete for own with confirm, Info) with the quick-reaction row floating over the bubble (+ full picker for more reactions).
+- [x] Swipe a bubble right to reply (resistance, haptic tick at the threshold, `SendMotion` spring back); "Replying to …" strip above the composer; sent replies (`Timeline.sendReply`) quote the original inside the bubble and tapping the quote scrolls to it, paginating back until it is loaded.
+- [x] Edit (`Timeline.edit` with `EditedContent.RoomMessage`) in the composer with an "Editing message" strip; edited messages say "Edited". Delete for everyone (`Timeline.redactEvent`) renders a muted "Message deleted" bubble.
+- [x] Forward: conversation picker built from the list rows (encrypted rooms only); the copy is sent with `contentWithoutRelationFromMessage` (media re-uses the original encrypted upload) and that conversation opens.
+- [x] Typing: `Room.typingNotice` follows the draft; `subscribeToTypingNotifications` shows Messages' three-dot bubble.
+- [x] Read receipts from the timeline (`EventTimelineItem.readReceipts`): "Read" (DMs) / "Seen by N" (groups) under the newest own message; Info lists who read it and when.
+- [x] Links are tappable (`Linkify` web URLs); `Client.getUrlPreview` OpenGraph data becomes a preview card (image, title, description, site); no card when the homeserver has none.
+- [x] In-app media viewer: pinch/double-tap zoom for photos, `VideoView` playback with controls, Share and Save (MediaStore).
+- [x] Full emoji picker (categories, recents, skin tones, offline search by Unicode name) for the composer and reactions.
+- [x] In-conversation search (⋮ → Search) over the loaded timeline with highlighted matches, "n of m" and older/newer jumps; stepping past the oldest match loads older history.
+- [x] Voice recording lock: slide up while holding to keep recording hands-free, then stop (review/play), send or delete.
+- [x] *Acceptance:* in CI Alice swipes to reply and Bob's client gets the in-reply-to relation; Alice's edit replaces the text on Bob's client; her delete reaches Bob as a redaction; Bob's typing shows the dots and Alice's draft reaches Bob's typing listener; Bob's read receipt turns "Sent" into "Read"; forwarding Bob's message into a second room delivers it there.
+- Not in CI: link previews against a real page (the CI homeserver has URL previews off; CI checks that nothing is shown then, and fixtures cover the card), recording from a real microphone (the emulator has no audio input; the lock gesture runs against a stand-in recorder), and video playback in the viewer. Search uses the loaded timeline, not the SDK's `SearchService` (a client-wide index of its own); older history is loaded on demand.
 
 ### 5. Conversation list management
 - Archive (low-priority tag), pin (favourite), mute, swipe actions, long-press multi-select bar, block (`ignoreUser`), leave/delete.

@@ -1343,12 +1343,18 @@ class MatrixRepository(context: Context) {
     }
 
     /**
-     * Tells the room this account is (or stopped) typing. The SDK only sends a new notice when the state changes
-     * or the previous one is about to expire.
+     * Tells the room this account is (or stopped) typing, in order on the repository scope so the UI never waits on
+     * the network for it. The SDK only sends a new notice when the state changes or the previous one is about to
+     * expire; failures are only logged (a missed notice lapses on its own).
      */
-    suspend fun setTyping(room: Room, typing: Boolean): Unit = withContext(Dispatchers.IO) {
-        check(room.isEncrypted()) { "This room is not end-to-end encrypted." }
-        room.typingNotice(typing)
+    fun setTyping(room: Room, typing: Boolean) {
+        repositoryScope.launch {
+            try {
+                if (room.isEncrypted()) room.typingNotice(typing)
+            } catch (error: Exception) {
+                android.util.Log.w(TAG, "Typing notice could not be sent", error)
+            }
+        }
     }
 
     /**
