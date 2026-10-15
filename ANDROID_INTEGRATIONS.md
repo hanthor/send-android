@@ -4,8 +4,8 @@ Goal: make Send feel native across Android system surfaces while keeping Matrix 
 
 ## P0 — messaging foundation
 
-- **Conversation notifications:** AndroidX `NotificationCompat.MessagingStyle`, Person metadata/avatar, long-lived dynamic conversation shortcuts, and per-conversation channel controls. Associate notifications with shortcut IDs and conversation locus. Add mark-read and `RemoteInput` inline reply actions. Respect Android 13+ notification permission, user DND/conversation priority controls, and lock-screen visibility settings. Default to hiding message bodies on lock screen; do not put decrypted plaintext in logs or broad system surfaces.
-- **Background send/read:** action receivers/services must restore the Rust SDK client and crypto store before acting; handle expired session, locked/unavailable crypto, duplicate actions, and offline send safely. Never acknowledge send success until the SDK confirms queue/transaction result. Notification actions must not bypass room encryption checks.
+- **Conversation notifications — implemented (phase 2):** `MessagingStyle` per conversation on a "Messages" channel, `Person`s with Send's avatar colour/initial, long-lived dynamic conversation shortcuts tied to the notification by shortcut ID and `LocusId` (the activity sets the same locus while a conversation is open, so Android's per-conversation channel settings and priority apply), mark-read and `RemoteInput` reply actions, Android 13+ `POST_NOTIFICATIONS` requested once after sign-in with an explanation, and `VISIBILITY_PRIVATE` with a text-free public version. Decrypted text is never logged. Delivery: SDK sync while the process lives, UnifiedPush (Matrix gateway pusher) or a 15-minute WorkManager sync; see `IMPLEMENTATION_STATUS.md`.
+- **Background send/read — implemented (phase 2):** notification actions run as expedited WorkManager jobs that restore the Rust SDK session and crypto store first; reply keeps the encrypted-room check and is only shown as sent after the send queue reports `SentEvent` (otherwise "Reply not sent"); mark-read sends one receipt for the newest notified event. Expired sessions surface as a failed action rather than a silent drop.
 - **Launcher entry points/direct share:** “New message” and recently used conversation shortcuts; `SharingShortcuts`/Chooser targets to share text and selected media into a chat. Require explicit recipient confirmation before sending shared content.
 
 Android guidance: https://developer.android.com/develop/ui/views/notifications/conversations
@@ -53,8 +53,8 @@ Android 17 features: https://developer.android.com/about/versions/17/features
 
 ## Delivery order
 
-1. Reliable session/crypto restoration and conversation action handling.
-2. MessagingStyle, shortcuts, inline reply/read, deep links, notification privacy controls.
+1. Reliable session/crypto restoration and conversation action handling. *(Done.)*
+2. MessagingStyle, shortcuts, inline reply/read, deep links, notification privacy controls. *(Done in phase 2; CI run [38728600110](https://github.com/hanthor/send-android/actions/runs/38728600110).)*
 3. Native call lifecycle and CallStyle, then Auto call/messaging compatibility.
 4. Direct share, widgets, optional bubbles, dictation/read-aloud.
 5. On-device AI, App Actions, API 37 contact picker/Handoff; capability-gate and review privacy implications individually.
