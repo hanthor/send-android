@@ -112,6 +112,9 @@ class ZZListManagementIntegrationTest {
         waitForUi("the archived conversation on the Archived screen", 30_000, ::roomsState) { hasNodeWithText(archiveName) }
         composeRule.auditShot("live-archived")
         swipeRow(archiveName, towardsEnd = false)
+        // The action fires once the row's spring settles off-screen; the test clock only runs frames while Compose
+        // is waited on, so wait on the UI (Messages' snackbar) before polling the homeserver.
+        waitForUi("the unarchive snackbar", 10_000, ::roomsState) { hasNodeWithText("1 conversation unarchived") }
         softly {
             waitFor("m.lowpriority removed on the homeserver", 30_000, { "serverTags=${serverTags(archiveRoom)}" }) { "m.lowpriority" !in serverTags(archiveRoom) }
         }
