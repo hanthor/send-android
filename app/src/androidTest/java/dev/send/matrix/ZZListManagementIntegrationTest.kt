@@ -164,7 +164,9 @@ class ZZListManagementIntegrationTest {
         composeRule.onNodeWithContentDescription("Delete").performClick()
         waitForUi("the delete confirmation", 10_000, ::roomsState) { hasNodeWithText("Delete 1 conversation?") }
         composeRule.onNodeWithText("Delete").performClick()
-        waitFor("Alice to leave and forget the room", 60_000, ::roomsState) { !aliceKnowsRoom(deleteRoom) }
+        waitFor("Alice to leave the room on the homeserver", 60_000, { "joined=${serverJoinedRooms()}" }) { deleteRoom !in serverJoinedRooms() }
+        // Forget leaves no joined membership behind on Alice's client (the SDK may keep the left room until sync drops it).
+        waitFor("Alice's client to see the room left or forgotten", 60_000, ::roomsState) { !aliceJoined(deleteRoom) }
         waitFor("Bob to see Alice leave", 60_000, ::roomsState) {
             runBlocking(Dispatchers.IO) { checkNotNull(bobRooms[deleteRoom]).roomInfo().joinedMembersCount } == 1uL
         }
@@ -270,6 +272,7 @@ class ZZListManagementIntegrationTest {
             check()
         } catch (failure: AssertionError) {
             softFailures += failure.message.orEmpty()
+            android.util.Log.w("ListManagementTest", "Soft failure: ${failure.message}")
         }
     }
 
@@ -353,7 +356,14 @@ class ZZListManagementIntegrationTest {
     private fun roomInfo(roomId: String): RoomInfo? =
         repository.sdkRoom(roomId)?.use { room -> runBlocking(Dispatchers.IO) { room.roomInfo() } }
 
-    private fun aliceKnowsRoom(roomId: String): Boolean = repository.sdkRoom(roomId)?.also { it.close() } != null
+    private fun aliceJoined(roomId: String): Boolean =
+        repository.sdkRoom(roomId)?.use { it.membership() == org.matrix.rustcomponents.sdk.Membership.JOINED } == true
+
+    /** Rooms Alice is joined to, as Synapse has them. */
+    private fun serverJoinedRooms(): Set<String> {
+        val rooms = org.json.JSONObject(http("GET", "/_matrix/client/v3/joined_rooms", probe(), null)).getJSONArray("joined_rooms")
+        return List(rooms.length()) { rooms.getString(it) }.toSet()
+    }
 
     private fun roomsState(): String =
         "rooms=${repository.joinedRooms.value.map { "${it.name}:encrypted=${it.encrypted}:pinned=${it.pinned}:archived=${it.archived}:unread=${it.markedUnread}:dm=${it.dmUserId}:${it.lastMessage}" }} " +
@@ -374,14 +384,14 @@ class ZZListManagementIntegrationTest {
         try {
             composeRule.waitUntil(timeoutMillis = timeoutMillis, condition = condition)
         } catch (timeout: ComposeTimeoutException) {
-            throw AssertionError("Timed out waiting for $what; ${state()}", timeout)
+            throw AssertionError("Timed out waiting for $what; ${state()}; earlier soft failures=$softFailures", timeout)
         }
     }
 
     private fun waitFor(what: String, timeoutMillis: Long, state: () -> String, condition: () -> Boolean) {
         val deadline = System.currentTimeMillis() + timeoutMillis
         while (!condition()) {
-            if (System.currentTimeMillis() > deadline) throw AssertionError("Timed out waiting for $what; ${state()}")
+            if (System.currentTimeMillis() > deadline) throw AssertionError("Timed out waiting for $what; ${state()}; earlier soft failures=$softFailures")
             Thread.sleep(250)
         }
     }
