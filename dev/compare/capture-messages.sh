@@ -82,7 +82,39 @@ adb shell settings put global heads_up_notifications_enabled 0
 
 # The emulator has no real SIM, but its modem delivers `adb emu sms send` as genuine incoming
 # SMS, so Messages (the default SMS app) stores a real two-sided thread with 555-1234. Every
-# conversation capture below (bubble long-press, reply, composer panels, menus) uses that thread.
+# conversation capture below (bubble long-press, swipe, composer panels, menus) uses that thread.
+#
+# Full-screen photo needs a received picture message, which the emulator modem cannot deliver
+# (no MMS). As root, one from 555-0100 (an hour old) is written straight into the telephony
+# provider before Messages' first launch, whose initial sync imports it with the rest.
+python3 - <<'EOF'
+from PIL import Image
+Image.new("RGB", (640, 480), (66, 133, 244)).save("/tmp/gm-sample.jpg")
+EOF
+inject_photo_mms() {
+  as_root || { why="adbd could not restart as root to write the telephony provider"; return 1; }
+  local tid mid pid sent
+  tid=$(adb shell "content query --uri 'content://mms-sms/threadID?recipient=5550100'" | grep -o '_id=[0-9]*' | head -1 | cut -d= -f2)
+  [ -n "$tid" ] || { why="telephony provider returned no thread for 555-0100"; return 1; }
+  sent=$(($(date +%s) - 3600))
+  adb shell content insert --uri content://mms --bind thread_id:l:"$tid" --bind date:l:"$sent" --bind date_sent:l:"$sent" \
+    --bind msg_box:i:1 --bind read:i:0 --bind seen:i:0 --bind m_type:i:132 --bind v:i:18 --bind text_only:i:0 \
+    --bind ct_t:s:application/vnd.wap.multipart.related --bind m_id:s:gm"$sent"
+  mid=$(adb shell "content query --uri content://mms --projection _id --sort '_id DESC'" | grep -o '_id=[0-9]*' | head -1 | cut -d= -f2)
+  [ -n "$mid" ] || { why="telephony provider rejected the MMS row"; return 1; }
+  adb shell content insert --uri "content://mms/$mid/addr" --bind address:s:5550100 --bind type:i:137 --bind charset:i:106
+  adb shell content insert --uri "content://mms/$mid/part" --bind seq:i:0 --bind ct:s:image/jpeg --bind name:s:photo.jpg --bind cl:s:photo.jpg
+  pid=$(adb shell "content query --uri content://mms/$mid/part --projection _id" | grep -o '_id=[0-9]*' | head -1 | cut -d= -f2)
+  [ -n "$pid" ] || { why="telephony provider rejected the MMS image part"; return 1; }
+  adb shell "content write --uri content://mms/part/$pid" </tmp/gm-sample.jpg || { why="could not write the MMS image part"; return 1; }
+  adb shell "content query --uri content://mms/$mid/part --projection _id:ct:_data"
+}
+photo_why=""
+if ! inject_photo_mms; then
+  photo_why=$why
+  echo "::warning::photo MMS not injected: $why"
+fi
+
 adb emu sms send 5551234 "Hey, are you free to talk?"
 sleep 1
 adb emu sms send 5551234 "Made it home. Thanks for today!"
@@ -245,13 +277,11 @@ capture_panel() {
 capture_panel emoji-picker "Show attach emoji and stickers screen" "Emoji" "Emoji, stickers & GIFs" ||
   skip emoji-picker "composer emoji button did not open a panel"
 # A real photo on the device so the media panel has something to show. Send's audit shots
-# (already pulled) leave the device too, so the gallery shows only this photo.
+# and the transition recordings (already pulled) leave the device, so the gallery shows only
+# this photo.
 adb shell "content delete --uri content://media/external/file --where \"relative_path LIKE 'Download/Send%'\"" || true
-adb shell rm -rf /sdcard/Download/Send || true
-python3 - <<'EOF'
-from PIL import Image
-Image.new("RGB", (640, 480), (66, 133, 244)).save("/tmp/gm-sample.jpg")
-EOF
+adb shell "rm -rf /sdcard/Download/Send /sdcard/gm-*.mp4" || true
+# The sample photo itself is created (and sent as MMS) before Messages' first launch.
 adb push /tmp/gm-sample.jpg /sdcard/Pictures/gm-sample.jpg >/dev/null
 adb shell am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d file:///sdcard/Pictures/gm-sample.jpg >/dev/null
 capture_panel gallery "Show attach media screen" "Gallery" "Attach media" ||
@@ -294,39 +324,14 @@ capture_voice_locked() {
 }
 capture_voice_locked || skip voice-locked "hold + slide-up onto the lock did not keep the recording going"
 
-# Full-screen photo. Incoming MMS cannot be sent to the emulator modem, so (as root) a received
-# picture message from 555-0100 is written straight into the telephony provider; Messages imports
-# it like any message delivered while it was not running.
-inject_photo_mms() {
-  as_root || { why="adbd could not restart as root to write the telephony provider"; return 1; }
-  local tid mid pid now
-  tid=$(adb shell "content query --uri 'content://mms-sms/threadID?recipient=5550100'" | grep -o '_id=[0-9]*' | head -1 | cut -d= -f2)
-  [ -n "$tid" ] || { why="telephony provider returned no thread for 555-0100"; return 1; }
-  now=$(date +%s)
-  adb shell content insert --uri content://mms --bind thread_id:l:"$tid" --bind date:l:"$now" --bind date_sent:l:"$now" \
-    --bind msg_box:i:1 --bind read:i:0 --bind seen:i:0 --bind m_type:i:132 --bind v:i:18 --bind text_only:i:0 \
-    --bind ct_t:s:application/vnd.wap.multipart.related --bind m_id:s:gm"$now"
-  mid=$(adb shell "content query --uri content://mms --projection _id --sort '_id DESC'" | grep -o '_id=[0-9]*' | head -1 | cut -d= -f2)
-  [ -n "$mid" ] || { why="telephony provider rejected the MMS row"; return 1; }
-  adb shell content insert --uri "content://mms/$mid/addr" --bind address:s:5550100 --bind type:i:137 --bind charset:i:106
-  adb shell content insert --uri "content://mms/$mid/part" --bind seq:i:0 --bind ct:s:image/jpeg --bind name:s:photo.jpg --bind cl:s:photo.jpg
-  pid=$(adb shell "content query --uri content://mms/$mid/part --projection _id" | grep -o '_id=[0-9]*' | head -1 | cut -d= -f2)
-  [ -n "$pid" ] || { why="telephony provider rejected the MMS image part"; return 1; }
-  adb shell "content write --uri content://mms/part/$pid" </tmp/gm-sample.jpg || { why="could not write the MMS image part"; return 1; }
-  adb shell "content query --uri content://mms/$mid/part --projection _id:ct:_data"
-}
+# Open the injected 555-0100 photo full screen.
 capture_media_viewer() {
-  inject_photo_mms || return 1
-  # Messages imports provider rows written by other apps in the background; give it time.
-  relaunch
-  $ui wait 555-0100 --timeout 60 || { relaunch && $ui wait 555-0100 --timeout 60; } ||
-    { why="Messages did not import the injected 555-0100 photo message"; return 1; }
-  open_thread 555-0100 || { why="could not open the 555-0100 thread"; return 1; }
+  [ -z "$photo_why" ] || { why=$photo_why; return 1; }
+  open_thread 555-0100 || { why="Messages did not import the injected 555-0100 photo message"; return 1; }
   $ui tap-any "~photo" "~image" "~picture" "id:image_attachment_view" || { why="no photo bubble in the 555-0100 thread"; return 1; }
   sleep 2.5
-  shot media-viewer
+  shot media-viewer || { why="screencap failed"; return 1; }
 }
-why="screencap failed"
 capture_media_viewer || skip media-viewer "no photo message to open: $why (the emulator has no MMS)"
 
 # Typing dots are an RCS signal sent by the other participant's client; the emulator has no
@@ -358,7 +363,7 @@ capture_reply_swipe() {
   fi
   shot reply-preview
 }
-capture_reply_swipe && reply_done=1 || reply_done=0
+if capture_reply_swipe; then reply_done=1; else reply_done=0; fi
 
 # Selection captures run last: the long-press overlay took the software-GPU emulator down
 # in every attempt (it hangs, then disappears mid-screencap), which must not cost the
@@ -370,6 +375,7 @@ capture_message_actions() {
     sleep 1
   fi
   adb shell wm disable-blur 1 || true
+  adb shell settings put system haptic_feedback_enabled 0 || true
   open_thread 555-1234 || { why="could not open the 555-1234 thread"; return 1; }
   read -r x y < <($ui center "Hey, are you free to talk?") || { why="incoming bubble not found"; return 1; }
   mkdir -p "$out/debug"
@@ -379,7 +385,16 @@ capture_message_actions() {
   long_press "$x" "$y"
   sleep 1.5
   local status=0
-  shot message-actions || { why="the long-press overlay hung the software-GPU emulator (screencap never returned)"; status=1; }
+  if ! shot message-actions; then
+    status=1
+    why="the long-press selection hung the software-GPU emulator (screencap never returned)"
+    if ! adb get-state >/dev/null 2>&1; then
+      local oom
+      oom=$(sudo -n dmesg 2>/dev/null | grep -i -E "out of memory|oom-kill|killed process" | tail -1 || true)
+      why="$why; the emulator process then exited${oom:+ (host kernel: $oom)}"
+      pgrep -a -f qemu-system || echo "no qemu-system process left"
+    fi
+  fi
   kill $logcat 2>/dev/null || true
   return $status
 }
@@ -391,8 +406,10 @@ capture_reply_action() {
   sleep 1.5
   shot reply-preview
 }
+# Messages logs "Can't reply/react reason: replies not supported for this message
+# type/protocol" (message_protocol=SIMPLE) for SMS, so this only succeeds on RCS.
 if [ "$reply_done" = 0 ]; then
-  capture_reply_action || skip reply-preview "neither swipe-to-reply nor a Reply action is offered for this SMS thread (reply is an RCS chat feature)"
+  capture_reply_action || skip reply-preview "Messages offers no reply for SMS (logcat: \"Can't reply/react reason: replies not supported for this message type/protocol\", message_protocol=SIMPLE); swiping the bubble right does nothing"
 fi
 
 ls -la "$out"
