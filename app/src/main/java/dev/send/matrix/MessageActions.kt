@@ -1,5 +1,7 @@
 package dev.send.matrix
 
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.draw.clip
 import android.text.format.DateUtils
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
@@ -71,13 +73,16 @@ internal fun ReactionRow(onReact: (String) -> Unit, onMore: () -> Unit) {
         color = MaterialTheme.colorScheme.surfaceContainerHighest,
         shadowElevation = 3.dp,
     ) {
-        Row(Modifier.padding(horizontal = 6.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.padding(horizontal = 6.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             QuickReactions.forEach { emoji ->
-                TextButton(onClick = { onReact(emoji) }, contentPadding = PaddingValues(horizontal = 6.dp)) {
-                    Text(emoji, fontSize = 22.sp)
+                Box(
+                    modifier = Modifier.size(44.dp).clip(CircleShape).clickable { onReact(emoji) },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(emoji, fontSize = 24.sp)
                 }
             }
-            IconButton(onClick = onMore) {
+            IconButton(onClick = onMore, modifier = Modifier.size(44.dp)) {
                 Icon(Icons.Outlined.AddReaction, contentDescription = "More reactions", tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }

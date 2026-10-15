@@ -1272,7 +1272,8 @@ class MatrixRepository(context: Context) {
                 internalIdPrefix = null,
                 dateDividerMode = org.matrix.rustcomponents.sdk.DateDividerMode.DAILY,
                 trackReadReceipts = uniffi.matrix_sdk_ui.TimelineReadReceiptTracking.ALL_EVENTS,
-                reportUtds = true,
+                // No UTD hook manager is installed on the client, and the SDK refuses a timeline that would report to one.
+                reportUtds = false,
             ),
         )
     }

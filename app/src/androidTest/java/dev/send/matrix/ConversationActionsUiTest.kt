@@ -232,12 +232,12 @@ class ConversationActionsUiTest {
         }
         composeRule.onAllNodesWithText("Replying to Alice").assertCountEquals(0)
 
-        // The Reply action does the same, and the strip can be cancelled.
-        longPress("Are we still on for dinner tonight?")
+        // The Reply action does the same (here on an own message, nearest the composer), and the strip can be cancelled.
+        longPress("See you there")
         composeRule.onNodeWithContentDescription("Reply").performClick()
-        composeRule.onNodeWithText("Replying to Alice").assertIsDisplayed()
+        composeRule.onNodeWithText("Replying to yourself").assertIsDisplayed()
         composeRule.onNodeWithContentDescription("Cancel reply").performClick()
-        composeRule.onAllNodesWithText("Replying to Alice").assertCountEquals(0)
+        composeRule.onAllNodesWithText("Replying to yourself").assertCountEquals(0)
     }
 
     @Test
@@ -401,7 +401,8 @@ class ConversationActionsUiTest {
     fun slidingUpLocksTheVoiceRecording() {
         val capture = FakeVoiceCapture(File(context.cacheDir, "fixture-voice.ogg").apply { writeBytes(ByteArray(64)) })
         val callbacks = show(chat, voiceCapture = capture)
-        val lift = with(composeRule.density) { (VOICE_LOCK_DISTANCE + 24.dp).toPx() }
+        // From the button's centre: half its height to its top edge, then the lock distance and some margin.
+        val lift = with(composeRule.density) { (VOICE_LOCK_DISTANCE + 56.dp).toPx() }
         // The recording timer ticks with delay(); with a manual clock the test can still reach idle.
         composeRule.mainClock.autoAdvance = false
         composeRule.onNodeWithContentDescription("Voice message").performTouchInput {
