@@ -183,10 +183,13 @@ if $ui wait "Create group" --timeout 10 && $ui tap-any "Create group"; then slee
 
 # Account menu (top-right account disc; "Sign in" while no Google account is signed in) and
 # its "Messages settings" entry.
-capture_account() {
+open_account_menu() {
   relaunch
   $ui tap-any id:selected_account_disc "Sign in" "Account and settings" "Open account menu" || return 1
-  $ui wait "Messages settings" --timeout 15 || return 1
+  $ui wait "Messages settings" --timeout 15
+}
+capture_account() {
+  open_account_menu || return 1
   sleep 1
   shot account
 }
@@ -314,7 +317,11 @@ inject_photo_mms() {
 }
 capture_media_viewer() {
   inject_photo_mms || return 1
-  open_thread 555-0100 || { why="Messages did not import the injected 555-0100 photo thread"; return 1; }
+  # Messages imports provider rows written by other apps in the background; give it time.
+  relaunch
+  $ui wait 555-0100 --timeout 60 || { relaunch && $ui wait 555-0100 --timeout 60; } ||
+    { why="Messages did not import the injected 555-0100 photo message"; return 1; }
+  open_thread 555-0100 || { why="could not open the 555-0100 thread"; return 1; }
   $ui tap-any "~photo" "~image" "~picture" "id:image_attachment_view" || { why="no photo bubble in the 555-0100 thread"; return 1; }
   sleep 2.5
   shot media-viewer
@@ -337,31 +344,55 @@ sleep 2
 shot notification
 adb shell cmd statusbar collapse
 
-# Selection captures run last: the long-press overlay took the software-GPU emulator down
-# twice (it hung, then disappeared, mid-screencap), which must not cost the captures above.
-# Cross-window blur (the likely culprit on swiftshader) is turned off for it, so Messages
-# draws its plain scrim instead of blurring the thread behind the selection.
-capture_message_actions() {
+# Swipe a bubble right: Messages' swipe-to-reply puts a reply preview above the composer.
+capture_reply_swipe() {
   open_thread 555-1234 || return 1
   read -r x y < <($ui center "Hey, are you free to talk?") || return 1
-  adb shell wm disable-blur 1 || true
-  long_press "$x" "$y"
+  adb shell input swipe "$x" "$y" $((x + 450)) "$y" 400
   sleep 1.5
-  shot message-actions
-}
-capture_message_actions || skip message-actions "long-press on an incoming bubble did not select it"
-
-# Reply: the selection's Reply action, else swipe the bubble right.
-capture_reply_preview() {
-  if ! $ui tap-any "Reply"; then
-    open_thread 555-1234 || return 1
-    read -r x y < <($ui center "Hey, are you free to talk?") || return 1
-    adb shell input swipe "$x" "$y" $((x + 450)) "$y" 400
+  if ! $ui center "~replying" "~cancel reply" "~reply to" >/dev/null; then
+    mkdir -p "$out/debug"
+    adb exec-out screencap -p >"$out/debug/gm-reply-swipe.png" || true
+    $ui labels || true
+    return 1
   fi
-  sleep 1.5
-  $ui center "~reply" >/dev/null || return 1
   shot reply-preview
 }
-capture_reply_preview || skip reply-preview "Messages offers no Reply action or swipe-to-reply for this SMS thread (reply is an RCS chat feature)"
+capture_reply_swipe && reply_done=1 || reply_done=0
+
+# Selection captures run last: the long-press overlay took the software-GPU emulator down
+# in every attempt (it hangs, then disappears mid-screencap), which must not cost the
+# captures above. Cross-window blur and Messages' expressive animations are switched off
+# first; logcat is kept to diagnose the hang.
+capture_message_actions() {
+  if open_account_menu && $ui tap-any "Messages settings" && $ui wait "Show expressive animations" --timeout 10; then
+    $ui tap-any "Show expressive animations" || true
+    sleep 1
+  fi
+  adb shell wm disable-blur 1 || true
+  open_thread 555-1234 || { why="could not open the 555-1234 thread"; return 1; }
+  read -r x y < <($ui center "Hey, are you free to talk?") || { why="incoming bubble not found"; return 1; }
+  mkdir -p "$out/debug"
+  adb logcat -c || true
+  adb logcat -v time >"$out/debug/logcat-message-actions.txt" 2>&1 &
+  local logcat=$!
+  long_press "$x" "$y"
+  sleep 1.5
+  local status=0
+  shot message-actions || { why="the long-press overlay hung the software-GPU emulator (screencap never returned)"; status=1; }
+  kill $logcat 2>/dev/null || true
+  return $status
+}
+capture_message_actions || skip message-actions "$why"
+
+# Reply from the selection's Reply action when the swipe did not offer one.
+capture_reply_action() {
+  $ui tap-any "Reply" || return 1
+  sleep 1.5
+  shot reply-preview
+}
+if [ "$reply_done" = 0 ]; then
+  capture_reply_action || skip reply-preview "neither swipe-to-reply nor a Reply action is offered for this SMS thread (reply is an RCS chat feature)"
+fi
 
 ls -la "$out"
