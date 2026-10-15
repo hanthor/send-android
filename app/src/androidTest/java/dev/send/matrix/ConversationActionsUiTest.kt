@@ -211,7 +211,8 @@ class ConversationActionsUiTest {
         draft.value = "unsent draft"
         longPress("Yes! Dinner at 7 works for me")
         composeRule.onNodeWithText("Edit").performClick()
-        composeRule.onNodeWithText("Editing message").assertIsDisplayed()
+        // The strip slides in with the keyboard; wait until it is on screen.
+        composeRule.waitUntil(5_000) { runCatching { composeRule.onNodeWithText("Editing message").assertIsDisplayed() }.isSuccess }
         composeRule.runOnIdle { assertEquals("Yes! Dinner at 7 works for me", draft.value) }
         composeRule.onNode(hasSetTextAction()).performTextReplacement("Yes! Dinner at 7:30 works for me")
         composeRule.auditShot("edit-composer")
