@@ -1,0 +1,51 @@
+name: Google Messages motion specs
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - dev/compare/motion_scan.py
+      - .github/workflows/messages-motion.yml
+
+permissions:
+  contents: read
+
+jobs:
+  decompile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Fetch Google Messages (reference only, never redistributed)
+        run: |
+          mkdir -p /tmp/gm
+          curl -sSL -o /tmp/apkeep https://github.com/EFForg/apkeep/releases/latest/download/apkeep-x86_64-unknown-linux-gnu
+          chmod +x /tmp/apkeep
+          /tmp/apkeep -a com.google.android.apps.messaging -d apk-pure -o 'acknowledge_dangers=true,arch=x86_64' /tmp/gm
+          mv /tmp/gm/*.apk /tmp/gm/messages.apk
+      - name: Fetch jadx
+        run: |
+          url=$(curl -s https://api.github.com/repos/skylot/jadx/releases/latest | python3 -c 'import sys,json;print([a["browser_download_url"] for a in json.load(sys.stdin)["assets"] if a["name"].startswith("jadx-") and a["name"].endswith(".zip") and "gui" not in a["name"]][0])')
+          curl -sSL -o /tmp/jadx.zip "$url"
+          unzip -q /tmp/jadx.zip -d /tmp/jadx
+      - name: Decompile (code only)
+        run: |
+          JAVA_OPTS="-Xmx12g" /tmp/jadx/bin/jadx --no-res --no-debug-info --show-bad-code -j 4 \
+            -d /tmp/gm/src /tmp/gm/messages.apk >/tmp/gm/jadx.log 2>&1 || echo "::warning::jadx reported errors (partial output is still scanned)"
+          find /tmp/gm/src -name '*.java' | wc -l
+      - name: Scan motion specs
+        run: |
+          mkdir -p /tmp/motion
+          python3 dev/compare/motion_scan.py /tmp/gm/src /tmp/motion/motion-specs.md
+          cat /tmp/motion/motion-specs.md >>"$GITHUB_STEP_SUMMARY"
+      - name: Upload motion report (numbers only, no decompiled code)
+        uses: actions/upload-artifact@v4
+        with:
+          name: Messages-Motion-Specs
+          path: /tmp/motion/motion-specs.md
+          retention-days: 30
