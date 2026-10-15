@@ -15,6 +15,7 @@ import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.uiautomator.UiDevice
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import java.io.File
 import org.junit.Rule
@@ -136,21 +137,34 @@ class UiComparisonScreenshotTest {
 
     private fun saveScreenshot(fileName: String) {
         composeRule.waitForIdle()
+        writeDownload(fileName, "image/png") { stream ->
+            check(composeRule.onRoot().captureToImage().asAndroidBitmap().compress(android.graphics.Bitmap.CompressFormat.PNG, 100, stream))
+        }
+        // Full-device capture + accessibility hierarchy for the Google Messages comparison
+        // (same coordinate space as the reference uiautomator dumps).
+        val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
+        val stem = fileName.removeSuffix(".png")
+        val deviceShot = File(InstrumentationRegistry.getInstrumentation().targetContext.cacheDir, "$stem-device.png")
+        check(device.takeScreenshot(deviceShot))
+        writeDownload("$stem-device.png", "image/png") { stream -> deviceShot.inputStream().use { it.copyTo(stream) } }
+        deviceShot.delete()
+        writeDownload("$stem-device.xml", "text/xml") { stream -> device.dumpWindowHierarchy(stream) }
+    }
+
+    private fun writeDownload(fileName: String, mimeType: String, write: (java.io.OutputStream) -> Unit) {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val values = android.content.ContentValues().apply {
             put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, fileName)
-            put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "image/png")
+            put(android.provider.MediaStore.MediaColumns.MIME_TYPE, mimeType)
             put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, "Download/Send")
             put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1)
         }
         val resolver = context.contentResolver
         val uri = resolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
-            ?: error("Could not create screenshot output.")
+            ?: error("Could not create $fileName output.")
         try {
-            val output = resolver.openOutputStream(uri) ?: error("Could not open screenshot output.")
-            output.use { stream ->
-                check(composeRule.onRoot().captureToImage().asAndroidBitmap().compress(android.graphics.Bitmap.CompressFormat.PNG, 100, stream))
-            }
+            val output = resolver.openOutputStream(uri) ?: error("Could not open $fileName output.")
+            output.use(write)
             values.clear()
             values.put(android.provider.MediaStore.MediaColumns.IS_PENDING, 0)
             check(resolver.update(uri, values, null, null) == 1)
