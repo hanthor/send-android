@@ -25,7 +25,8 @@ class SendApplication : Application() {
             ),
             useLightweightTokioRuntime = false,
         )
-        // Registered up front so the "Messages" channel is in system settings before the first message.
+        // Registered up front so the "Messages" and "Calls" channels are in system settings before the first use.
         dev.send.matrix.notifications.MessageNotifier.ensureChannel(this)
+        dev.send.matrix.notifications.IncomingCalls.ensureChannel(this)
     }
 }

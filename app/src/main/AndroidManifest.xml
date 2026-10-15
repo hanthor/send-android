@@ -5,7 +5,19 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Incoming MatrixRTC rings take over the screen. Special app access on Android 14+: without it a ring is a
+         heads-up notification, and Account → Notifications links to the setting. -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <application android:name=".SendApplication" android:allowBackup="false" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:label="Send" android:networkSecurityConfig="@xml/network_security_config">
+        <!-- Ringing screen opened by the "Calls" notification's full-screen intent, also over the lock screen. -->
+        <activity
+            android:name=".IncomingCallActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTask"
+            android:taskAffinity="dev.send.matrix.call"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true" />
         <activity android:name=".MainActivity" android:exported="true" android:launchMode="singleTop" android:supportsPictureInPicture="true" android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|uiMode">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

@@ -73,6 +73,9 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.Videocam
+import androidx.compose.material.icons.outlined.Call
+import androidx.compose.material.icons.outlined.Videocam
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Person
@@ -143,6 +146,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import dev.send.matrix.notifications.IncomingCalls
 import dev.send.matrix.notifications.MessageNotifier
 import dev.send.matrix.notifications.NotificationPermissionDialog
 import dev.send.matrix.notifications.NotificationRouter
@@ -226,12 +230,14 @@ class MainActivity : ComponentActivity() {
     val ssoCallback = mutableStateOf<Uri?>(null)
     /** Conversation to open from a notification tap or conversation shortcut, consumed by SendApp. */
     val pendingConversation = mutableStateOf<String?>(null)
+    /** Ring answered from the call notification or the incoming-call screen, joined by SendApp. */
+    val pendingCall = mutableStateOf<PendingCall?>(null)
     private var pipController: ElementCallController? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // A recreated activity restores the conversation it showed; only a fresh launch follows the intent.
-        if (savedInstanceState == null) acceptConversation(intent)
+        if (savedInstanceState == null && !acceptCall(intent)) acceptConversation(intent)
         enableEdgeToEdge()
         setContent {
             SendTheme { SendApp(repository, this@MainActivity) }
@@ -281,8 +287,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: android.content.Intent) {
         super.onNewIntent(intent)
-        // A conversation request is consumed into UI state, so it doesn't replace the activity's launch intent.
-        if (acceptConversation(intent)) return
+        // Conversation and call requests are consumed into UI state, so they don't replace the launch intent.
+        if (acceptCall(intent) || acceptConversation(intent)) return
         setIntent(intent)
         acceptSsoCallback(intent.data)
     }
@@ -291,6 +297,18 @@ class MainActivity : ComponentActivity() {
     private fun acceptConversation(intent: android.content.Intent?): Boolean {
         if (intent?.action != MessageNotifier.ACTION_OPEN_CONVERSATION) return false
         pendingConversation.value = intent.getStringExtra(MessageNotifier.EXTRA_ROOM_ID)
+        return true
+    }
+
+    /** Answer from a ring: stops ringing, opens the conversation and queues the join; false for any other intent. */
+    private fun acceptCall(intent: android.content.Intent?): Boolean {
+        if (intent?.action != IncomingCalls.ACTION_ANSWER) return false
+        val roomId = intent.getStringExtra(MessageNotifier.EXTRA_ROOM_ID) ?: return true
+        IncomingCalls.stop(this, roomId)
+        pendingCall.value = PendingCall(roomId, video = intent.getBooleanExtra(IncomingCalls.EXTRA_VIDEO, false))
+        pendingConversation.value = roomId
+        // Answered on the lock screen: the call (and the rest of Send) shows once the user unlocks.
+        getSystemService(android.app.KeyguardManager::class.java).requestDismissKeyguard(this, null)
         return true
     }
 
@@ -351,6 +369,20 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
             callSession = repository.callSession()
             callSession?.let { activity.attachCallController(it.controller) }
         } else callSession = null
+    }
+    // Answer from the call notification or the incoming-call screen: join once the session is live.
+    val answeredCall = activity.pendingCall.value
+    LaunchedEffect(callSession, answeredCall) {
+        val call = answeredCall ?: return@LaunchedEffect
+        val session = callSession ?: return@LaunchedEffect
+        session.answer(call.roomId, call.video)
+        activity.pendingCall.value = null
+    }
+    val outgoingRing = callSession?.outgoingRing?.collectAsState()?.value
+    val runningCall = callSession?.controller?.state?.collectAsState()?.value
+    val callNotices = remember { androidx.compose.material3.SnackbarHostState() }
+    LaunchedEffect(callSession) {
+        callSession?.notices?.collect { callNotices.showSnackbar(it) }
     }
     // With a live session: UnifiedPush registration (or the background-sync fallback) and, once after the
     // first sign-in, an explanation before Android's notification permission prompt.
@@ -509,6 +541,7 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
     }
 
     val sendCallStyle = rememberSendCallStyle()
+    Box(Modifier.fillMaxSize()) {
     ElementCallOverlay(
         controller = callSession?.controller,
         style = sendCallStyle,
@@ -620,7 +653,14 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
                         catch (failure: Exception) { error = failure.message ?: "Reaction could not be sent." }
                     }
                 },
-                onAudioCall = { callSession?.startAudioCall(activeRoomId) },
+                onCall = { video -> callSession?.startCall(activeRoomId, video) },
+                callBanner = rooms.firstOrNull { it.id == activeRoomId }
+                    ?.takeIf { it.callActive && it.callParticipants.none { member -> member == account?.userId } && runningCall?.callData?.roomId?.value != activeRoomId }
+                    ?.let { RoomCallBanner(participantCount = it.callParticipants.size, video = it.callVideo) },
+                onJoinCall = {
+                    val video = rooms.firstOrNull { it.id == activeRoomId }?.callVideo == true
+                    callSession?.answer(activeRoomId, video)
+                },
                 onSendAttachment = { uri ->
                     val currentRoom = room
                     val currentTimeline = timeline
@@ -788,6 +828,14 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
             }
         }
     }
+    }
+    if (outgoingRing != null && runningCall?.isMaximized == true) {
+        CallingIndicator(name = outgoingRing.name, modifier = Modifier.align(Alignment.TopCenter))
+    }
+    androidx.compose.material3.SnackbarHost(
+        hostState = callNotices,
+        modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 88.dp),
+    )
     }
 }
 
@@ -1604,6 +1652,15 @@ private fun ConversationRow(room: MatrixRoom, muted: Boolean, onClick: () -> Uni
                         modifier = Modifier.padding(start = 6.dp).size(16.dp),
                     )
                 }
+                if (room.callActive) {
+                    // A MatrixRTC call is running in this conversation (activeRoomCallParticipants).
+                    Icon(
+                        imageVector = if (room.callVideo) Icons.Filled.Videocam else Icons.Filled.Call,
+                        contentDescription = "Call in progress",
+                        tint = colors.primary,
+                        modifier = Modifier.padding(start = 6.dp).size(16.dp),
+                    )
+                }
                 room.lastTimestampMillis?.let { timestamp ->
                     Text(
                         text = conversationTimestamp(context, timestamp),
@@ -1692,7 +1749,8 @@ internal fun ConversationScreen(
     onSend: () -> Unit,
     onOlder: () -> Unit,
     onReact: (String, String) -> Unit,
-    onAudioCall: () -> Unit,
+    /** Starts a MatrixRTC call here: false for voice, true for video. */
+    onCall: (video: Boolean) -> Unit,
     onSendAttachment: (Uri) -> Unit,
     onSendVoice: (VoiceRecording) -> Unit,
     loadMedia: MediaLoader,
@@ -1704,6 +1762,9 @@ internal fun ConversationScreen(
     /** Whether this conversation is muted; with [onToggleMute] the ⋮ menu offers Mute / Unmute. */
     muted: Boolean = false,
     onToggleMute: (() -> Unit)? = null,
+    /** A call running in this conversation that this device isn't in, with [onJoinCall] to join it. */
+    callBanner: RoomCallBanner? = null,
+    onJoinCall: () -> Unit = {},
 ) {
     var reactionTargetId by remember { mutableStateOf<String?>(null) }
     var expandedTimeId by remember { mutableStateOf<String?>(null) }
@@ -1755,10 +1816,12 @@ internal fun ConversationScreen(
                         overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f),
                     )
-                    if (isDirect) {
-                        IconButton(onClick = onAudioCall) {
-                            Icon(imageVector = Icons.Filled.Call, contentDescription = "Call")
-                        }
+                    // Messages: video and voice call buttons; both start a MatrixRTC call through Element Call.
+                    IconButton(onClick = { onCall(true) }) {
+                        Icon(imageVector = Icons.Outlined.Videocam, contentDescription = "Video call")
+                    }
+                    IconButton(onClick = { onCall(false) }) {
+                        Icon(imageVector = Icons.Outlined.Call, contentDescription = "Voice call")
                     }
                     Box {
                         IconButton(onClick = { showMenu = true }) {
@@ -1916,6 +1979,7 @@ internal fun ConversationScreen(
             color = MaterialTheme.colorScheme.surface,
         ) {
         androidx.compose.foundation.layout.Column(modifier = Modifier.fillMaxSize()) {
+            if (callBanner != null) RoomCallBannerRow(callBanner, onJoin = onJoinCall)
             LazyColumn(
                 modifier = Modifier.weight(1f).fillMaxWidth(),
                 reverseLayout = true,
@@ -1927,8 +1991,10 @@ internal fun ConversationScreen(
                     // items in the non-reversed list, i.e. reversed neighbours flipped.
                     val chronological = messages
                     val chronoIndex = chronological.indexOfFirst { it.id == message.id }
-                    val prevSame = chronoIndex > 0 && chronological[chronoIndex - 1].own == message.own
-                    val nextSame = chronoIndex < chronological.lastIndex && chronological[chronoIndex + 1].own == message.own
+                    // Call rows stand alone: they neither join nor split a sender's bubble group.
+                    fun sameGroup(other: MatrixMessage?) = other != null && other.call == null && message.call == null && other.own == message.own
+                    val prevSame = sameGroup(chronological.getOrNull(chronoIndex - 1))
+                    val nextSame = sameGroup(chronological.getOrNull(chronoIndex + 1))
                     val isFirstInGroup = !prevSame
                     val isLastInGroup = !nextSame
                     // Centered section header whenever the calendar day changes.
@@ -1939,7 +2005,7 @@ internal fun ConversationScreen(
                     val isNewDay = prevDayKey != dayKey
                     androidx.compose.foundation.layout.Column(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalAlignment = if (message.own) Alignment.End else Alignment.Start,
+                        horizontalAlignment = if (message.call != null) Alignment.CenterHorizontally else if (message.own) Alignment.End else Alignment.Start,
                     ) {
                         if (isNewDay) {
                             Text(
@@ -1950,6 +2016,15 @@ internal fun ConversationScreen(
                                 modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
                             )
                         }
+                        val call = message.call
+                        if (call != null) {
+                            CallEventRow(
+                                call = call,
+                                timestampMillis = message.timestampMillis,
+                                onJoin = onJoinCall,
+                                onCallBack = if (isDirect) ({ onCall(call.video) }) else null,
+                            )
+                        } else {
                         val shape = bubbleShape(message.own, isFirstInGroup, isLastInGroup)
                         // Reactions need a server event id, so local echoes only get them once sent.
                         val onLongPress: () -> Unit = { if (message.status == DeliveryStatus.Sent) reactionTargetId = message.id }
@@ -2041,6 +2116,7 @@ internal fun ConversationScreen(
                                 color = if (message.status == DeliveryStatus.Failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.padding(start = 26.dp, end = 26.dp, top = 2.dp, bottom = 8.dp),
                             )
+                        }
                         }
                     }
                 }
