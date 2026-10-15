@@ -1554,7 +1554,7 @@ internal fun HomeScreen(
             color = colors.surface,
         ) {
         LazyColumn(
-            state = rememberTopAnchoredListState(),
+            state = rememberTopAnchoredListState(visibleRooms.firstOrNull()?.id),
             modifier = Modifier.fillMaxSize(),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(top = 8.dp, bottom = 96.dp),
         ) {
