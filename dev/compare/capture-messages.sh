@@ -24,7 +24,13 @@ dismiss_onboarding() {
   done
 }
 
-adb install -r -g "$apk"
+# The google_apis image preinstalls Messages under a different key, so a newer
+# store build may be rejected; fall back to whichever Messages is on the device.
+adb install -r -g "$apk" || echo "::notice::Using the emulator's preinstalled Google Messages"
+adb shell dumpsys package "$pkg" | grep -m1 versionName | tr -d ' ' >"$out/gm-version.txt" || true
+cat "$out/gm-version.txt"
+adb shell pm grant "$pkg" android.permission.READ_SMS 2>/dev/null || true
+adb shell pm grant "$pkg" android.permission.POST_NOTIFICATIONS 2>/dev/null || true
 adb shell cmd role add-role-holder android.app.role.SMS "$pkg" 0 || true
 
 # Seed a realistic two-sided thread through the emulator modem.
@@ -44,7 +50,7 @@ shot home
 adb shell screenrecord --time-limit 5 /sdcard/gm-open.mp4 &
 rec=$!
 sleep 1
-$ui tap-any "555-1234" "(555) 1234" "5551234" "+1 555-123-4" || $ui tap-any "Hey, are you free to talk?" "Made it home. Thanks for today!"
+$ui tap-any "555-1234" "(555) 1234" "5551234" "+1 555-123-4" || $ui tap-any "Hey, are you free to talk?" "Made it home. Thanks for today!" || echo "::warning::conversation row not found"
 wait $rec || true
 adb pull /sdcard/gm-open.mp4 "$out/gm-open.mp4" >/dev/null
 sleep 1
@@ -61,7 +67,7 @@ adb shell input keyevent KEYCODE_BACK
 sleep 2
 
 # New conversation screen from the FAB.
-$ui tap-any "Start chat" "New conversation" "Start new conversation"
+$ui tap-any "Start chat" "New conversation" "Start new conversation" || echo "::warning::Start chat not found"
 sleep 2
 shot new-chat
 
