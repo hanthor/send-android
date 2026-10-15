@@ -13,7 +13,11 @@ ui="python3 $(dirname "$0")/ui.py"
 mkdir -p "$out"
 
 shot() {
-  adb exec-out screencap -p >"$out/gm-$1.png"
+  if ! timeout 60 adb exec-out screencap -p >"$out/gm-$1.png"; then
+    rm -f "$out/gm-$1.png"
+    echo "::warning::screencap failed for gm-$1"
+    return 1
+  fi
   $ui dump "$out/gm-$1.xml" || echo "::warning::no hierarchy for gm-$1"
 }
 
@@ -120,25 +124,7 @@ else
   skip composer-typing "message field not found in the 555-1234 thread"
 fi
 
-# New conversation screen from the FAB: relaunch to the list instead of guessing back presses.
-adb shell am force-stop "$pkg"
-adb shell monkey -p "$pkg" -c android.intent.category.LAUNCHER 1 >/dev/null
-$ui wait "Start chat" --timeout 30 || echo "::warning::conversation list did not reappear"
-fab=$($ui center "Start chat" "New conversation" "Start new conversation" || true)
-if [ -n "$fab" ]; then
-  adb shell screenrecord --time-limit 10 /sdcard/gm-new-chat.mp4 &
-  rec=$!
-  sleep 1
-  adb shell input tap $fab
-  wait $rec || true
-  adb pull /sdcard/gm-new-chat.mp4 "$out/gm-new-chat.mp4" >/dev/null
-  sleep 1
-  shot new-chat
-else
-  echo "::warning::Start chat not found"
-fi
-
-# ---- Visual audit of Send's newer features: matching Messages surfaces (all best-effort). ----
+# Fresh conversation list: force-stop + launch instead of guessing back presses.
 relaunch() {
   adb shell am force-stop "$pkg"
   adb shell monkey -p "$pkg" -c android.intent.category.LAUNCHER 1 >/dev/null
@@ -168,9 +154,29 @@ no_mms_dialog() {
 
 long_press() { adb shell input swipe "$1" "$2" "$1" "$2" 1000; }
 
-read -r screen_w screen_h < <(adb shell wm size | grep -o '[0-9]*x[0-9]*' | tail -1 | tr x ' ')
-echo "screen ${screen_w}x${screen_h}"
+# New conversation screen from the FAB: relaunch to the list instead of guessing back presses.
+# A cold-started list can swallow the first tap, so the FAB is tapped again if New chat
+# (with its Create group entry) did not open.
+relaunch
+sleep 2
+fab=$($ui center "Start chat" "New conversation" "Start new conversation" || true)
+if [ -n "$fab" ]; then
+  adb shell screenrecord --time-limit 10 /sdcard/gm-new-chat.mp4 &
+  rec=$!
+  sleep 1
+  adb shell input tap $fab
+  wait $rec || true
+  adb pull /sdcard/gm-new-chat.mp4 "$out/gm-new-chat.mp4" >/dev/null
+  if ! $ui center "Create group" >/dev/null && $ui tap-any "Start chat"; then
+    $ui wait "Create group" --timeout 10 || true
+  fi
+  sleep 1
+  shot new-chat
+else
+  skip new-chat "Start chat not found on the conversation list"
+fi
 
+# ---- Visual audit of Send's newer features: matching Messages surfaces (all best-effort). ----
 # Create group (from New chat).
 if $ui wait "Create group" --timeout 10 && $ui tap-any "Create group"; then sleep 2; shot new-group; else skip new-group "Create group not shown on New chat"; fi
 
@@ -207,7 +213,10 @@ capture_conversation_search() {
   $ui tap-any "Search" "Search conversation" "Search in conversation" || return 1
   sleep 1.5
   adb shell input text "home"
-  sleep 2
+  sleep 1
+  # Run the search so matches are highlighted in the thread (not just the query suggestion).
+  adb shell input keyevent KEYCODE_ENTER
+  sleep 2.5
   shot conversation-search
 }
 if capture_conversation_menu; then
@@ -216,29 +225,6 @@ else
   skip conversation-menu "conversation overflow (More) not found"
   skip conversation-search "conversation overflow (More) not found"
 fi
-
-# Long-press an incoming bubble: contextual action bar + reaction row.
-capture_message_actions() {
-  open_thread 555-1234 || return 1
-  read -r x y < <($ui center "Hey, are you free to talk?") || return 1
-  long_press "$x" "$y"
-  sleep 1.5
-  shot message-actions
-}
-capture_message_actions || skip message-actions "long-press on an incoming bubble did not select it"
-
-# Reply: the selection's Reply action, else swipe the bubble right.
-capture_reply_preview() {
-  if ! $ui tap-any "Reply"; then
-    open_thread 555-1234 || return 1
-    read -r x y < <($ui center "Hey, are you free to talk?") || return 1
-    adb shell input swipe "$x" "$y" $((x + 450)) "$y" 400
-  fi
-  sleep 1.5
-  $ui center "~reply" >/dev/null || return 1
-  shot reply-preview
-}
-capture_reply_preview || skip reply-preview "Messages offers no Reply action or swipe-to-reply for this SMS thread (reply is an RCS chat feature)"
 
 # Composer panels: emoji/stickers, gallery (media), and the + attach panel.
 capture_panel() {
@@ -313,7 +299,7 @@ inject_photo_mms() {
   now=$(date +%s)
   adb shell content insert --uri content://mms --bind thread_id:l:"$tid" --bind date:l:"$now" --bind date_sent:l:"$now" \
     --bind msg_box:i:1 --bind read:i:0 --bind seen:i:0 --bind m_type:i:132 --bind v:i:18 --bind text_only:i:0 \
-    --bind ct_t:s:application/vnd.wap.multipart.related --bind m_id:s:gm"$now" --bind sub:s:Photo
+    --bind ct_t:s:application/vnd.wap.multipart.related --bind m_id:s:gm"$now"
   mid=$(adb shell "content query --uri content://mms --projection _id --sort '_id DESC'" | grep -o '_id=[0-9]*' | head -1 | cut -d= -f2)
   [ -n "$mid" ] || { echo "MMS insert failed"; return 1; }
   adb shell content insert --uri "content://mms/$mid/addr" --bind address:s:5550100 --bind type:i:137 --bind charset:i:106
@@ -346,5 +332,30 @@ adb shell cmd statusbar expand-notifications
 sleep 2
 shot notification
 adb shell cmd statusbar collapse
+
+# Selection captures run last: the long-press overlay once took the software-GPU emulator
+# down, which must not cost the captures above.
+# Long-press an incoming bubble: contextual action bar + reaction row.
+capture_message_actions() {
+  open_thread 555-1234 || return 1
+  read -r x y < <($ui center "Hey, are you free to talk?") || return 1
+  long_press "$x" "$y"
+  sleep 1.5
+  shot message-actions
+}
+capture_message_actions || skip message-actions "long-press on an incoming bubble did not select it"
+
+# Reply: the selection's Reply action, else swipe the bubble right.
+capture_reply_preview() {
+  if ! $ui tap-any "Reply"; then
+    open_thread 555-1234 || return 1
+    read -r x y < <($ui center "Hey, are you free to talk?") || return 1
+    adb shell input swipe "$x" "$y" $((x + 450)) "$y" 400
+  fi
+  sleep 1.5
+  $ui center "~reply" >/dev/null || return 1
+  shot reply-preview
+}
+capture_reply_preview || skip reply-preview "Messages offers no Reply action or swipe-to-reply for this SMS thread (reply is an RCS chat feature)"
 
 ls -la "$out"
