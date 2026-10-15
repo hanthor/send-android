@@ -1,0 +1,16 @@
+# LiveKit SFU for the disposable MatrixRTC backend. Media candidates name 10.0.2.2, the host as the
+# Android emulator reaches it; keys match LIVEKIT_KEY/LIVEKIT_SECRET of lk-jwt-service in compose.yaml.
+port: 7880
+rtc:
+  tcp_port: 7881
+  port_range_start: 50100
+  port_range_end: 50200
+  use_external_ip: false
+  node_ip: 10.0.2.2
+keys:
+  sendci: send-ci-livekit-secret-0123456789abcdef
+room:
+  # Rooms are created by lk-jwt-service for full-access (send.test) users only.
+  auto_create: false
+logging:
+  level: info

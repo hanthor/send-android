@@ -5,23 +5,46 @@
 The optional Synapse service provides a disposable backend for account sign-in, encrypted direct-room creation, and message/reaction testing. It binds to the workstation loopback only; do not expose it to a public network.
 
 ```sh
+sudo ip addr add 10.0.2.2/32 dev lo   # once per boot, for MatrixRTC (below)
 docker compose -f dev/matrix/compose.yaml run --rm synapse generate
 docker compose -f dev/matrix/compose.yaml up -d
 curl --fail http://127.0.0.1:8008/_matrix/client/versions
 dev/matrix/seed-demo.sh
+dev/matrix/check-rtc.sh
 ```
 
 This creates `@alice:send.test` and `@bob:send.test` with password
 `local-dev-password` and sets Bob's display name. It also raises Synapse's
-login rate limits on this disposable server (and restarts it once), because
-the emulator tests sign in several devices within seconds. Sign into Alice in
-Send, create a new encrypted conversation with `@bob:send.test`, then send a
-message. The Android SDK creates the room encryption state and encrypts
+login and message rate limits on this disposable server (and restarts it once),
+because the emulator tests sign in several devices within seconds. Sign into
+Alice in Send, create a new encrypted conversation with `@bob:send.test`, then
+send a message. The Android SDK creates the room encryption state and encrypts
 messages; the fixture never injects plaintext events into encrypted rooms.
 
+### MatrixRTC
+
+The same compose file runs the call backend Element Call needs:
+
+- Synapse advertises the LiveKit transport through MSC4143
+  (`experimental_features.msc4143_enabled`, `matrix_rtc.transports` →
+  `http://10.0.2.2:8090`) and has MSC4140 delayed events
+  (`max_event_delay_duration`), both appended by `seed-demo.sh`.
+- `lk-jwt-service` (port 8090) swaps a user's Matrix OpenID token for a
+  LiveKit token and creates the LiveKit room; it checks the token at
+  `https://send.test:8448/_matrix/federation/v1/openid/userinfo`, which the
+  `federation` Caddy service serves for Synapse with a throwaway certificate.
+- `livekit` is the SFU (signalling on 7880, media on TCP 7881 and UDP
+  50100–50200).
+
+The URLs handed to clients name `10.0.2.2`, which is how the Android emulator
+reaches the host. The host must answer on that address too, because
+lk-jwt-service calls LiveKit's API at the same URL it gives clients: add it to
+the loopback interface as above (CI does the same). `check-rtc.sh` walks the
+chain once with Alice's account and prints the backend logs if a link is broken.
+
 GitHub Actions provisions this disposable backend and runs the same real app
-flow on an Android emulator. Synapse is messaging-only; it has no MatrixRTC/
-LiveKit service, so it cannot verify calls.
+flow on an Android emulator, including calls between the app and an SDK
+client (`ZZRtcCallsIntegrationTest`).
 
 ## UI design and screenshots
 
