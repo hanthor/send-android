@@ -201,7 +201,7 @@ internal object MessageNotifier {
      * Send's conversation-list avatar as a bitmap: the same palette colour for [name] with its white initial —
      * a circle for people in the notification, a full-bleed square for the launcher-masked shortcut icon.
      */
-    private fun avatarBitmap(name: String, adaptive: Boolean): Bitmap {
+    internal fun avatarBitmap(name: String, adaptive: Boolean): Bitmap {
         val size = if (adaptive) 216 else 128
         // Adaptive icons keep their content inside the middle 72 of 108 units.
         val glyphBox = if (adaptive) size * 72f / 108f else size.toFloat()

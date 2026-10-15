@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -93,6 +94,7 @@ internal fun NotificationsDialog(onDismiss: () -> Unit) {
     val lifecycleState by LocalLifecycleOwner.current.lifecycle.currentStateFlow.collectAsState()
     // Re-read on resume: the user may come back from system settings or install a distributor.
     val allowed = remember(lifecycleState) { notificationsAllowed(context) }
+    val fullScreenCalls = remember(lifecycleState) { IncomingCalls.canRingFullScreen(context) }
     val distributors = remember(lifecycleState) { PushRegistration.distributors(context) }
     LaunchedEffect(lifecycleState) { PushRegistration.refreshStatus(context) }
     val status by PushRegistration.status.collectAsState()
@@ -130,6 +132,20 @@ internal fun NotificationsDialog(onDismiss: () -> Unit) {
                     ) { Text("Turn on notifications") }
                 }
                 Text(delivery, style = MaterialTheme.typography.bodyMedium)
+                if (allowed && !fullScreenCalls) {
+                    // Android 14+ special access: without it a ring is only a heads-up notification.
+                    Text(
+                        "Incoming calls can't take over the screen, so they ring as a notification only.",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    TextButton(
+                        onClick = {
+                            context.startActivity(
+                                Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT, Uri.parse("package:${context.packageName}")),
+                            )
+                        },
+                    ) { Text("Allow full-screen calls") }
+                }
                 Text("Deliver new messages with", style = MaterialTheme.typography.titleSmall)
                 Column(Modifier.selectableGroup()) {
                     distributors.forEach { packageName ->

@@ -97,7 +97,7 @@ class NotificationsUiTest {
                     onSend = {},
                     onOlder = {},
                     onReact = { _, _ -> },
-                    onAudioCall = {},
+                    onCall = {},
                     onSendAttachment = {},
                     onSendVoice = {},
                     loadMedia = { _, _ -> error("No media in this fixture.") },

@@ -45,6 +45,11 @@ import org.matrix.rustcomponents.sdk.PusherIdentifiers
 import org.matrix.rustcomponents.sdk.PusherKind
 import org.matrix.rustcomponents.sdk.ReceiptThread
 import org.matrix.rustcomponents.sdk.RoomNotificationMode
+import org.matrix.rustcomponents.sdk.OtherState
+import org.matrix.rustcomponents.sdk.RtcCallIntent
+import org.matrix.rustcomponents.sdk.RtcCallIntentConsensus
+import org.matrix.rustcomponents.sdk.RtcTransport
+import org.matrix.rustcomponents.sdk.PowerLevels
 import org.matrix.rustcomponents.sdk.RoomSendQueueUpdate
 import org.matrix.rustcomponents.sdk.SendQueueListener
 import org.matrix.rustcomponents.sdk.SyncNotificationListener
@@ -105,6 +110,12 @@ data class MatrixRoom(
     val lastMessage: String? = null,
     val lastTimestampMillis: Long? = null,
     val unreadCount: Int = 0,
+    /** A MatrixRTC call is running in the room (`RoomInfo.hasRoomCall`). */
+    val callActive: Boolean = false,
+    /** Who is in that call (`activeRoomCallParticipants`), this account included when it joined. */
+    val callParticipants: List<String> = emptyList(),
+    /** The call's members agree on video (`activeRoomCallConsensusIntent`). */
+    val callVideo: Boolean = false,
 )
 
 enum class AttachmentKind { Image, Video, Audio, Voice, File }
@@ -158,6 +169,8 @@ data class MatrixMessage(
     val status: DeliveryStatus = DeliveryStatus.Sent,
     /** Set when the event is still encrypted for this device; [text] is empty then. */
     val decryptionFailure: DecryptionFailure? = null,
+    /** Set for a MatrixRTC call notification, which renders as a call row rather than a bubble. */
+    val call: CallEvent? = null,
 )
 
 /** The signed-in Matrix account and this device's session. */
@@ -1078,6 +1091,13 @@ class MatrixRepository(context: Context) {
             lastMessage = snippet,
             lastTimestampMillis = timestamp,
             unreadCount = unread.coerceIn(0L, Int.MAX_VALUE.toLong()).toInt(),
+            callActive = info?.hasRoomCall == true,
+            callParticipants = info?.activeRoomCallParticipants.orEmpty(),
+            callVideo = when (val consensus = info?.activeRoomCallConsensusIntent) {
+                is RtcCallIntentConsensus.Full -> consensus.v1 == RtcCallIntent.VIDEO
+                is RtcCallIntentConsensus.Partial -> consensus.intent == RtcCallIntent.VIDEO
+                else -> false
+            },
         )
         synchronized(locallyCreatedRooms) { locallyCreatedRooms.remove(matrixRoom.id) }
         return matrixRoom
@@ -1092,6 +1112,15 @@ class MatrixRepository(context: Context) {
     }
 
     private fun describe(content: TimelineItemContent, own: Boolean): String? {
+        if (content is TimelineItemContent.RtcNotification) {
+            val kind = if (content.callIntent == CALL_INTENT_VIDEO) "Video call" else "Voice call"
+            return when {
+                content.activeMembers.isNotEmpty() -> "$kind in progress"
+                content.declinedBy.isNotEmpty() -> "Call declined"
+                own -> "You: $kind"
+                else -> kind
+            }
+        }
         val msgLike = content as? TimelineItemContent.MsgLike ?: return null
         val body = when (val kind = msgLike.content.kind) {
             is MsgLikeKind.Message -> messageSummary(kind.content.msgType)
@@ -1155,6 +1184,11 @@ class MatrixRepository(context: Context) {
         return userId
     }
 
+    /**
+     * DMs use `trusted_private_chat`, so both people have the creator's power level: either can ring the other
+     * (a MatrixRTC ring mentions the room, which push rules only honour from senders allowed to notify the room)
+     * and publish call memberships. Groups keep `private_chat` but let every member publish a call membership.
+     */
     private suspend fun createEncryptedRoom(name: String?, invite: List<String>, direct: Boolean, localName: String): String {
         val roomId = requireClient().createRoom(
             CreateRoomParameters(
@@ -1163,10 +1197,10 @@ class MatrixRepository(context: Context) {
                 isEncrypted = true,
                 isDirect = direct,
                 visibility = RoomVisibility.Private,
-                preset = RoomPreset.PRIVATE_CHAT,
+                preset = if (direct) RoomPreset.TRUSTED_PRIVATE_CHAT else RoomPreset.PRIVATE_CHAT,
                 invite = invite,
                 avatar = null,
-                powerLevelContentOverride = null,
+                powerLevelContentOverride = if (direct) null else GROUP_POWER_LEVELS,
                 joinRuleOverride = null,
                 historyVisibilityOverride = null,
                 canonicalAlias = null,
@@ -1195,6 +1229,7 @@ class MatrixRepository(context: Context) {
     suspend fun observeTimeline(timeline: Timeline) = withContext(Dispatchers.IO) {
         timelineHandle?.close()
         timelineItems.clear()
+        callMemberChanges.clear()
         _messages.value = emptyList()
         timelineHandle = timeline.addListener(object : org.matrix.rustcomponents.sdk.TimelineListener {
             override fun onUpdate(diffs: List<org.matrix.rustcomponents.sdk.TimelineDiff>) {
@@ -1231,13 +1266,84 @@ class MatrixRepository(context: Context) {
                         is org.matrix.rustcomponents.sdk.TimelineDiff.Clear -> timelineItems.clear()
                     }
                 }
-                _messages.value = timelineItems.mapNotNull(::toMessage)
+                _messages.value = buildMessages()
             }
         })
     }
 
-    private fun toMessage(item: org.matrix.rustcomponents.sdk.TimelineItem): MatrixMessage? {
-        val event = item.asEvent() ?: return null
+    /**
+     * Messages and call rows for the open timeline. A call row's outcome comes from the room's call memberships
+     * (`org.matrix.msc3401.call.member` state in the timeline) between its notification and the next one.
+     */
+    private fun buildMessages(): List<MatrixMessage> {
+        val events = timelineItems.mapNotNull { it.asEvent() }
+        val changes = ArrayList<CallMemberChange>()
+        val ringTimes = ArrayList<Long>()
+        for (event in events) {
+            when (val content = event.content) {
+                is TimelineItemContent.State ->
+                    if ((content.content as? OtherState.Custom)?.eventType in CALL_MEMBER_EVENT_TYPES) callMemberChangeOf(event)?.let(changes::add)
+                is TimelineItemContent.RtcNotification -> ringTimes += event.timestamp.toLong()
+                else -> Unit
+            }
+        }
+        val ownUserId = ownUserId()
+        var ring = 0
+        return events.mapNotNull { event ->
+            if (event.content is TimelineItemContent.RtcNotification) {
+                ring += 1
+                callMessage(event, ringTimes.getOrNull(ring), ownUserId, changes)
+            } else {
+                toMessage(event)
+            }
+        }
+    }
+
+    /** Call-member changes by event ID: each event's JSON is read once, though every diff rebuilds the list. */
+    private val callMemberChanges = HashMap<String, CallMemberChange?>()
+
+    private fun callMemberChangeOf(event: org.matrix.rustcomponents.sdk.EventTimelineItem): CallMemberChange? {
+        val eventId = (event.eventOrTransactionId as? EventOrTransactionId.EventId)?.eventId ?: return null
+        return callMemberChanges.getOrPut(eventId) {
+            try {
+                event.lazyProvider.latestJson()?.let(::callMemberChange)
+            } catch (error: Exception) {
+                android.util.Log.w(TAG, "Call membership $eventId unreadable", error)
+                null
+            }
+        }
+    }
+
+    private fun callMessage(
+        event: org.matrix.rustcomponents.sdk.EventTimelineItem,
+        nextRingMillis: Long?,
+        ownUserId: String?,
+        changes: List<CallMemberChange>,
+    ): MatrixMessage? {
+        val content = event.content as? TimelineItemContent.RtcNotification ?: return null
+        val id = (event.eventOrTransactionId as? EventOrTransactionId.EventId)?.eventId ?: return null
+        val timestamp = event.timestamp.toLong()
+        val (answered, duration) = callOutcome(timestamp, nextRingMillis, event.sender, ownUserId, changes)
+        return MatrixMessage(
+            id = id,
+            sender = event.sender,
+            text = "",
+            own = event.isOwn,
+            timestampMillis = timestamp,
+            reactions = emptyList(),
+            call = CallEvent(
+                video = content.callIntent == CALL_INTENT_VIDEO,
+                outgoing = event.isOwn,
+                ongoing = content.activeMembers.isNotEmpty(),
+                joined = content.isJoined,
+                declined = content.declinedBy.isNotEmpty(),
+                answered = answered,
+                durationMillis = duration,
+            ),
+        )
+    }
+
+    private fun toMessage(event: org.matrix.rustcomponents.sdk.EventTimelineItem): MatrixMessage? {
         val content = event.content as? TimelineItemContent.MsgLike ?: return null
         val kind = content.content.kind
         if (kind !is MsgLikeKind.Message && kind !is MsgLikeKind.UnableToDecrypt) return null
@@ -1562,12 +1668,32 @@ class MatrixRepository(context: Context) {
     }
 
     private fun requireClient(): Client = client ?: error("Sign in to a Matrix account first.")
+
+    /** The session's MatrixRTC calls (Element Call), created on first use. */
     fun callSession(): NativeMatrixCallSession = synchronized(this) {
         callSession ?: NativeMatrixCallSession(
             appContext,
             requireClient(),
             CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),
         ).also { callSession = it }
+    }
+
+    /** Room of the call running on this device, if any. */
+    internal fun activeCallRoomId(): String? = callSession?.activeRoomId
+
+    /** The SDK room for [roomId] in the live session; the caller closes it. */
+    internal fun sdkRoom(roomId: String): Room? = client?.getRoom(roomId)
+
+    /** MatrixRTC transports the homeserver advertises (MSC4143 endpoint, else well-known `rtc_foci`). */
+    suspend fun rtcTransports(): List<RtcTransport> = withContext(Dispatchers.IO) {
+        requireClient().discoverRtcTransports().orEmpty()
+    }
+
+    /** Declines the ring [notificationEventId] in [roomId] (`m.rtc.decline`), restoring the session when cold. */
+    suspend fun declineCall(roomId: String, notificationEventId: String) = withContext(Dispatchers.IO) {
+        check(restore()) { "Sign in to a Matrix account first." }
+        val room = requireClient().getRoom(roomId) ?: error("Conversation is unavailable.")
+        room.use { it.declineCall(notificationEventId) }
     }
 
     /** AES-GCM key held by Android Keystore; it seals the SDK store key and the saved session. */
@@ -1628,6 +1754,35 @@ class MatrixRepository(context: Context) {
         }
     }
 }
+
+/**
+ * Power levels for new groups: Synapse's `private_chat` defaults, plus MatrixRTC call memberships open to every
+ * member so anyone can start or join the group's call. The override's `events` replaces the default map, so
+ * the defaults are repeated.
+ */
+private val GROUP_POWER_LEVELS = PowerLevels(
+    usersDefault = null,
+    eventsDefault = null,
+    stateDefault = null,
+    ban = null,
+    kick = null,
+    redact = null,
+    invite = null,
+    notifications = null,
+    users = emptyMap(),
+    events = mapOf(
+        "m.room.name" to 50,
+        "m.room.power_levels" to 100,
+        "m.room.history_visibility" to 100,
+        "m.room.canonical_alias" to 50,
+        "m.room.avatar" to 50,
+        "m.room.tombstone" to 100,
+        "m.room.server_acl" to 100,
+        "m.room.encryption" to 100,
+        "org.matrix.msc3401.call.member" to 0,
+        "m.call.member" to 0,
+    ),
+)
 
 internal fun isMatrixUserId(value: String): Boolean =
     value.startsWith("@") && value.indexOf(':') > 1 && !value.any(Char::isWhitespace)
