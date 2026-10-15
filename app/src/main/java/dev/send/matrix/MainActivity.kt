@@ -107,6 +107,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.text.font.FontWeight
@@ -1048,10 +1049,12 @@ private fun NewConversationScreen(
     val valid = !creating && value.trim().let {
         it.startsWith("@") && it.indexOf(':') > 1 && !it.any(Char::isWhitespace)
     }
+    val focus = remember { androidx.compose.ui.focus.FocusRequester() }
+    LaunchedEffect(Unit) { focus.requestFocus() }
     Scaffold(
-        containerColor = colors.surface,
+        containerColor = colors.surfaceContainer,
         topBar = {
-            Surface(color = colors.surface, modifier = Modifier.statusBarsPadding()) {
+            Surface(color = colors.surfaceContainer, modifier = Modifier.statusBarsPadding()) {
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -1060,7 +1063,7 @@ private fun NewConversationScreen(
                         Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                     Text(
-                        text = "New conversation",
+                        text = "New chat",
                         style = MaterialTheme.typography.titleLarge,
                         color = colors.onSurface,
                         modifier = Modifier.weight(1f),
@@ -1075,21 +1078,22 @@ private fun NewConversationScreen(
         androidx.compose.foundation.layout.Column(
             modifier = Modifier.fillMaxSize().padding(innerPadding).padding(horizontal = 16.dp, vertical = 8.dp),
         ) {
+            // Messages: light "To:" pill on the tinted page, keyboard up immediately.
             Surface(
                 modifier = Modifier.fillMaxWidth().height(56.dp),
                 shape = RoundedCornerShape(28.dp),
-                color = colors.surfaceContainerHigh,
+                color = colors.surface,
             ) {
                 Row(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(text = "To", style = MaterialTheme.typography.bodyLarge, color = colors.onSurfaceVariant)
-                    Spacer(modifier = Modifier.width(12.dp))
+                    Text(text = "To:", style = MaterialTheme.typography.bodyLarge, color = colors.onSurface)
+                    Spacer(modifier = Modifier.width(4.dp))
                     TextField(
                         value = value,
                         onValueChange = onValue,
-                        placeholder = { Text("Matrix user ID") },
+                        placeholder = { Text("Type a Matrix ID") },
                         singleLine = true,
                         enabled = !creating,
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.weight(1f).focusRequester(focus),
                         colors = TextFieldDefaults.colors(
                             focusedContainerColor = Color.Transparent,
                             unfocusedContainerColor = Color.Transparent,
