@@ -52,7 +52,7 @@ Verified by Android CI run [38739979359](https://github.com/hanthor/send-android
 
 ### 4. Conversation behaviour parity — done
 Verified by Android CI run [38758467321](https://github.com/hanthor/send-android/actions/runs/38758467321) (`ZZConversationActionsIntegrationTest`, `ConversationActionsUiTest`).
-- [x] Long-press: Messages' contextual action bar (Close, Reply, Copy, Edit for own text, Forward, Delete for own with confirm, Info) with the quick-reaction row floating over the bubble (+ full picker for more reactions).
+- [x] Long-press: Messages' dimmed overlay with the bubble kept visible, a quick-reaction pill above it (+ full picker for more reactions) and a rounded action menu below it (Reply, Forward, Copy, Edit for own text, Delete for own with confirm, Info).
 - [x] Swipe a bubble right to reply (resistance, haptic tick at the threshold, `SendMotion` spring back); "Replying to …" strip above the composer; sent replies (`Timeline.sendReply`) quote the original inside the bubble and tapping the quote scrolls to it, paginating back until it is loaded.
 - [x] Edit (`Timeline.edit` with `EditedContent.RoomMessage`) in the composer with an "Editing message" strip; edited messages say "Edited". Delete for everyone (`Timeline.redactEvent`) renders a muted "Message deleted" bubble.
 - [x] Forward: conversation picker built from the list rows (encrypted rooms only); the copy is sent with `contentWithoutRelationFromMessage` (media re-uses the original encrypted upload) and that conversation opens.
@@ -62,7 +62,7 @@ Verified by Android CI run [38758467321](https://github.com/hanthor/send-android
 - [x] In-app media viewer: pinch/double-tap zoom for photos, `VideoView` playback with controls, Share and Save (MediaStore).
 - [x] Full emoji picker (categories, recents, skin tones, offline search by Unicode name) for the composer and reactions.
 - [x] In-conversation search (⋮ → Search) over the loaded timeline with highlighted matches, "n of m" and older/newer jumps; stepping past the oldest match loads older history.
-- [x] Voice recording lock: slide up while holding to keep recording hands-free, then stop (review/play), send or delete.
+- [x] Voice recording lock: slide up while holding to keep recording hands-free in Messages' panel (red dot + timer, live level line, Restart / red Stop pill / Attach); after stopping the pill plays the clip back, Attach puts it in the composer to send, or delete.
 - [x] *Acceptance:* in CI Alice swipes to reply and Bob's client gets the in-reply-to relation; Alice's edit replaces the text on Bob's client; her delete reaches Bob as a redaction; Bob's typing shows the dots and Alice's draft reaches Bob's typing listener; Bob's read receipt turns "Sent" into "Read"; forwarding Bob's message into a second room delivers it there.
 - Not in CI: link previews against a real page (the CI homeserver has URL previews off; CI checks that nothing is shown then, and fixtures cover the card), recording from a real microphone (the emulator has no audio input; the lock gesture runs against a stand-in recorder), and video playback in the viewer. Search uses the loaded timeline, not the SDK's `SearchService` (a client-wide index of its own); older history is loaded on demand.
 

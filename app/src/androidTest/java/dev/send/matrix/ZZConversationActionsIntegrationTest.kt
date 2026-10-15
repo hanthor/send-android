@@ -194,13 +194,13 @@ class ZZConversationActionsIntegrationTest {
     private fun hasNodeWithText(text: String, substring: Boolean = false): Boolean =
         composeRule.onAllNodesWithText(text, substring = substring).fetchSemanticsNodes().isNotEmpty()
 
-    /** Long-presses the bubble showing [text] and taps [action] in the contextual action bar. */
+    /** Long-presses the bubble showing [text] and taps [action] in the popup action menu. */
     private fun selectAndTap(text: String, action: String) {
         composeRule.onNodeWithText(text).performTouchInput { longClick() }
         waitForUi("the $action action for \"$text\"", 10_000, ::conversationState) {
-            composeRule.onAllNodesWithContentDescription(action).fetchSemanticsNodes().isNotEmpty()
+            composeRule.onAllNodesWithText(action).fetchSemanticsNodes().isNotEmpty()
         }
-        composeRule.onNodeWithContentDescription(action).performClick()
+        composeRule.onNodeWithText(action).performClick()
     }
 
     private fun bobEvent(roomId: String, body: String): BobEvent? = bobEvents.values.firstOrNull { it.roomId == roomId && it.body == body }

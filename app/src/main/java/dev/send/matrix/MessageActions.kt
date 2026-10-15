@@ -1,5 +1,44 @@
 package dev.send.matrix
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.RoundRect
+import androidx.compose.ui.graphics.ClipOp
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.drawscope.clipPath
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupPositionProvider
+import androidx.compose.ui.window.PopupProperties
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
+import androidx.compose.foundation.Canvas
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.foundation.clickable
 import androidx.compose.ui.draw.clip
 import android.text.format.DateUtils
@@ -112,32 +151,136 @@ internal fun actionsFor(message: MatrixMessage): MessageActionSet {
     )
 }
 
-/** Messages' contextual top bar while a message is selected: close on the left, actions on the right. */
+/** On-screen bounds of a laid-out element, comparable across the app window and popups. */
+internal fun LayoutCoordinates.screenBounds(): Rect =
+    Rect(localToScreen(Offset.Zero), localToScreen(Offset(size.width.toFloat(), size.height.toFloat())))
+
+private object FullWindowPosition : PopupPositionProvider {
+    override fun calculatePosition(anchorBounds: IntRect, windowSize: IntSize, layoutDirection: LayoutDirection, popupContentSize: IntSize) = IntOffset.Zero
+}
+
+/**
+ * Messages' long-press treatment: everything but the pressed bubble (at [bubbles], screen bounds) dims, the
+ * reaction pill floats just above it and the action menu card sits just below. Tap outside or back dismisses.
+ */
 @Composable
-internal fun MessageActionBar(
+internal fun MessageActionsOverlay(
+    bubbles: List<Rect>,
+    alignEnd: Boolean,
     actions: MessageActionSet,
-    onClose: () -> Unit,
+    onDismiss: () -> Unit,
+    onReact: (String) -> Unit,
+    onMoreReactions: () -> Unit,
     onReply: () -> Unit,
+    onForward: () -> Unit,
     onCopy: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
-    onForward: () -> Unit,
     onInfo: () -> Unit,
 ) {
-    Surface(color = MaterialTheme.colorScheme.surfaceContainer, modifier = Modifier.statusBarsPadding()) {
-        Row(
-            modifier = Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            IconButton(onClick = onClose) { Icon(Icons.Filled.Close, contentDescription = "Close") }
-            Spacer(Modifier.weight(1f))
-            if (actions.reply) IconButton(onClick = onReply) { Icon(Icons.AutoMirrored.Filled.Reply, contentDescription = "Reply") }
-            if (actions.copy) IconButton(onClick = onCopy) { Icon(Icons.Outlined.ContentCopy, contentDescription = "Copy") }
-            if (actions.edit) IconButton(onClick = onEdit) { Icon(Icons.Outlined.Edit, contentDescription = "Edit") }
-            if (actions.forward) IconButton(onClick = onForward) { Icon(Icons.AutoMirrored.Filled.Forward, contentDescription = "Forward") }
-            if (actions.delete) IconButton(onClick = onDelete) { Icon(Icons.Outlined.Delete, contentDescription = "Delete") }
-            IconButton(onClick = onInfo) { Icon(Icons.Outlined.Info, contentDescription = "Info") }
+    val density = LocalDensity.current
+    val anchor = bubbles.reduce { a, b -> Rect(minOf(a.left, b.left), minOf(a.top, b.top), maxOf(a.right, b.right), maxOf(a.bottom, b.bottom)) }
+    val progress = remember { Animatable(0f) }
+    val fade = remember { Animatable(0f) }
+    LaunchedEffect(Unit) {
+        launch { fade.animateTo(1f, SendMotion.effectsDefault()) }
+        progress.animateTo(1f, SendMotion.spatialDefault())
+    }
+    Popup(
+        popupPositionProvider = FullWindowPosition,
+        onDismissRequest = onDismiss,
+        properties = PopupProperties(focusable = true, clippingEnabled = false),
+    ) {
+        var origin by remember { mutableStateOf<Offset?>(null) }
+        val corner = with(density) { 20.dp.toPx() }
+        Layout(
+            modifier = Modifier
+                .fillMaxSize()
+                .onGloballyPositioned { origin = it.localToScreen(Offset.Zero) }
+                .pointerInput(Unit) { detectTapGestures { onDismiss() } }
+                .drawBehind {
+                    val o = origin ?: return@drawBehind
+                    val holes = Path().apply { bubbles.forEach { addRoundRect(RoundRect(it.translate(-o), CornerRadius(corner))) } }
+                    clipPath(holes, ClipOp.Difference) { drawRect(Color.Black.copy(alpha = 0.4f * fade.value)) }
+                },
+            content = {
+                val pillOrigin = TransformOrigin(if (alignEnd) 1f else 0f, 1f)
+                val menuOrigin = TransformOrigin(if (alignEnd) 1f else 0f, 0f)
+                Box(Modifier.popIn(progress.value, fade.value, pillOrigin)) {
+                    if (actions.react) ReactionRow(onReact = onReact, onMore = onMoreReactions)
+                }
+                Box(Modifier.popIn(progress.value, fade.value, menuOrigin)) {
+                    MessageActionMenu(actions, onReply, onForward, onCopy, onEdit, onDelete, onInfo)
+                }
+            },
+        ) { measurables, constraints ->
+            val loose = constraints.copy(minWidth = 0, minHeight = 0)
+            val pill = measurables[0].measure(loose)
+            val menu = measurables[1].measure(loose)
+            layout(constraints.maxWidth, constraints.maxHeight) {
+                val o = origin ?: return@layout
+                val hole = anchor.translate(-o)
+                val gap = 8.dp.roundToPx()
+                val margin = 12.dp.roundToPx()
+                fun x(width: Int) = (if (alignEnd) hole.right.toInt() - width else hole.left.toInt())
+                    .coerceIn(margin, (constraints.maxWidth - width - margin).coerceAtLeast(margin))
+                // Menu below the bubble when it fits; otherwise above it, with the pill above the menu.
+                val below = hole.bottom.toInt() + gap
+                val menuBelow = below + menu.height <= constraints.maxHeight - margin
+                val menuY = if (menuBelow) below else (hole.top.toInt() - gap - menu.height).coerceAtLeast(margin)
+                val pillY = ((if (menuBelow) hole.top.toInt() else menuY) - gap - pill.height).coerceAtLeast(0)
+                pill.place(x(pill.width), pillY)
+                menu.place(x(menu.width), menuY)
+            }
         }
+    }
+}
+
+private fun Modifier.popIn(scale: Float, alpha: Float, origin: TransformOrigin) = graphicsLayer {
+    val s = 0.8f + 0.2f * scale
+    scaleX = s
+    scaleY = s
+    this.alpha = alpha
+    transformOrigin = origin
+}
+
+/** Messages' rounded popup menu of message actions, each with a leading icon. */
+@Composable
+private fun MessageActionMenu(
+    actions: MessageActionSet,
+    onReply: () -> Unit,
+    onForward: () -> Unit,
+    onCopy: () -> Unit,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+    onInfo: () -> Unit,
+) {
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        shadowElevation = 3.dp,
+        modifier = Modifier.width(IntrinsicSize.Max).widthIn(min = 200.dp),
+    ) {
+        Column(Modifier.padding(vertical = 8.dp)) {
+            if (actions.reply) MessageActionItem(Icons.AutoMirrored.Filled.Reply, "Reply", onReply)
+            if (actions.forward) MessageActionItem(Icons.AutoMirrored.Filled.Forward, "Forward", onForward)
+            if (actions.copy) MessageActionItem(Icons.Outlined.ContentCopy, "Copy", onCopy)
+            if (actions.edit) MessageActionItem(Icons.Outlined.Edit, "Edit", onEdit)
+            if (actions.delete) MessageActionItem(Icons.Outlined.Delete, "Delete", onDelete)
+            MessageActionItem(Icons.Outlined.Info, "Info", onInfo)
+        }
+    }
+}
+
+@Composable
+private fun MessageActionItem(icon: ImageVector, label: String, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(onClick = onClick).padding(horizontal = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.width(16.dp))
+        Text(label, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(end = 8.dp))
     }
 }
 
@@ -324,37 +467,115 @@ internal fun ForwardScreen(rooms: List<MatrixRoom>, mutedRoomIds: Set<String>, p
 }
 
 /**
- * Messages' locked voice recording in the composer: delete on the left, a running timer, and stop; once stopped,
- * the clip can be played back before it is sent with the round send button.
+ * Messages' locked voice recording panel above the composer: red dot and timer, a live level line, then Restart,
+ * a red Stop pill and Attach. Once stopped, the pill plays the clip back over its waveform; Attach puts the clip
+ * in the composer for the round send button.
  */
 @Composable
-internal fun LockedRecordingBar(
+internal fun LockedRecordingPanel(
     elapsedMillis: Long,
+    levels: List<Float>,
     clip: VoiceRecording?,
+    playback: VoicePlayback,
     playing: Boolean,
-    onDelete: () -> Unit,
+    onRestart: () -> Unit,
     onStop: () -> Unit,
     onTogglePlay: () -> Unit,
+    onAttach: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val colors = MaterialTheme.colorScheme
-    Row(modifier.heightIn(min = 56.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-        IconButton(onClick = onDelete) { Icon(Icons.Outlined.Delete, contentDescription = "Delete recording", tint = colors.onSurfaceVariant) }
-        if (clip == null) {
-            Box(Modifier.size(8.dp).background(colors.error, CircleShape))
-            Spacer(Modifier.width(8.dp))
-            Text(formatDuration(elapsedMillis), style = MaterialTheme.typography.bodyLarge, color = colors.onSurface)
-            Spacer(Modifier.width(8.dp))
-            Spacer(Modifier.weight(1f))
-            IconButton(onClick = onStop) { Icon(Icons.Filled.Stop, contentDescription = "Stop recording", tint = colors.error) }
-        } else {
-            IconButton(onClick = onTogglePlay) {
-                Icon(
-                    if (playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                    contentDescription = if (playing) "Pause recording" else "Play recording",
+    LaunchedEffect(playing) {
+        while (playing) {
+            playback.tick()
+            delay(50)
+        }
+    }
+    Surface(shape = RoundedCornerShape(28.dp), color = colors.surfaceContainerHigh, modifier = modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+        Column(Modifier.padding(horizontal = 16.dp, vertical = 16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (clip == null) {
+                    Box(Modifier.size(10.dp).background(colors.error, CircleShape))
+                    Spacer(Modifier.width(8.dp))
+                }
+                val shown = when {
+                    clip == null -> elapsedMillis
+                    playing -> playback.positionMillis
+                    else -> clip.durationMillis
+                }
+                Text(formatDuration(shown), style = MaterialTheme.typography.titleMedium, color = colors.onSurface)
+            }
+            Spacer(Modifier.height(12.dp))
+            if (clip == null) {
+                LevelLine(levels, colors.primary, Modifier.fillMaxWidth().height(40.dp))
+            } else {
+                Waveform(
+                    samples = clip.waveform,
+                    progress = if (playing) playback.progress else 0f,
+                    played = colors.primary,
+                    pending = colors.outline,
+                    modifier = Modifier.fillMaxWidth().height(40.dp),
                 )
             }
-            Text("Voice message · ${formatDuration(clip.durationMillis)}", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f), maxLines = 1)
+            Spacer(Modifier.height(16.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                OutlinedButton(onClick = onRestart) { Text("Restart") }
+                Button(
+                    onClick = if (clip == null) onStop else onTogglePlay,
+                    colors = ButtonDefaults.buttonColors(containerColor = colors.error, contentColor = colors.onError),
+                    modifier = Modifier.width(72.dp),
+                ) {
+                    when {
+                        clip == null -> Icon(Icons.Filled.Stop, contentDescription = "Stop recording")
+                        playing -> Icon(Icons.Filled.Pause, contentDescription = "Pause recording")
+                        else -> Icon(Icons.Filled.PlayArrow, contentDescription = "Play recording")
+                    }
+                }
+                Button(onClick = onAttach) { Text("Attach") }
+            }
         }
+    }
+}
+
+/** The live microphone level as a line, newest sample on the right. */
+@Composable
+private fun LevelLine(levels: List<Float>, color: Color, modifier: Modifier) {
+    Canvas(modifier) {
+        val mid = size.height / 2f
+        val stroke = 2.dp.toPx()
+        if (levels.size < 2) {
+            drawLine(color, Offset(0f, mid), Offset(size.width, mid), stroke)
+            return@Canvas
+        }
+        val step = size.width / (LIVE_LEVELS - 1)
+        val start = size.width - step * (levels.size - 1)
+        val path = Path()
+        levels.forEachIndexed { index, level ->
+            // Alternate above and below the centre so the line reads as a waveform.
+            val y = mid + (if (index % 2 == 0) -1 else 1) * level.coerceIn(0.04f, 1f) * mid
+            val x = start + index * step
+            if (index == 0) path.moveTo(x, y) else path.lineTo(x, y)
+        }
+        if (start > 0f) drawLine(color, Offset(0f, mid), Offset(start, mid), stroke)
+        drawPath(path, color, style = Stroke(width = stroke, cap = StrokeCap.Round, join = StrokeJoin.Round))
+    }
+}
+
+/** How many recent levels [LevelLine] shows across its width. */
+internal const val LIVE_LEVELS = 48
+
+/** A finished clip attached to the composer, sent with the round send button. */
+@Composable
+internal fun AttachedRecordingBar(clip: VoiceRecording, playing: Boolean, onDelete: () -> Unit, onTogglePlay: () -> Unit, modifier: Modifier = Modifier) {
+    val colors = MaterialTheme.colorScheme
+    Row(modifier.heightIn(min = 56.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        IconButton(onClick = onDelete) { Icon(Icons.Outlined.Delete, contentDescription = "Delete recording", tint = colors.onSurfaceVariant) }
+        IconButton(onClick = onTogglePlay) {
+            Icon(
+                if (playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                contentDescription = if (playing) "Pause recording" else "Play recording",
+            )
+        }
+        Text("Voice message · ${formatDuration(clip.durationMillis)}", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f), maxLines = 1)
     }
 }

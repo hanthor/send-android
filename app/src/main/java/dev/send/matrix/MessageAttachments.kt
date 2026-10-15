@@ -386,7 +386,7 @@ private fun AudioRow(
 }
 
 @Composable
-private fun Waveform(samples: List<Float>, progress: Float, played: Color, pending: Color, modifier: Modifier) {
+internal fun Waveform(samples: List<Float>, progress: Float, played: Color, pending: Color, modifier: Modifier) {
     val bars = if (samples.isEmpty()) List(32) { 0.25f } else samples
     Canvas(modifier) {
         val gap = 2.dp.toPx()
