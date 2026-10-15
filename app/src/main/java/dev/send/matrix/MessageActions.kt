@@ -130,7 +130,7 @@ internal fun MessageActionBar(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = onClose) { Icon(Icons.Filled.Close, contentDescription = "Close") }
-            Text("1", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(start = 8.dp).weight(1f))
+            Spacer(Modifier.weight(1f))
             if (actions.reply) IconButton(onClick = onReply) { Icon(Icons.AutoMirrored.Filled.Reply, contentDescription = "Reply") }
             if (actions.copy) IconButton(onClick = onCopy) { Icon(Icons.Outlined.ContentCopy, contentDescription = "Copy") }
             if (actions.edit) IconButton(onClick = onEdit) { Icon(Icons.Outlined.Edit, contentDescription = "Edit") }
@@ -345,7 +345,7 @@ internal fun LockedRecordingBar(
             Spacer(Modifier.width(8.dp))
             Text(formatDuration(elapsedMillis), style = MaterialTheme.typography.bodyLarge, color = colors.onSurface)
             Spacer(Modifier.width(8.dp))
-            Text("Recording", style = MaterialTheme.typography.bodyLarge, color = colors.onSurfaceVariant, modifier = Modifier.weight(1f), maxLines = 1)
+            Spacer(Modifier.weight(1f))
             IconButton(onClick = onStop) { Icon(Icons.Filled.Stop, contentDescription = "Stop recording", tint = colors.error) }
         } else {
             IconButton(onClick = onTogglePlay) {
