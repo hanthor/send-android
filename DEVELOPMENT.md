@@ -44,6 +44,10 @@ demand via *Run workflow*.
 - `dev/compare/compare.py` builds the report.
 - The Messages APK comes from APKPure as a style/behaviour reference only and
   is never uploaded. Decompiled Google code must never be committed here (AGPL).
+- `.github/workflows/messages-motion.yml` decompiles Messages on a runner and
+  `dev/compare/motion_scan.py` recovers its springs, tweens and easing curves
+  from the obfuscated bytecode (numbers only, `Messages-Motion-Specs`
+  artifact). `SendMotion.kt` holds the resulting tokens.
 
 Builds and automated tests remain in GitHub Actions. Debug APKs are available
 from the `Send-debug-APK` artifact on a successful workflow run.
