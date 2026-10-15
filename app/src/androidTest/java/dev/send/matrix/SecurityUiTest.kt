@@ -132,9 +132,9 @@ class SecurityUiTest {
         }
 
         composeRule.onNodeWithText("Not verified").assertIsDisplayed()
-        composeRule.onNodeWithText("Needs your recovery key").assertIsDisplayed()
-        composeRule.onNodeWithText("Enter recovery key").assertIsDisplayed()
-        composeRule.onNodeWithText("Verify this device").performClick()
+        composeRule.onNodeWithText("Needs your recovery key").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Enter recovery key").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Verify this device").performScrollTo().performClick()
         composeRule.onNodeWithText("Verify with recovery key").performScrollTo().performClick()
         composeRule.onNodeWithText("Continue").assertIsNotEnabled()
         composeRule.onNodeWithTag(RECOVERY_KEY_INPUT_TAG).performTextInput("EsTc 1234 abcd EFGH")

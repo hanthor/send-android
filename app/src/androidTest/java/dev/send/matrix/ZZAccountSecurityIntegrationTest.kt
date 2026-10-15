@@ -11,6 +11,7 @@ import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
+import androidx.compose.ui.test.onLast
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -175,10 +176,11 @@ class ZZAccountSecurityIntegrationTest {
         composeRule.waitUntil(timeoutMillis = 120_000) { secondDecrypted }
 
         // 5. Sign out from the account menu: back to the sign-in hero with the session and stores gone.
-        pressBack()
-        composeRule.waitUntil(timeoutMillis = 30_000) {
-            composeRule.onAllNodesWithContentDescription("Search").fetchSemanticsNodes().isNotEmpty()
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            repository.verificationFlow.value == VerificationFlow.Idle &&
+                composeRule.onAllNodesWithText("Verify device").fetchSemanticsNodes().isEmpty()
         }
+        closeSecurity()
         composeRule.onNodeWithContentDescription("Account").performClick()
         composeRule.onNodeWithText("Sign out").performClick()
         composeRule.onNodeWithText("Sign out?").assertIsDisplayed()
@@ -217,7 +219,7 @@ class ZZAccountSecurityIntegrationTest {
             repository.verificationState.value == VerificationState.VERIFIED &&
                 repository.recoveryState.value == RecoveryState.ENABLED
         }
-        pressBack()
+        closeSecurity()
         composeRule.waitUntil(timeoutMillis = 120_000) {
             composeRule.onAllNodesWithText(message).fetchSemanticsNodes().isNotEmpty()
         }
@@ -228,9 +230,12 @@ class ZZAccountSecurityIntegrationTest {
         check(!secondCancelled) { "The second device's verification was cancelled or failed." }
     }
 
-    private fun pressBack() {
-        composeRule.runOnUiThread { composeRule.activity.onBackPressedDispatcher.onBackPressed() }
-        composeRule.waitForIdle()
+    /** Taps the Security page's own Back button (the last "Back" node: the overlay sits above any open conversation). */
+    private fun closeSecurity() {
+        composeRule.onAllNodesWithContentDescription("Back").onLast().performClick()
+        composeRule.waitUntil(timeoutMillis = 10_000) {
+            composeRule.onAllNodesWithText("Security").fetchSemanticsNodes().isEmpty()
+        }
     }
 
     private fun signInIfNeeded() {
