@@ -55,7 +55,7 @@ jobs:
           api-level: 35
           arch: x86_64
           disable-animations: true
-          script: ./gradlew --no-daemon "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g" :app:connectedDebugAndroidTest && mkdir -p /tmp/send-ui-screenshots && adb pull /storage/emulated/0/Download/Send/send-login-hero-screen.png /tmp/send-ui-screenshots/ && adb pull /storage/emulated/0/Download/Send/send-login-screen.png /tmp/send-ui-screenshots/ && adb pull /storage/emulated/0/Download/Send/send-home-screen.png /tmp/send-ui-screenshots/ && adb pull /storage/emulated/0/Download/Send/send-conversation-screen.png /tmp/send-ui-screenshots/ && adb pull /storage/emulated/0/Download/Send/send-new-chat-dialog.png /tmp/send-ui-screenshots/ && adb pull /storage/emulated/0/Download/Send/send-reaction-picker.png /tmp/send-ui-screenshots/ && adb pull /storage/emulated/0/Download/Send/send-demo-create-chat.png /tmp/send-ui-screenshots/ && adb pull /storage/emulated/0/Download/Send/send-demo-conversations.png /tmp/send-ui-screenshots/ && adb pull /storage/emulated/0/Download/Send/send-demo-conversation.png /tmp/send-ui-screenshots/
+          script: ./gradlew --no-daemon "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g" :app:connectedDebugAndroidTest && mkdir -p /tmp/send-ui-screenshots && adb pull /storage/emulated/0/Download/Send/send-login-hero-screen.png /tmp/send-ui-screenshots/ && adb pull /storage/emulated/0/Download/Send/send-login-screen.png /tmp/send-ui-screenshots/ && adb pull /storage/emulated/0/Download/Send/send-home-screen.png /tmp/send-ui-screenshots/ && adb pull /storage/emulated/0/Download/Send/send-conversation-screen.png /tmp/send-ui-screenshots/ && adb pull /storage/emulated/0/Download/Send/send-new-chat-dialog.png /tmp/send-ui-screenshots/ && adb pull /storage/emulated/0/Download/Send/send-reaction-picker.png /tmp/send-ui-screenshots/ && adb pull /storage/emulated/0/Download/Send/send-demo-create-chat.png /tmp/send-ui-screenshots/ && adb pull /storage/emulated/0/Download/Send/send-demo-conversations.png /tmp/send-ui-screenshots/ && adb pull /storage/emulated/0/Download/Send/send-demo-conversation.png /tmp/send-ui-screenshots/ && mkdir -p /tmp/send-ui-screenshots/all && adb pull /storage/emulated/0/Download/Send/. /tmp/send-ui-screenshots/all/
       - name: Upload Android instrumentation results
         if: always()
         uses: actions/upload-artifact@v4
@@ -79,7 +79,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Send-UI-Screenshots
-          path: /tmp/send-ui-screenshots/*.png
+          path: |
+            /tmp/send-ui-screenshots/*.png
+            /tmp/send-ui-screenshots/all/send-*-device.png
           if-no-files-found: warn
           retention-days: 30
       - name: Show backend logs

@@ -9,7 +9,7 @@ adb shell settings put global hide_error_dialogs 1
 adb shell wm density | grep -o '[0-9]\+' | tail -1 >"$out/dpi"
 
 ./gradlew --no-daemon "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g" :app:connectedDebugAndroidTest \
-  -Pandroid.testInstrumentationRunnerArguments.class=dev.send.matrix.UiComparisonScreenshotTest
+  -Pandroid.testInstrumentationRunnerArguments.class=dev.send.matrix.UiComparisonScreenshotTest,dev.send.matrix.SecurityUiTest,dev.send.matrix.NotificationsUiTest
 adb pull /storage/emulated/0/Download/Send/ "$out/"
 
 # Reference capture is best-effort: Messages' first-run prompts change between releases,
