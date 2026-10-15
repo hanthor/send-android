@@ -169,7 +169,9 @@ import org.matrix.rustcomponents.sdk.VerificationState
 import io.element.android.call.ui.ElementCallOverlay
 import io.element.android.call.impl.ElementCallPictureInPicture
 import io.element.android.call.api.ElementCallController
-private val QuickReactions = listOf("👍", "❤️", "😂", "😮", "😢", "🙏")
+
+/** A typing notice lapses after this long without changes to the draft. */
+private const val TYPING_IDLE_MILLIS = 5_000L
 
 // Messages-style contact avatars: saturated solid fills with a white glyph.
 private val AvatarColors = listOf(
@@ -413,6 +415,27 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
         }
     }
     val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val typingUsers by repository.typingUsers.collectAsState()
+    // Typing notices follow the open conversation's draft: typing while it has text, stopped once it is empty
+    // (sent or cleared) or after a few idle seconds. The SDK only sends a notice when the state changes or
+    // the previous one is about to expire.
+    val activeDraft = drafts[activeRoomId].orEmpty()
+    LaunchedEffect(room, conversationOnScreen, activeDraft) {
+        val current = room ?: return@LaunchedEffect
+        try {
+            val typing = conversationOnScreen != null && activeDraft.isNotBlank()
+            repository.setTyping(current, typing)
+            if (typing) {
+                delay(TYPING_IDLE_MILLIS)
+                repository.setTyping(current, false)
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            android.util.Log.w("SendApp", "Typing notice could not be sent", failure)
+        }
+    }
+    var forwarding by remember { mutableStateOf<MatrixMessage?>(null) }
     val decryptionActionLabel = when {
         verificationState == VerificationState.UNVERIFIED -> "Verify this device"
         recoveryState == RecoveryState.INCOMPLETE -> "Enter recovery key"
@@ -423,6 +446,7 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
         val selectedRoom = repository.openEncryptedRoom(roomId)
         val selectedTimeline = repository.timeline(selectedRoom)
         repository.observeTimeline(selectedTimeline)
+        repository.observeTyping(selectedRoom)
         room = selectedRoom
         timeline = selectedTimeline
         activeRoomId = roomId
@@ -530,6 +554,7 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
                     val restoredRoom = repository.openEncryptedRoom(activeRoomId)
                     val restoredTimeline = repository.timeline(restoredRoom)
                     repository.observeTimeline(restoredTimeline)
+                    repository.observeTyping(restoredRoom)
                     room = restoredRoom
                     timeline = restoredTimeline
                     activeRoomIsDirect = repository.isDirectRoom(restoredRoom)
@@ -622,8 +647,11 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
                 draft = drafts[activeRoomId].orEmpty(),
                 onDraft = { value -> drafts = drafts + (activeRoomId to value) },
                 messages = messages,
-                onBack = { room = null; timeline = null; activeRoomId = ""; roomTitle = ""; activeRoomIsDirect = false; error = "" },
-                onSend = {
+                onBack = {
+                    room?.let { left -> scope.launch { runCatching { repository.setTyping(left, false) } } }
+                    room = null; timeline = null; activeRoomId = ""; roomTitle = ""; activeRoomIsDirect = false; error = ""
+                },
+                onSend = { replyTo ->
                     val currentRoom = room
                     val currentTimeline = timeline
                     val roomId = activeRoomId
@@ -632,12 +660,49 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
                         scope.launch {
                             error = ""
                             try {
-                                repository.sendText(currentTimeline, currentRoom, sentText)
+                                repository.sendText(currentTimeline, currentRoom, sentText, replyTo?.id)
                                 if (drafts[roomId] == sentText) drafts = drafts - roomId
+                            } catch (cancelled: CancellationException) {
+                                throw cancelled
                             } catch (failure: Exception) { error = failure.message ?: "Message could not be sent." }
                         }
                     }
                 },
+                onEdit = { message, text ->
+                    val currentRoom = room
+                    val currentTimeline = timeline
+                    if (currentRoom != null && currentTimeline != null) scope.launch {
+                        error = ""
+                        try { repository.editText(currentTimeline, currentRoom, message.id, text) }
+                        catch (cancelled: CancellationException) { throw cancelled }
+                        catch (failure: Exception) { error = failure.message ?: "Message could not be edited." }
+                    }
+                },
+                onDelete = { message ->
+                    val currentRoom = room
+                    val currentTimeline = timeline
+                    if (currentRoom != null && currentTimeline != null) scope.launch {
+                        error = ""
+                        try { repository.redact(currentTimeline, currentRoom, message.id) }
+                        catch (cancelled: CancellationException) { throw cancelled }
+                        catch (failure: Exception) { error = failure.message ?: "Message could not be deleted." }
+                    }
+                },
+                onForward = { message -> forwarding = message },
+                onLoadUntil = { eventId ->
+                    val currentTimeline = timeline
+                    if (currentTimeline != null) scope.launch {
+                        try {
+                            if (!repository.paginateUntil(currentTimeline, eventId)) error = "The original message isn't available."
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (failure: Exception) {
+                            error = failure.message ?: "Older messages could not be loaded."
+                        }
+                    }
+                },
+                typingUsers = typingUsers,
+                loadLinkPreview = repository::linkPreview,
                 onOlder = {
                     val current = timeline
                     if (current != null) scope.launch {
@@ -753,6 +818,33 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
         }
         }
         if (signedIn) {
+            // Forward: pick another encrypted conversation; the copy is sent there and that conversation opens.
+            val forwardTarget = forwarding
+            val shownForward = remember { mutableStateOf<MatrixMessage?>(null) }.apply { if (forwardTarget != null) value = forwardTarget }
+            AnimatedVisibility(visible = forwardTarget != null && timeline != null, enter = SendMotion.openEnter, exit = SendMotion.closeExit) {
+                ForwardScreen(
+                    rooms = rooms.filter { it.encrypted && it.id != activeRoomId },
+                    mutedRoomIds = mutedRoomIds,
+                    preview = shownForward.value?.let(::messagePreviewText).orEmpty(),
+                    onPick = { target ->
+                        val currentTimeline = timeline
+                        val message = forwardTarget
+                        forwarding = null
+                        if (currentTimeline != null && message != null) scope.launch {
+                            error = ""
+                            try {
+                                repository.forward(currentTimeline, message.id, target.id)
+                                openConversation(target.id, target.name, target.direct)
+                            } catch (cancelled: CancellationException) {
+                                throw cancelled
+                            } catch (failure: Exception) {
+                                error = failure.message ?: "Message could not be forwarded."
+                            }
+                        }
+                    },
+                    onBack = { forwarding = null },
+                )
+            }
             // Security and verification sit above both the list and an open conversation.
             AnimatedVisibility(visible = showSecurity, enter = SendMotion.openEnter, exit = SendMotion.closeExit) {
                 SecurityScreen(
@@ -1619,7 +1711,7 @@ private fun NewConversationScreen(
 }
 
 @Composable
-private fun ConversationRow(room: MatrixRoom, muted: Boolean, onClick: () -> Unit) {
+internal fun ConversationRow(room: MatrixRoom, muted: Boolean, onClick: () -> Unit) {
     val context = LocalContext.current
     val colors = MaterialTheme.colorScheme
     val unread = room.unreadCount > 0
@@ -1731,422 +1823,6 @@ internal fun Avatar(name: String, size: androidx.compose.ui.unit.Dp) {
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-internal fun ConversationScreen(
-    title: String,
-    isDirect: Boolean,
-    draft: String,
-    onDraft: (String) -> Unit,
-    messages: List<MatrixMessage>,
-    onBack: () -> Unit,
-    onSend: () -> Unit,
-    onOlder: () -> Unit,
-    onReact: (String, String) -> Unit,
-    /** Starts a MatrixRTC call here: false for voice, true for video. */
-    onCall: (video: Boolean) -> Unit,
-    onSendAttachment: (Uri) -> Unit,
-    onSendVoice: (VoiceRecording) -> Unit,
-    loadMedia: MediaLoader,
-    uploading: Boolean,
-    error: String,
-    /** Label of the fix offered on undecryptable messages ("Verify this device", …), or null when none applies. */
-    decryptionActionLabel: String?,
-    onDecryptionAction: () -> Unit,
-    /** Whether this conversation is muted; with [onToggleMute] the ⋮ menu offers Mute / Unmute. */
-    muted: Boolean = false,
-    onToggleMute: (() -> Unit)? = null,
-    /** A call running in this conversation that this device isn't in, with [onJoinCall] to join it. */
-    callBanner: RoomCallBanner? = null,
-    onJoinCall: () -> Unit = {},
-) {
-    var reactionTargetId by remember { mutableStateOf<String?>(null) }
-    var expandedTimeId by remember { mutableStateOf<String?>(null) }
-    var showMenu by remember { mutableStateOf(false) }
-    val context = LocalContext.current
-    val playback = rememberVoicePlayback()
-    val recorder = remember { VoiceRecorder(context.applicationContext) }
-    var recording by remember { mutableStateOf(false) }
-    var recordingElapsed by remember { mutableLongStateOf(0L) }
-    var cancellingRecording by remember { mutableStateOf(false) }
-    var composerHint by remember { mutableStateOf("") }
-    DisposableEffect(recorder) { onDispose { recorder.cancel() } }
-    LaunchedEffect(recording) {
-        while (recording) {
-            recorder.sampleAmplitude()
-            recordingElapsed = recorder.elapsedMillis
-            delay(100)
-        }
-    }
-    val documentPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) onSendAttachment(uri)
-    }
-    val mediaPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        if (uri != null) onSendAttachment(uri)
-    }
-    val micPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        composerHint = if (granted) "Hold to record, release to send" else "Microphone access is needed to record voice messages."
-    }
-    androidx.activity.compose.BackHandler { onBack() }
-    Scaffold(
-        containerColor = MaterialTheme.colorScheme.surfaceContainer,
-        topBar = {
-            // Messages: back, avatar, title only, call, overflow. Body is a rounded sheet below.
-            Surface(color = MaterialTheme.colorScheme.surfaceContainer, modifier = Modifier.statusBarsPadding()) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    IconButton(onClick = onBack) {
-                        Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                    }
-                    Avatar(name = title, size = 40.dp)
-                    Spacer(modifier = Modifier.width(14.dp))
-                    Text(
-                        title,
-                        style = MaterialTheme.typography.titleLarge,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f),
-                    )
-                    // Messages: video and voice call buttons; both start a MatrixRTC call through Element Call.
-                    IconButton(onClick = { onCall(true) }) {
-                        Icon(imageVector = Icons.Outlined.Videocam, contentDescription = "Video call")
-                    }
-                    IconButton(onClick = { onCall(false) }) {
-                        Icon(imageVector = Icons.Outlined.Call, contentDescription = "Voice call")
-                    }
-                    Box {
-                        IconButton(onClick = { showMenu = true }) {
-                            Icon(imageVector = Icons.Filled.MoreVert, contentDescription = "More options")
-                        }
-                        DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Icon(Icons.Filled.Lock, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp))
-                                Spacer(Modifier.width(12.dp))
-                                Text("End-to-end encrypted", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                            androidx.compose.material3.DropdownMenuItem(
-                                text = { Text("Load older messages") },
-                                onClick = { showMenu = false; onOlder() },
-                            )
-                            if (onToggleMute != null) {
-                                androidx.compose.material3.DropdownMenuItem(
-                                    text = { Text(if (muted) "Unmute" else "Mute") },
-                                    leadingIcon = {
-                                        Icon(if (muted) Icons.Outlined.Notifications else Icons.Outlined.NotificationsOff, contentDescription = null)
-                                    },
-                                    onClick = { showMenu = false; onToggleMute() },
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        bottomBar = {
-            Surface(color = MaterialTheme.colorScheme.surface, modifier = Modifier.navigationBarsPadding().imePadding()) {
-                androidx.compose.foundation.layout.Column(modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 6.dp, bottom = 10.dp)) {
-                    if (error.isNotBlank()) {
-                        Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(bottom = 6.dp))
-                    }
-                    val status = if (uploading) "Sending attachment…" else composerHint
-                    if (status.isNotBlank()) {
-                        Text(status, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(start = 16.dp, bottom = 6.dp))
-                    }
-                    var showEmoji by remember { mutableStateOf(false) }
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
-                        // Messages composer: 56dp pill with attach, field, emoji and gallery actions.
-                        Surface(
-                            modifier = Modifier.weight(1f).heightIn(min = 56.dp),
-                            shape = RoundedCornerShape(28.dp),
-                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                        ) {
-                            if (recording) {
-                                RecordingIndicator(
-                                    elapsedMillis = recordingElapsed,
-                                    cancelling = cancellingRecording,
-                                    modifier = Modifier.fillMaxWidth().height(56.dp),
-                                )
-                            } else Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                                IconButton(onClick = { documentPicker.launch(arrayOf("*/*")) }) {
-                                    Icon(imageVector = Icons.Outlined.AddCircleOutline, contentDescription = "Attach file", tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                                // Same decoration as TextField but with Messages' tight inner padding so the
-                                // placeholder stays on one line next to three inline actions.
-                                val composerInteraction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
-                                val composerColors = TextFieldDefaults.colors(
-                                    focusedContainerColor = Color.Transparent,
-                                    unfocusedContainerColor = Color.Transparent,
-                                    focusedIndicatorColor = Color.Transparent,
-                                    unfocusedIndicatorColor = Color.Transparent,
-                                )
-                                androidx.compose.foundation.text.BasicTextField(
-                                    value = draft,
-                                    onValueChange = onDraft,
-                                    modifier = Modifier.weight(1f),
-                                    maxLines = 4,
-                                    textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
-                                    cursorBrush = androidx.compose.ui.graphics.SolidColor(MaterialTheme.colorScheme.primary),
-                                    interactionSource = composerInteraction,
-                                ) { innerTextField ->
-                                    TextFieldDefaults.DecorationBox(
-                                        value = draft,
-                                        innerTextField = innerTextField,
-                                        enabled = true,
-                                        singleLine = false,
-                                        visualTransformation = androidx.compose.ui.text.input.VisualTransformation.None,
-                                        interactionSource = composerInteraction,
-                                        placeholder = { Text("Message", maxLines = 1, softWrap = false) },
-                                        colors = composerColors,
-                                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp, vertical = 16.dp),
-                                        container = {},
-                                    )
-                                }
-                                Box {
-                                    IconButton(onClick = { showEmoji = true }) {
-                                        Icon(imageVector = Icons.Filled.SentimentSatisfied, contentDescription = "Emoji", tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    }
-                                    DropdownMenu(
-                                        expanded = showEmoji,
-                                        onDismissRequest = { showEmoji = false },
-                                        shape = RoundedCornerShape(24.dp),
-                                        containerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
-                                    ) {
-                                        Row(modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
-                                            QuickReactions.forEach { emoji ->
-                                                TextButton(onClick = { onDraft(draft + emoji); showEmoji = false }) {
-                                                    Text(emoji, fontSize = 20.sp)
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                IconButton(onClick = { mediaPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) }) {
-                                    Icon(imageVector = Icons.Outlined.Image, contentDescription = "Gallery", tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                            }
-                        }
-                        Spacer(modifier = Modifier.width(8.dp))
-                        // Messages' 56dp circular action: Send with a draft, hold-to-record voice otherwise.
-                        if (draft.isNotBlank()) {
-                            FilledIconButton(
-                                onClick = onSend,
-                                modifier = Modifier.size(56.dp),
-                                colors = androidx.compose.material3.IconButtonDefaults.filledIconButtonColors(
-                                    containerColor = MaterialTheme.colorScheme.primary,
-                                    contentColor = MaterialTheme.colorScheme.onPrimary,
-                                ),
-                            ) {
-                                Icon(imageVector = Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
-                            }
-                        } else {
-                            VoiceRecordButton(
-                                recording = recording,
-                                onStart = {
-                                    if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-                                        micPermission.launch(Manifest.permission.RECORD_AUDIO)
-                                        false
-                                    } else try {
-                                        playback.stop()
-                                        recorder.start().also { started ->
-                                            recording = started
-                                            cancellingRecording = false
-                                            recordingElapsed = 0L
-                                            composerHint = ""
-                                        }
-                                    } catch (failure: Exception) {
-                                        composerHint = failure.message ?: "The microphone could not be started."
-                                        false
-                                    }
-                                },
-                                onSlideOutside = { cancellingRecording = it },
-                                onFinish = { send ->
-                                    recording = false
-                                    cancellingRecording = false
-                                    if (send) {
-                                        val clip = recorder.stop()
-                                        if (clip != null) onSendVoice(clip) else composerHint = "Hold to record, release to send"
-                                    } else {
-                                        recorder.cancel()
-                                        composerHint = "Voice message discarded"
-                                    }
-                                },
-                                onTap = { composerHint = "Hold to record, release to send" },
-                            )
-                        }
-                    }
-                }
-            }
-        },
-    ) { innerPadding ->
-        Surface(
-            modifier = Modifier.fillMaxSize().padding(innerPadding),
-            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-            color = MaterialTheme.colorScheme.surface,
-        ) {
-        androidx.compose.foundation.layout.Column(modifier = Modifier.fillMaxSize()) {
-            if (callBanner != null) RoomCallBannerRow(callBanner, onJoin = onJoinCall)
-            LazyColumn(
-                modifier = Modifier.weight(1f).fillMaxWidth(),
-                reverseLayout = true,
-            ) {
-                val reversed = messages.asReversed()
-                items(reversed.size, key = { reversed[it].id }) { index ->
-                    val message = reversed[index]
-                    // Grouping is computed in chronological order: neighbours are the adjacent
-                    // items in the non-reversed list, i.e. reversed neighbours flipped.
-                    val chronological = messages
-                    val chronoIndex = chronological.indexOfFirst { it.id == message.id }
-                    // Call rows stand alone: they neither join nor split a sender's bubble group.
-                    fun sameGroup(other: MatrixMessage?) = other != null && other.call == null && message.call == null && other.own == message.own
-                    val prevSame = sameGroup(chronological.getOrNull(chronoIndex - 1))
-                    val nextSame = sameGroup(chronological.getOrNull(chronoIndex + 1))
-                    val isFirstInGroup = !prevSame
-                    val isLastInGroup = !nextSame
-                    // Centered section header whenever the calendar day changes.
-                    val dayKey = android.text.format.DateFormat.format("yyyyMMdd", message.timestampMillis).toString()
-                    val prevDayKey = chronological.getOrNull(chronoIndex - 1)?.let {
-                        android.text.format.DateFormat.format("yyyyMMdd", it.timestampMillis).toString()
-                    }
-                    val isNewDay = prevDayKey != dayKey
-                    androidx.compose.foundation.layout.Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalAlignment = if (message.call != null) Alignment.CenterHorizontally else if (message.own) Alignment.End else Alignment.Start,
-                    ) {
-                        if (isNewDay) {
-                            Text(
-                                text = dayHeaderLabel(context, message.timestampMillis),
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                textAlign = TextAlign.Center,
-                                modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
-                            )
-                        }
-                        val call = message.call
-                        if (call != null) {
-                            CallEventRow(
-                                call = call,
-                                timestampMillis = message.timestampMillis,
-                                onJoin = onJoinCall,
-                                onCallBack = if (isDirect) ({ onCall(call.video) }) else null,
-                            )
-                        } else {
-                        val shape = bubbleShape(message.own, isFirstInGroup, isLastInGroup)
-                        // Reactions need a server event id, so local echoes only get them once sent.
-                        val onLongPress: () -> Unit = { if (message.status == DeliveryStatus.Sent) reactionTargetId = message.id }
-                        val onTap: () -> Unit = { expandedTimeId = if (expandedTimeId == message.id) null else message.id }
-                        val attachment = message.attachment
-                        val decryptionFailure = message.decryptionFailure
-                        if (decryptionFailure != null) {
-                            UndecryptableBubble(
-                                failure = decryptionFailure,
-                                isFromMe = message.own,
-                                shape = shape,
-                                isLastInGroup = isLastInGroup,
-                                actionLabel = decryptionActionLabel?.takeIf { decryptionFailure.fixableOnThisDevice },
-                                onAction = onDecryptionAction,
-                            )
-                        } else if (attachment != null) {
-                            Box(
-                                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = if (isLastInGroup && message.text.isBlank()) 4.dp else 1.dp),
-                                contentAlignment = if (message.own) Alignment.CenterEnd else Alignment.CenterStart,
-                            ) {
-                                AttachmentBubble(
-                                    messageId = message.id,
-                                    attachment = attachment,
-                                    isFromMe = message.own,
-                                    shape = shape,
-                                    loadMedia = loadMedia,
-                                    playback = playback,
-                                    onLongPress = onLongPress,
-                                )
-                            }
-                        }
-                        if (decryptionFailure == null && (attachment == null || message.text.isNotBlank())) {
-                            MessageBubble(
-                                text = message.text,
-                                isFromMe = message.own,
-                                isFirstInGroup = isFirstInGroup,
-                                isLastInGroup = isLastInGroup,
-                                onClick = onTap,
-                                onLongPress = onLongPress,
-                            )
-                        }
-                        DropdownMenu(
-                            expanded = reactionTargetId == message.id,
-                            onDismissRequest = { reactionTargetId = null },
-                            shape = RoundedCornerShape(24.dp),
-                            containerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
-                        ) {
-                            // Horizontal emoji bar, Messages-style.
-                            Row(modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
-                                QuickReactions.forEach { emoji ->
-                                    TextButton(
-                                        onClick = {
-                                            reactionTargetId = null
-                                            onReact(message.id, emoji)
-                                        },
-                                    ) {
-                                        Text(emoji, fontSize = 20.sp)
-                                    }
-                                }
-                            }
-                        }
-                        if (message.reactions.isNotEmpty()) {
-                            // Overlapping rounded reaction pill at the bubble's bottom corner.
-                            Surface(
-                                shape = RoundedCornerShape(12.dp),
-                                color = MaterialTheme.colorScheme.surfaceContainerLow,
-                                tonalElevation = 1.dp,
-                                modifier = Modifier.padding(horizontal = 20.dp).offset(y = (-8).dp),
-                            ) {
-                                Text(
-                                    message.reactions.joinToString(" "),
-                                    fontSize = 12.sp,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-                                )
-                            }
-                        }
-                        // Messages: time under every cluster (or a tapped message), plus delivery state for own messages.
-                        if (isLastInGroup || expandedTimeId == message.id || message.status == DeliveryStatus.Failed) {
-                            val time = DateUtils.formatDateTime(context, message.timestampMillis, DateUtils.FORMAT_SHOW_TIME)
-                            val label = when {
-                                !message.own -> time
-                                message.status == DeliveryStatus.Sending -> "Sending…"
-                                message.status == DeliveryStatus.Failed -> "$time · Not sent"
-                                else -> "$time · Sent"
-                            }
-                            Text(
-                                label,
-                                style = MaterialTheme.typography.labelMedium,
-                                color = if (message.status == DeliveryStatus.Failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(start = 26.dp, end = 26.dp, top = 2.dp, bottom = 8.dp),
-                            )
-                        }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-}
-private fun dayHeaderLabel(context: android.content.Context, timestampMillis: Long): String {
-    // Messages: time only for today, otherwise "Tuesday, Oct 6 • 4:46 PM".
-    val time = DateUtils.formatDateTime(context, timestampMillis, DateUtils.FORMAT_SHOW_TIME)
-    if (DateUtils.isToday(timestampMillis)) return time
-    val day = DateUtils.formatDateTime(
-        context,
-        timestampMillis,
-        DateUtils.FORMAT_SHOW_WEEKDAY or DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_ABBREV_MONTH,
-    )
-    return "$day • $time"
-}
 
 /** Google Messages grouped corner logic: outer corners 20.dp, adjacent-to-group corners 4.dp. */
 internal fun bubbleShape(isFromMe: Boolean, isFirstInGroup: Boolean, isLastInGroup: Boolean): RoundedCornerShape = if (isFromMe) {
@@ -2165,29 +1841,3 @@ internal fun bubbleShape(isFromMe: Boolean, isFirstInGroup: Boolean, isLastInGro
     )
 }
 
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-fun MessageBubble(
-    text: String,
-    isFromMe: Boolean,
-    isFirstInGroup: Boolean,
-    isLastInGroup: Boolean,
-    onClick: () -> Unit,
-    onLongPress: () -> Unit,
-) {
-    Box(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = if (isLastInGroup) 4.dp else 1.dp),
-        contentAlignment = if (isFromMe) Alignment.CenterEnd else Alignment.CenterStart,
-    ) {
-        Surface(
-            shape = bubbleShape(isFromMe, isFirstInGroup, isLastInGroup),
-            // Messages uses tonal blue for sent bubbles, not a saturated primary fill.
-            color = if (isFromMe) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
-            contentColor = if (isFromMe) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
-            // Tap reveals the message's time/status (as in Messages); long-press opens reactions.
-            modifier = Modifier.widthIn(max = 280.dp).combinedClickable(onClick = onClick, onLongClick = onLongPress),
-        ) {
-            Text(text = text, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
-        }
-    }
-}

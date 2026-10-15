@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
@@ -32,6 +33,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.InsertDriveFile
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -188,6 +191,8 @@ internal fun AttachmentBubble(
     loadMedia: MediaLoader,
     playback: VoicePlayback,
     onLongPress: () -> Unit,
+    /** Opens a photo or video in the in-app viewer; without it they open in another app. */
+    onOpenVisual: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -214,7 +219,7 @@ internal fun AttachmentBubble(
             shape = shape,
             loadMedia = loadMedia,
             busy = busy,
-            modifier = Modifier.combinedClickable(onClick = ::open, onLongClick = onLongPress),
+            modifier = Modifier.combinedClickable(onClick = { if (onOpenVisual != null) onOpenVisual() else open() }, onLongClick = onLongPress),
         )
         AttachmentKind.Voice, AttachmentKind.Audio -> AudioRow(
             messageId = messageId,
@@ -430,8 +435,9 @@ private fun FileRow(attachment: MatrixAttachment, isFromMe: Boolean, shape: Shap
 }
 
 /**
- * Messages' hold-to-record button: press starts recording, releasing over the button sends,
- * sliding away before release discards. A plain tap explains the gesture.
+ * Messages' hold-to-record button: press starts recording, releasing over the button sends, sliding away
+ * before release discards, and sliding up past the lock hint keeps recording hands-free ([onLock]); the
+ * composer then shows stop/send/delete controls. A plain tap explains the gesture.
  */
 @Composable
 internal fun VoiceRecordButton(
@@ -440,55 +446,98 @@ internal fun VoiceRecordButton(
     onFinish: (send: Boolean) -> Unit,
     onSlideOutside: (Boolean) -> Unit,
     onTap: () -> Unit,
+    onLock: () -> Unit = {},
 ) {
     val start by rememberUpdatedState(onStart)
     val finish by rememberUpdatedState(onFinish)
     val outside by rememberUpdatedState(onSlideOutside)
     val tap by rememberUpdatedState(onTap)
+    val lock by rememberUpdatedState(onLock)
     val colors = MaterialTheme.colorScheme
-    Box(
-        modifier = Modifier
-            .size(56.dp)
-            .scale(if (recording) 1.15f else 1f)
-            // Messages: tonal pink at rest, solid red while recording.
-            .background(if (recording) colors.error else colors.tertiaryContainer, CircleShape)
-            .semantics {
-                contentDescription = "Voice message"
-                role = Role.Button
-                onClick(label = "Hold to record") { tap(); true }
-            }
-            .pointerInput(Unit) {
-                val slop = 48.dp.toPx()
-                awaitEachGesture {
-                    val down = awaitFirstDown()
-                    down.consume()
-                    if (!start()) return@awaitEachGesture
-                    var inside = true
-                    while (true) {
-                        val event = awaitPointerEvent()
-                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                        change.consume()
-                        val position = change.position
-                        val nowInside = position.x in -slop..(size.width + slop) && position.y in -slop..(size.height + slop)
-                        if (nowInside != inside) {
-                            inside = nowInside
-                            outside(!inside)
-                        }
-                        if (!change.pressed) break
-                    }
-                    finish(inside)
+    var lockProgress by remember { mutableFloatStateOf(0f) }
+    Box(contentAlignment = Alignment.Center) {
+        if (recording) {
+            // Messages: a lock pill above the button that fills as the finger slides up.
+            Surface(
+                shape = RoundedCornerShape(24.dp),
+                color = colors.surfaceContainerHighest,
+                shadowElevation = 2.dp,
+                modifier = Modifier
+                    .offset(y = -(VOICE_LOCK_DISTANCE + 8.dp) * (0.5f + 0.5f * lockProgress))
+                    .semantics { contentDescription = "Slide up to lock" },
+            ) {
+                Column(Modifier.padding(horizontal = 10.dp, vertical = 10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(
+                        Icons.Filled.Lock,
+                        contentDescription = null,
+                        tint = if (lockProgress >= 1f) colors.primary else colors.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp),
+                    )
+                    Icon(Icons.Filled.KeyboardArrowUp, contentDescription = null, tint = colors.onSurfaceVariant, modifier = Modifier.size(20.dp))
                 }
-            },
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(
-            // Messages uses a waveform glyph rather than a microphone.
-            Icons.Filled.GraphicEq,
-            contentDescription = null,
-            tint = if (recording) colors.onError else colors.onTertiaryContainer,
-        )
+            }
+        }
+        Box(
+            modifier = Modifier
+                .size(56.dp)
+                .scale(if (recording) 1.15f else 1f)
+                // Messages: tonal pink at rest, solid red while recording.
+                .background(if (recording) colors.error else colors.tertiaryContainer, CircleShape)
+                .semantics {
+                    contentDescription = "Voice message"
+                    role = Role.Button
+                    onClick(label = "Hold to record") { tap(); true }
+                }
+                .pointerInput(Unit) {
+                    val slop = 48.dp.toPx()
+                    val lockPx = VOICE_LOCK_DISTANCE.toPx()
+                    awaitEachGesture {
+                        val down = awaitFirstDown()
+                        down.consume()
+                        if (!start()) return@awaitEachGesture
+                        var inside = true
+                        var locked = false
+                        lockProgress = 0f
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                            change.consume()
+                            val position = change.position
+                            if (!locked) {
+                                lockProgress = (-position.y / lockPx).coerceIn(0f, 1f)
+                                if (position.y <= -lockPx) {
+                                    locked = true
+                                    if (!inside) outside(false)
+                                    lock()
+                                } else {
+                                    val nowInside = position.x in -slop..(size.width + slop) && position.y in -(lockPx + slop)..(size.height + slop)
+                                    if (nowInside != inside) {
+                                        inside = nowInside
+                                        outside(!inside)
+                                    }
+                                }
+                            }
+                            if (!change.pressed) break
+                        }
+                        lockProgress = 0f
+                        // Locked recordings carry on after release; the composer's controls finish them.
+                        if (!locked) finish(inside)
+                    }
+                },
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                // Messages uses a waveform glyph rather than a microphone.
+                Icons.Filled.GraphicEq,
+                contentDescription = null,
+                tint = if (recording) colors.onError else colors.onTertiaryContainer,
+            )
+        }
     }
 }
+
+/** How far above the voice button the finger slides to lock a recording. */
+internal val VOICE_LOCK_DISTANCE = 72.dp
 
 /** Composer status while a voice clip is being recorded. */
 @Composable

@@ -94,6 +94,10 @@ import org.matrix.rustcomponents.sdk.ImageInfo
 import org.matrix.rustcomponents.sdk.LatestEventValue
 import org.matrix.rustcomponents.sdk.MediaSource
 import org.matrix.rustcomponents.sdk.MsgLikeKind
+import org.matrix.rustcomponents.sdk.EmbeddedEventDetails
+import org.matrix.rustcomponents.sdk.EditedContent
+import org.matrix.rustcomponents.sdk.ProfileDetails
+import org.matrix.rustcomponents.sdk.contentWithoutRelationFromMessage
 import org.matrix.rustcomponents.sdk.ReceiptType
 import org.matrix.rustcomponents.sdk.ThumbnailInfo
 import org.matrix.rustcomponents.sdk.TimelineItemContent
@@ -157,6 +161,19 @@ enum class DecryptionFailure {
     InsecureSenderDevice,
 }
 
+/** A homeserver URL preview (OpenGraph) of a link in a message; [image] is the downloaded og:image, if any. */
+data class LinkPreview(val url: String, val title: String?, val description: String?, val siteName: String?, val image: File?)
+
+/** The message a reply quotes (`m.in_reply_to`), as far as the SDK has loaded it. */
+data class ReplyQuote(
+    val eventId: String,
+    /** Display name (or Matrix ID) of the quoted sender; null while the SDK is still fetching the event. */
+    val sender: String?,
+    val own: Boolean,
+    /** Text or media summary ("Photo", …) of the quoted message; null while it loads or when it is unavailable. */
+    val text: String?,
+)
+
 data class MatrixMessage(
     val id: String,
     val sender: String,
@@ -171,6 +188,18 @@ data class MatrixMessage(
     val decryptionFailure: DecryptionFailure? = null,
     /** Set for a MatrixRTC call notification, which renders as a call row rather than a bubble. */
     val call: CallEvent? = null,
+    /** The sender's display name in this room, when the SDK has their profile. */
+    val senderName: String? = null,
+    /** Set when this message replies to another one. */
+    val replyTo: ReplyQuote? = null,
+    /** The text was replaced by an edit (`m.replace`). */
+    val edited: Boolean = false,
+    /** Redacted ("deleted for everyone"); [text] and [attachment] are empty then. */
+    val deleted: Boolean = false,
+    /** The SDK allows this account to edit the message (own text messages). */
+    val editable: Boolean = false,
+    /** Other people's read receipts that sit on this event: user ID → receipt time in ms (0 when unknown). */
+    val readBy: Map<String, Long> = emptyMap(),
 )
 
 /** The signed-in Matrix account and this device's session. */
@@ -250,6 +279,14 @@ class MatrixRepository(context: Context) {
     val roomListServiceState: StateFlow<org.matrix.rustcomponents.sdk.RoomListServiceState> = _roomListServiceState.asStateFlow()
     private val _messages = MutableStateFlow<List<MatrixMessage>>(emptyList())
     val messages: StateFlow<List<MatrixMessage>> = _messages.asStateFlow()
+    /** The open conversation's timeline (the one [messages] mirrors). */
+    @Volatile private var observedTimeline: Timeline? = null
+    /** Reply events whose quoted event was asked for with `fetchDetailsForEvent`, so each is fetched once. */
+    private val replyDetailsRequested = java.util.Collections.synchronizedSet(HashSet<String>())
+    @Volatile private var typingHandle: TaskHandle? = null
+    private val _typingUsers = MutableStateFlow<List<String>>(emptyList())
+    /** Other people typing in the open conversation (display names, Matrix ID when unknown). */
+    val typingUsers: StateFlow<List<String>> = _typingUsers.asStateFlow()
 
     // E2EE account state: SDK listeners feed these while a session is active; they reset on sign-out.
     @Volatile private var encryption: Encryption? = null
@@ -499,6 +536,10 @@ class MatrixRepository(context: Context) {
     private fun closeSessionResources() {
         timelineHandle?.close()
         timelineHandle = null
+        observedTimeline = null
+        typingHandle?.close()
+        typingHandle = null
+        _typingUsers.value = emptyList()
         closeSecurityResources()
         closeRoomListResources()
         notificationClient?.close()
@@ -1221,15 +1262,27 @@ class MatrixRepository(context: Context) {
         room
     }
 
+    /** The room's live timeline, tracking everyone's read receipts so own messages can show "Read". */
     suspend fun timeline(room: Room): Timeline = withContext(Dispatchers.IO) {
         check(room.isEncrypted()) { "This room is not end-to-end encrypted and cannot be opened for messaging." }
-        room.timeline()
+        room.timelineWithConfiguration(
+            org.matrix.rustcomponents.sdk.TimelineConfiguration(
+                focus = org.matrix.rustcomponents.sdk.TimelineFocus.Live(hideThreadedEvents = false),
+                filter = org.matrix.rustcomponents.sdk.TimelineFilter.All,
+                internalIdPrefix = null,
+                dateDividerMode = org.matrix.rustcomponents.sdk.DateDividerMode.DAILY,
+                trackReadReceipts = uniffi.matrix_sdk_ui.TimelineReadReceiptTracking.ALL_EVENTS,
+                reportUtds = true,
+            ),
+        )
     }
 
     suspend fun observeTimeline(timeline: Timeline) = withContext(Dispatchers.IO) {
         timelineHandle?.close()
         timelineItems.clear()
         callMemberChanges.clear()
+        replyDetailsRequested.clear()
+        observedTimeline = timeline
         _messages.value = emptyList()
         timelineHandle = timeline.addListener(object : org.matrix.rustcomponents.sdk.TimelineListener {
             override fun onUpdate(diffs: List<org.matrix.rustcomponents.sdk.TimelineDiff>) {
@@ -1272,6 +1325,42 @@ class MatrixRepository(context: Context) {
     }
 
     /**
+     * Follows who else is typing in [room] (`subscribeToTypingNotifications`) into [typingUsers] until another
+     * conversation is observed or the session closes.
+     */
+    suspend fun observeTyping(room: Room) = withContext(Dispatchers.IO) {
+        typingHandle?.close()
+        _typingUsers.value = emptyList()
+        val ownUserId = ownUserId()
+        var handle: TaskHandle? = null
+        handle = room.subscribeToTypingNotifications(object : org.matrix.rustcomponents.sdk.TypingNotificationsListener {
+            override fun call(typingUserIds: List<String>) {
+                val others = typingUserIds.filter { it != ownUserId }
+                repositoryScope.launch {
+                    val names = others.map { userId ->
+                        try {
+                            room.memberDisplayName(userId)?.takeIf { it.isNotBlank() } ?: userId
+                        } catch (error: Exception) {
+                            userId
+                        }
+                    }
+                    if (typingHandle === handle) _typingUsers.value = names
+                }
+            }
+        })
+        typingHandle = handle
+    }
+
+    /**
+     * Tells the room this account is (or stopped) typing. The SDK only sends a new notice when the state changes
+     * or the previous one is about to expire.
+     */
+    suspend fun setTyping(room: Room, typing: Boolean): Unit = withContext(Dispatchers.IO) {
+        check(room.isEncrypted()) { "This room is not end-to-end encrypted." }
+        room.typingNotice(typing)
+    }
+
+    /**
      * Messages and call rows for the open timeline. A call row's outcome comes from the room's call memberships
      * (`org.matrix.msc3401.call.member` state in the timeline) between its notification and the next one.
      */
@@ -1294,7 +1383,7 @@ class MatrixRepository(context: Context) {
                 ring += 1
                 callMessage(event, ringTimes.getOrNull(ring), ownUserId, changes)
             } else {
-                toMessage(event)
+                toMessage(event, ownUserId)
             }
         }
     }
@@ -1343,10 +1432,10 @@ class MatrixRepository(context: Context) {
         )
     }
 
-    private fun toMessage(event: org.matrix.rustcomponents.sdk.EventTimelineItem): MatrixMessage? {
+    private fun toMessage(event: org.matrix.rustcomponents.sdk.EventTimelineItem, ownUserId: String?): MatrixMessage? {
         val content = event.content as? TimelineItemContent.MsgLike ?: return null
         val kind = content.content.kind
-        if (kind !is MsgLikeKind.Message && kind !is MsgLikeKind.UnableToDecrypt) return null
+        if (kind !is MsgLikeKind.Message && kind !is MsgLikeKind.UnableToDecrypt && kind !is MsgLikeKind.Redacted) return null
         val id = when (val identifier = event.eventOrTransactionId) {
             is EventOrTransactionId.EventId -> identifier.eventId
             is EventOrTransactionId.TransactionId -> identifier.transactionId
@@ -1356,6 +1445,25 @@ class MatrixRepository(context: Context) {
             is EventSendState.NotSentYet -> DeliveryStatus.Sending
             is EventSendState.SendingFailed -> DeliveryStatus.Failed
             else -> DeliveryStatus.Sent
+        }
+        val senderName = (event.senderProfile as? ProfileDetails.Ready)?.displayName?.takeIf { it.isNotBlank() }
+        // Receipts the SDK placed on this event; the sender's own (implicit) one isn't a "read".
+        val readBy = event.readReceipts
+            .filterKeys { it != ownUserId && it != event.sender }
+            .mapValues { (_, receipt) -> receipt.timestamp?.toLong() ?: 0L }
+        if (kind is MsgLikeKind.Redacted) {
+            return MatrixMessage(
+                id = id,
+                sender = event.sender,
+                text = "",
+                own = event.isOwn,
+                timestampMillis = event.timestamp.toLong(),
+                reactions = emptyList(),
+                status = status,
+                senderName = senderName,
+                deleted = true,
+                readBy = readBy,
+            )
         }
         if (kind is MsgLikeKind.UnableToDecrypt) {
             // Kept in the timeline as a placeholder; the SDK swaps in the decrypted event once the key arrives.
@@ -1368,6 +1476,8 @@ class MatrixRepository(context: Context) {
                 reactions = event.reactions.map { it.key },
                 status = status,
                 decryptionFailure = decryptionFailureOf(kind.msg),
+                senderName = senderName,
+                readBy = readBy,
             )
         }
         val message = (kind as MsgLikeKind.Message).content
@@ -1388,7 +1498,39 @@ class MatrixRepository(context: Context) {
             reactions = event.reactions.map { it.key },
             attachment = attachment,
             status = status,
+            senderName = senderName,
+            replyTo = content.content.inReplyTo?.let { replyQuoteOf(it, (event.eventOrTransactionId as? EventOrTransactionId.EventId)?.eventId, ownUserId) },
+            edited = message.isEdited,
+            editable = event.isEditable,
+            readBy = readBy,
         )
+    }
+
+    /** The quoted message of a reply; asks the SDK to fetch it (once) when it isn't in the local timeline yet. */
+    private fun replyQuoteOf(details: org.matrix.rustcomponents.sdk.InReplyToDetails, replyEventId: String?, ownUserId: String?): ReplyQuote {
+        val quotedId = details.eventId()
+        return when (val quoted = details.event()) {
+            is EmbeddedEventDetails.Ready -> ReplyQuote(
+                eventId = quotedId,
+                sender = (quoted.senderProfile as? ProfileDetails.Ready)?.displayName?.takeIf { it.isNotBlank() } ?: quoted.sender,
+                own = quoted.sender == ownUserId,
+                text = describe(quoted.content, own = false),
+            )
+            is EmbeddedEventDetails.Unavailable -> {
+                val timeline = observedTimeline
+                if (replyEventId != null && timeline != null && replyDetailsRequested.add(replyEventId)) {
+                    repositoryScope.launch {
+                        try {
+                            timeline.fetchDetailsForEvent(replyEventId)
+                        } catch (error: Exception) {
+                            android.util.Log.w(TAG, "Reply details for $replyEventId unavailable", error)
+                        }
+                    }
+                }
+                ReplyQuote(quotedId, sender = null, own = false, text = null)
+            }
+            else -> ReplyQuote(quotedId, sender = null, own = false, text = null)
+        }
     }
 
     private fun decryptionFailureOf(message: EncryptedMessage): DecryptionFailure =
@@ -1461,13 +1603,91 @@ class MatrixRepository(context: Context) {
         else -> null
     }
 
-    suspend fun sendText(timeline: Timeline, room: Room, text: String) = withContext(Dispatchers.IO) {
+    /** Sends [text]; with [replyToEventId] it goes out as a reply (`m.in_reply_to`) to that event. */
+    suspend fun sendText(timeline: Timeline, room: Room, text: String, replyToEventId: String? = null) = withContext(Dispatchers.IO) {
         check(room.isEncrypted()) { "Sending is disabled because this room is not encrypted." }
         require(text.isNotBlank())
         val content = timeline.createMessageContent(MessageType.Text(TextMessageContent(text, null)))
             ?: error("The Matrix SDK could not create a text message.")
-        timeline.send(content)
+        if (replyToEventId != null) timeline.sendReply(content, replyToEventId) else timeline.send(content)
     }
+
+    /** Replaces the text of own message [messageId] (`m.replace`); local echoes are edited in the send queue. */
+    suspend fun editText(timeline: Timeline, room: Room, messageId: String, text: String) = withContext(Dispatchers.IO) {
+        check(room.isEncrypted()) { "Editing is disabled because this room is not encrypted." }
+        require(text.isNotBlank())
+        val content = timeline.createMessageContent(MessageType.Text(TextMessageContent(text, null)))
+            ?: error("The Matrix SDK could not create a text message.")
+        timeline.edit(eventOrTransactionId(messageId), EditedContent.RoomMessage(content))
+    }
+
+    /** Deletes [messageId] for everyone (redaction); an unsent local echo is just dropped from the send queue. */
+    suspend fun redact(timeline: Timeline, room: Room, messageId: String) = withContext(Dispatchers.IO) {
+        check(room.isEncrypted()) { "Deleting is disabled because this room is not encrypted." }
+        timeline.redactEvent(eventOrTransactionId(messageId), null)
+    }
+
+    /**
+     * Sends a copy of [eventId]'s content (text, or media re-using the original encrypted upload) to the encrypted
+     * room [targetRoomId], without the reply relation.
+     */
+    suspend fun forward(source: Timeline, eventId: String, targetRoomId: String) = withContext(Dispatchers.IO) {
+        val item = source.getEventTimelineItemByEventId(eventId)
+        val message = ((item.content as? TimelineItemContent.MsgLike)?.content?.kind as? MsgLikeKind.Message)?.content
+            ?: error("This message can't be forwarded.")
+        val target = openEncryptedRoom(targetRoomId)
+        target.timeline().send(contentWithoutRelationFromMessage(message))
+    }
+
+    /**
+     * Paginates back until [eventId] is in the open timeline (a reply's original, a search hit), at most
+     * [maxPages] pages; false when the start of the room was reached without finding it.
+     */
+    suspend fun paginateUntil(timeline: Timeline, eventId: String, maxPages: Int = 10): Boolean = withContext(Dispatchers.IO) {
+        repeat(maxPages) {
+            if (_messages.value.any { it.id == eventId }) return@withContext true
+            if (timeline.paginateBackwards(50u.toUShort())) return@withContext _messages.value.any { it.id == eventId }
+        }
+        _messages.value.any { it.id == eventId }
+    }
+
+    private val linkPreviews = android.util.LruCache<String, java.util.Optional<LinkPreview>>(64)
+
+    /**
+     * OpenGraph preview of [url] from the homeserver (`/media/preview_url` through `Client.getUrlPreview`), with
+     * its image downloaded; null when the server has no preview (previews disabled, unreachable page, no title).
+     */
+    suspend fun linkPreview(url: String): LinkPreview? = withContext(Dispatchers.IO) {
+        linkPreviews.get(url)?.let { return@withContext it.orElse(null) }
+        val preview = try {
+            val json = org.json.JSONObject(requireClient().getUrlPreview(url, null))
+            fun field(name: String) = json.optString(name).trim().takeIf { it.isNotEmpty() }
+            val title = field("og:title")
+            val description = field("og:description")
+            if (title == null && description == null) {
+                null
+            } else {
+                val image = field("og:image")?.takeIf { it.startsWith("mxc://") }?.let { mxc ->
+                    try {
+                        mediaFile(MediaSource.fromUrl(mxc).use { it.toJson() }, "link-preview")
+                    } catch (error: Exception) {
+                        null
+                    }
+                }
+                LinkPreview(url = url, title = title, description = description, siteName = field("og:site_name"), image = image)
+            }
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            android.util.Log.i(TAG, "No preview for $url: ${error.message}")
+            null
+        }
+        linkPreviews.put(url, java.util.Optional.ofNullable(preview))
+        preview
+    }
+
+    private fun eventOrTransactionId(id: String): EventOrTransactionId =
+        if (id.startsWith("$")) EventOrTransactionId.EventId(id) else EventOrTransactionId.TransactionId(id)
 
     /**
      * Copies a picked document/photo into the cache (the SDK uploads from a file path), then sends it as
