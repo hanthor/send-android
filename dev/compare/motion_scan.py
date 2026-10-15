@@ -74,8 +74,10 @@ def main() -> int:
     lines += ["", f"## Springs (`SpringSpec` ≈ `{spring_cls}`)", "", "| dampingRatio | stiffness | uses |", "|---|---|---|"]
     if spring_cls:
         lines += [f"| {d} | {s} | {n} |" for (d, s), n in spring_args[spring_cls].most_common(40)]
-
-    tween_cls = tween_votes.most_common(1)[0][0] if tween_votes else None
+    # The real TweenSpec is the candidate whose third argument resolves to an easing curve.
+    def resolved(cls):
+        return sum(n for (_, _, e), n in tween_args[cls].items() if e in field_curves)
+    tween_cls = max(tween_votes, key=lambda c: (resolved(c), tween_votes[c]), default=None)
     lines += ["", f"## Tweens (`TweenSpec` ≈ `{tween_cls}`)", "", "| duration ms | delay ms | easing | uses |", "|---|---|---|---|"]
     if tween_cls:
         for (d, dl, e), n in tween_args[tween_cls].most_common(60):
