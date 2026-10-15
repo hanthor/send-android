@@ -13,7 +13,7 @@ ui="python3 $(dirname "$0")/ui.py"
 mkdir -p "$out"
 
 shot() {
-  if ! timeout 60 adb exec-out screencap -p >"$out/gm-$1.png"; then
+  if ! timeout 60 adb exec-out screencap -p >"$out/gm-$1.png" || [ ! -s "$out/gm-$1.png" ]; then
     rm -f "$out/gm-$1.png"
     echo "::warning::screencap failed for gm-$1"
     return 1
@@ -86,7 +86,8 @@ adb shell settings put global heads_up_notifications_enabled 0
 #
 # Full-screen photo needs a received picture message, which the emulator modem cannot deliver
 # (no MMS). As root, one from 555-0100 (an hour old) is written straight into the telephony
-# provider before Messages' first launch, whose initial sync imports it with the rest.
+# provider before Messages is first opened; Messages imports provider changes made by other
+# apps (logcat: "Message exists in Telephony but not in Bugle. Requesting Spot Sync").
 python3 - <<'EOF'
 from PIL import Image
 Image.new("RGB", (640, 480), (66, 133, 244)).save("/tmp/gm-sample.jpg")
@@ -99,9 +100,11 @@ inject_photo_mms() {
   sub=$(adb shell "content query --uri content://telephony/siminfo --projection _id" | grep -o '_id=[0-9]*' | head -1 | cut -d= -f2)
   sent=$(($(date +%s) - 3600))
   size=$(stat -c %s /tmp/gm-sample.jpg)
-  # A downloaded (m_type 132 = retrieve-conf, retr_st 128 = ok) multipart message on the SIM's subscription.
+  # Messages spot-syncs a provider row the moment it appears, so the row starts with m_type 0
+  # (not a message type it imports) and only becomes a downloaded picture message (m_type 132 =
+  # retrieve-conf, retr_st 128 = ok) once its sender and image part are in place.
   adb shell content insert --uri content://mms --bind thread_id:l:"$tid" --bind date:l:"$sent" --bind date_sent:l:"$sent" \
-    --bind msg_box:i:1 --bind read:i:0 --bind seen:i:0 --bind m_type:i:132 --bind v:i:18 --bind text_only:i:0 \
+    --bind msg_box:i:1 --bind read:i:0 --bind seen:i:0 --bind m_type:i:0 --bind v:i:18 --bind text_only:i:0 \
     --bind pri:i:129 --bind retr_st:i:128 --bind m_size:i:"$size" --bind sub_id:i:"${sub:-1}" \
     --bind ct_t:s:application/vnd.wap.multipart.related --bind m_id:s:gm"$sent" --bind tr_id:s:gm"$sent"
   mid=$(adb shell "content query --uri content://mms --projection _id --sort '_id DESC'" | grep -o '_id=[0-9]*' | head -1 | cut -d= -f2)
@@ -121,7 +124,9 @@ inject_photo_mms() {
     bytes=$(adb shell "content read --uri content://mms/part/$pid" | wc -c)
   fi
   [ "$bytes" = "$size" ] || { why="the MMS image part reads back $bytes of $size bytes"; return 1; }
+  adb shell content update --uri "content://mms/$mid" --bind m_type:i:132
   adb shell "content query --uri content://mms/$mid --projection _id:thread_id:m_type:sub_id:m_size"
+  adb shell "content query --uri content://mms/$mid/addr --projection address:type"
   adb shell "content query --uri content://mms/$mid/part --projection _id:ct:_data"
 }
 photo_why=""
@@ -268,11 +273,12 @@ capture_conversation_search() {
   sleep 1
   # Run the search so matches are highlighted in the thread (not just the query suggestion).
   adb shell input keyevent KEYCODE_ENTER
-  sleep 2.5
+  $ui wait "~result" --timeout 15 || return 1
+  sleep 1
   shot conversation-search
 }
 if capture_conversation_menu; then
-  capture_conversation_search || skip conversation-search "no Search entry in the conversation overflow menu"
+  capture_conversation_search || skip conversation-search "Search from the conversation overflow showed no result count for \"home\""
 else
   skip conversation-menu "conversation overflow (More) not found"
   skip conversation-search "conversation overflow (More) not found"
@@ -295,9 +301,9 @@ capture_panel emoji-picker "Show attach emoji and stickers screen" "Emoji" "Emoj
 # A real photo on the device so the media panel has something to show. Send's audit shots
 # and the transition recordings (already pulled) leave the device, so the gallery shows only
 # this photo.
-adb shell "content delete --uri content://media/external/file --where \"relative_path LIKE 'Download/Send%'\"" || true
+adb shell "content delete --uri content://media/external/file --where \"relative_path LIKE 'Download/Send%' OR _display_name LIKE 'gm-%.mp4'\"" || true
 adb shell "rm -rf /sdcard/Download/Send /sdcard/gm-*.mp4" || true
-# The sample photo itself is created (and sent as MMS) before Messages' first launch.
+# The sample photo itself was created (and written as an MMS) before Messages' first launch.
 adb push /tmp/gm-sample.jpg /sdcard/Pictures/gm-sample.jpg >/dev/null
 adb shell am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d file:///sdcard/Pictures/gm-sample.jpg >/dev/null
 capture_panel gallery "Show attach media screen" "Gallery" "Attach media" ||
@@ -376,48 +382,20 @@ capture_reply_swipe() {
   read -r x y < <($ui center "Hey, are you free to talk?") || return 1
   adb shell input swipe "$x" "$y" $((x + 450)) "$y" 400
   sleep 1.5
-  if ! $ui center "~replying" "~cancel reply" "~reply to" >/dev/null; then
-    mkdir -p "$out/debug"
-    adb exec-out screencap -p >"$out/debug/gm-reply-swipe.png" || true
-    $ui labels || true
-    return 1
-  fi
+  $ui center "~replying" "~cancel reply" "~reply to" >/dev/null || return 1
   shot reply-preview
 }
 if capture_reply_swipe; then reply_done=1; else reply_done=0; fi
 
-# Selection captures run last: the long-press overlay took the software-GPU emulator down
-# in every attempt (it hangs, then disappears mid-screencap), which must not cost the
-# captures above. Cross-window blur and Messages' expressive animations are switched off
-# first; logcat is kept to diagnose the hang.
+# Long-press an incoming bubble: reaction row + action menu over the blurred thread. It runs
+# last so a hang in the heavy blur overlay cannot cost the captures above.
 capture_message_actions() {
-  if open_account_menu && $ui tap-any "Messages settings" && $ui wait "Show expressive animations" --timeout 10; then
-    $ui tap-any "Show expressive animations" || true
-    sleep 1
-  fi
-  adb shell wm disable-blur 1 || true
-  adb shell settings put system haptic_feedback_enabled 0 || true
   open_thread 555-1234 || { why="could not open the 555-1234 thread"; return 1; }
   read -r x y < <($ui center "Hey, are you free to talk?") || { why="incoming bubble not found"; return 1; }
-  mkdir -p "$out/debug"
-  adb logcat -c || true
-  adb logcat -v time >"$out/debug/logcat-message-actions.txt" 2>&1 &
-  local logcat=$!
   long_press "$x" "$y"
-  sleep 1.5
-  local status=0
-  if ! shot message-actions; then
-    status=1
-    why="the long-press selection hung the software-GPU emulator (screencap never returned)"
-    if ! adb get-state >/dev/null 2>&1; then
-      local oom
-      oom=$(sudo -n dmesg 2>/dev/null | grep -i -E "out of memory|oom-kill|killed process" | tail -1 || true)
-      why="$why; the emulator process then exited${oom:+ (host kernel: $oom)}"
-      pgrep -a -f qemu-system || echo "no qemu-system process left"
-    fi
-  fi
-  kill $logcat 2>/dev/null || true
-  return $status
+  $ui wait "Copy" "Forward" --timeout 10 || { why="long-press did not open the message actions"; return 1; }
+  sleep 1
+  shot message-actions || { why="screencap of the selection overlay failed (emulator state: $(adb get-state 2>&1))"; return 1; }
 }
 capture_message_actions || skip message-actions "$why"
 

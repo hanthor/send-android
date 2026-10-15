@@ -46,7 +46,9 @@ jobs:
           # Google APIs image (Play services, which current Messages requires); its stale
           # built-in Messages is replaced from the writable system image by the capture script.
           target: google_apis
-          emulator-options: -writable-system -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          # SwANGLE: under swiftshader_indirect the emulator hangs and exits as soon as Messages
+          # draws its blurred message-selection overlay (gm-message-actions).
+          emulator-options: -writable-system -no-window -gpu swangle_indirect -no-snapshot -noaudio -no-boot-anim
           arch: x86_64
           profile: pixel_6
           disable-animations: false
