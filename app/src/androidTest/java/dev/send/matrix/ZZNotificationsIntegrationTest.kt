@@ -115,6 +115,12 @@ class ZZNotificationsIntegrationTest {
         assertEquals(Notification.VISIBILITY_PRIVATE, notification.notification.visibility)
         val publicText = checkNotNull(notification.notification.publicVersion).extras.getCharSequence(Notification.EXTRA_TEXT).toString()
         assertTrue(publicText, !publicText.contains(first))
+        // Visual audit: the real notification in the expanded shade.
+        val device = androidx.test.uiautomator.UiDevice.getInstance(androidx.test.platform.app.InstrumentationRegistry.getInstrumentation())
+        device.openNotification()
+        Thread.sleep(1_500)
+        composeRule.auditShot("notification")
+        device.executeShellCommand("cmd statusbar collapse")
 
         // 2. Inline reply: lands encrypted on Bob's client and joins the conversation in the notification.
         val reply = "Replied from the notification $stamp"

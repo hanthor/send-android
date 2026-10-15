@@ -64,6 +64,7 @@ class NotificationsUiTest {
         composeRule.onNodeWithText("Deliver new messages with").assertIsDisplayed()
         composeRule.onNodeWithText("Background sync only").assertIsSelected()
         composeRule.onNodeWithText("install a UnifiedPush distributor such as ntfy", substring = true).assertIsDisplayed()
+        composeRule.auditShot("notifications-settings")
         composeRule.onNodeWithText("Done").performClick()
         composeRule.runOnIdle { assertTrue(dismissed) }
     }
@@ -110,6 +111,7 @@ class NotificationsUiTest {
             }
         }
         composeRule.onNodeWithContentDescription("More options").performClick()
+        composeRule.auditShot("conversation-menu")
         composeRule.onNodeWithText("Unmute").performClick()
         composeRule.runOnIdle { assertEquals(1, toggled) }
     }
@@ -133,6 +135,7 @@ class NotificationsUiTest {
             }
         }
         composeRule.onNodeWithContentDescription("Muted").assertIsDisplayed()
+        composeRule.auditShot("muted-row")
     }
 
     @Test

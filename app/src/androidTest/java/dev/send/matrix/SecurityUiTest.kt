@@ -44,6 +44,7 @@ class SecurityUiTest {
 
         composeRule.onNodeWithText("@alice:example.org").assertIsDisplayed()
         composeRule.onNodeWithText("Device verified · recovery off").assertIsDisplayed()
+        composeRule.auditShot("account")
         composeRule.onNodeWithText("Security").performClick()
         composeRule.onNodeWithText("About & licenses").performClick()
         composeRule.onNodeWithText("Sign out").performClick()
@@ -70,6 +71,7 @@ class SecurityUiTest {
 
         composeRule.onNodeWithText("Sign out without recovery?").assertIsDisplayed()
         composeRule.onNodeWithText("lose access to encrypted messages", substring = true).assertIsDisplayed()
+        composeRule.auditShot("signout")
         composeRule.onNodeWithText("Set up recovery").performClick()
         composeRule.onNodeWithText("Sign out anyway").performClick()
         composeRule.runOnIdle { assertTrue(setUp && signedOut) }
@@ -102,6 +104,7 @@ class SecurityUiTest {
         composeRule.onNodeWithText("Save your recovery key").assertIsDisplayed()
         composeRule.onNodeWithTag(RECOVERY_KEY_TAG, useUnmergedTree = true).assertIsDisplayed()
         composeRule.onNodeWithText("EsTc 1234 abcd EFGH").assertIsDisplayed()
+        composeRule.auditShot("recovery-key")
         composeRule.onNodeWithText("Copy").performScrollTo().performClick()
         composeRule.onNodeWithText("Copied").assertIsDisplayed()
         composeRule.onNodeWithText("Done").assertIsNotEnabled()
@@ -134,6 +137,7 @@ class SecurityUiTest {
         composeRule.onNodeWithText("Not verified").assertIsDisplayed()
         composeRule.onNodeWithText("Needs your recovery key").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("Enter recovery key").performScrollTo().assertIsDisplayed()
+        composeRule.auditShot("security")
         composeRule.onNodeWithText("Verify this device").performScrollTo().performClick()
         composeRule.onNodeWithText("Verify with recovery key").performScrollTo().performClick()
         composeRule.onNodeWithText("Continue").assertIsNotEnabled()
@@ -172,6 +176,7 @@ class SecurityUiTest {
         }
 
         composeRule.onNodeWithText("Compare emoji").assertIsDisplayed()
+        composeRule.auditShot("verification")
         emojis.forEach { emoji ->
             composeRule.onNodeWithText(emoji.symbol).assertIsDisplayed()
             composeRule.onNodeWithText(emoji.description).assertIsDisplayed()
@@ -197,6 +202,7 @@ class SecurityUiTest {
         composeRule.onNodeWithText("Verification request").assertIsDisplayed()
         composeRule.onNodeWithText("Send Android (PHONEDEVICE)", substring = true).assertIsDisplayed()
         composeRule.onNodeWithText("Decline").assertIsDisplayed()
+        composeRule.auditShot("verification-request")
         composeRule.onNodeWithText("Accept").performClick()
         composeRule.runOnIdle { assertTrue(accepted) }
     }
@@ -250,6 +256,7 @@ class SecurityUiTest {
         assertEquals(2, composeRule.onAllNodesWithText("Waiting for this message…").fetchSemanticsNodes().size)
         composeRule.onNodeWithText(DecryptionFailure.SentBeforeJoined.explanation).assertIsDisplayed()
         composeRule.onNodeWithText(DecryptionFailure.BackupDisabled.explanation).assertIsDisplayed()
+        composeRule.auditShot("utd")
         // Only the history message can be fixed here, so exactly one action is offered.
         composeRule.onNodeWithTag(DECRYPTION_ACTION_TAG).assertIsDisplayed()
         composeRule.onNodeWithText("Enter recovery key").performClick()
@@ -276,6 +283,7 @@ class SecurityUiTest {
         }
 
         composeRule.onNodeWithText("Verify this device").assertIsDisplayed()
+        composeRule.auditShot("verify-banner")
         composeRule.onNodeWithText("Verify").performClick()
         composeRule.runOnIdle { assertTrue(verify) }
         composeRule.onNodeWithText("Not now").performClick()

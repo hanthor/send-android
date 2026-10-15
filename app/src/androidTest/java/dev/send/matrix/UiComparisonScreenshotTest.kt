@@ -107,6 +107,7 @@ class UiComparisonScreenshotTest {
         composeRule.onNodeWithText("Type a Matrix ID").performTextInput("@bob:example.org")
         composeRule.onNodeWithText("Add @bob:example.org").performClick()
         composeRule.onNodeWithText("Group name (optional)").performTextInput("Weekend plans")
+        composeRule.auditShot("new-group")
         composeRule.onNodeWithText("Create").performClick()
         composeRule.runOnIdle {
             assertEquals("Weekend plans" to listOf("@alice:example.org", "@bob:example.org"), createdGroup)
@@ -244,9 +245,11 @@ class UiComparisonScreenshotTest {
         composeRule.onNodeWithContentDescription("Play voice message", useUnmergedTree = true).assertIsDisplayed()
         composeRule.onNodeWithContentDescription("Attach file").assertIsDisplayed()
         composeRule.onNodeWithContentDescription("Gallery").assertIsDisplayed()
+        composeRule.auditShot("attachments")
         // Empty draft: the round action is the voice recorder; a plain tap explains the hold gesture.
         composeRule.onNodeWithContentDescription("Voice message").performSemanticsAction(SemanticsActions.OnClick)
         composeRule.onNodeWithText("Hold to record, release to send").assertIsDisplayed()
+        composeRule.auditShot("voice-hint")
     }
 
     private fun saveScreenshot(fileName: String) {
