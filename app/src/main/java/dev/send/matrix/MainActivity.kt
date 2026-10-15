@@ -34,9 +34,6 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
@@ -354,8 +351,20 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
         style = sendCallStyle,
     ) { overlayModifier ->
     Surface(Modifier.fillMaxSize().then(overlayModifier), color = MaterialTheme.colorScheme.surface, contentColor = MaterialTheme.colorScheme.onSurface) {
-        when {
-            loading -> Column(
+        // Messages' fragment-style open/close transitions between top-level screens.
+        val screen = when {
+            loading -> 0
+            !signedIn -> 1
+            room != null && timeline != null -> 3
+            else -> 2
+        }
+        AnimatedContent(
+            targetState = screen,
+            transitionSpec = { if (targetState > initialState) SendMotion.open else SendMotion.close },
+            label = "SendScreen",
+        ) { target ->
+        when (target) {
+            0 -> Column(
                 Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing),
                 verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -363,7 +372,7 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
                 Text("Connecting to Matrix…", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 if (error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error)
             }
-            !signedIn -> SignInScreen(
+            1 -> SignInScreen(
                 homeserver = homeserver,
                 onHomeserver = { homeserver = it },
                 user = user,
@@ -411,7 +420,7 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
                     }
                 }
             )
-            room != null && timeline != null -> ConversationScreen(
+            3 -> ConversationScreen(
                 title = roomTitle,
                 isDirect = activeRoomIsDirect,
                 draft = drafts[activeRoomId].orEmpty(),
@@ -525,6 +534,7 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
                 }
             )
         }
+        }
     }
     }
 }
@@ -572,13 +582,7 @@ internal fun SignInScreen(
         AnimatedContent(
             targetState = step,
             transitionSpec = {
-                if (targetState > initialState) {
-                    (slideInHorizontally(tween(380, easing = FastOutSlowInEasing)) { it / 2 } + fadeIn(tween(300)))
-                        .togetherWith(slideOutHorizontally(tween(380, easing = FastOutSlowInEasing)) { -it / 3 } + fadeOut(tween(200)))
-                } else {
-                    (slideInHorizontally(tween(380, easing = FastOutSlowInEasing)) { -it / 3 } + fadeIn(tween(300)))
-                        .togetherWith(slideOutHorizontally(tween(380, easing = FastOutSlowInEasing)) { it / 2 } + fadeOut(tween(200)))
-                }.using(SizeTransform(clip = false))
+                (if (targetState > initialState) SendMotion.open else SendMotion.close).using(SizeTransform(clip = false))
             },
             label = "OnboardingStepTransition",
         ) { currentStep ->
@@ -807,8 +811,9 @@ private fun OnboardingSetupStep(
                 }
                 AnimatedVisibility(
                     visible = showPasswordLogin,
-                    enter = fadeIn(tween(220)) + expandVertically(expandFrom = Alignment.Top, animationSpec = tween(260)),
-                    exit = fadeOut(tween(150)) + shrinkVertically(shrinkTowards = Alignment.Top, animationSpec = tween(200)),
+                    // Messages: size changes on a no-bounce StiffnessMedium spring, fades on the M3 effects spring.
+                    enter = fadeIn(SendMotion.effectsDefault()) + expandVertically(SendMotion.sizeChange(), expandFrom = Alignment.Top),
+                    exit = fadeOut(SendMotion.effectsFast()) + shrinkVertically(SendMotion.sizeChange(), shrinkTowards = Alignment.Top),
                 ) {
                     Column(modifier = Modifier.padding(bottom = 10.dp)) {
                         OutlinedTextField(
@@ -1093,8 +1098,9 @@ internal fun HomeScreen(
     if (showLegal) {
         LegalNoticesDialog(onDismiss = { showLegal = false })
     }
-    if (showingNewChat) {
-        BackHandler(enabled = !creatingDirectRoom) { showingNewChat = false }
+    BackHandler(enabled = showingNewChat && !creatingDirectRoom) { showingNewChat = false }
+    // Messages opens "New chat" with its fragment open transition and closes it with the close one.
+    AnimatedVisibility(visible = showingNewChat, enter = SendMotion.openEnter, exit = SendMotion.closeExit) {
         NewConversationScreen(
             value = matrixUserId,
             onValue = { matrixUserId = it },
