@@ -227,6 +227,7 @@ class ZZDetailsSettingsIntegrationTest {
         waitForUi("the notification levels", 10_000, ::state) { hasNodeWithText("Only when someone mentions you") }
         // The dialog's option (its window comes after the details row showing the current level).
         composeRule.onAllNodesWithText(label).let { it[it.fetchSemanticsNodes().size - 1] }.performClick()
+        composeRule.onNodeWithText("OK").performClick()
         waitForUi("the levels dialog to close", 10_000, ::state) { !hasNodeWithText("Only when someone mentions you") }
     }
 

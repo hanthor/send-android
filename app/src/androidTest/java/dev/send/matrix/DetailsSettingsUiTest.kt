@@ -195,6 +195,7 @@ class DetailsSettingsUiTest {
         waitForText("Mentions only")
         composeRule.auditShot("details-notifications")
         composeRule.onNodeWithText("Mentions only").performClick()
+        composeRule.onNodeWithText("OK").performClick()
         composeRule.waitUntil(10_000) { "notify:Mentions" in fake.calls }
         // The page reloads from the (fake) server: the row now reads Mentions only.
         waitForText("Mentions only")
@@ -372,10 +373,12 @@ class DetailsSettingsUiTest {
         waitForText("System default")
         composeRule.auditShot("settings-theme")
         composeRule.onNodeWithText("Dark").performClick()
+        composeRule.onNodeWithText("OK").performClick()
         composeRule.onNodeWithText("Automatic previews").performClick()
         waitForText("Don't show previews")
         composeRule.auditShot("settings-previews")
         composeRule.onNodeWithText("Don't show previews").performClick()
+        composeRule.onNodeWithText("OK").performClick()
         composeRule.onNodeWithText("Devices").performScrollTo().performClick()
         composeRule.onNodeWithText("About & licenses").performScrollTo().performClick()
         composeRule.runOnIdle {

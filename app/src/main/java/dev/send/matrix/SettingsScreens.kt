@@ -262,19 +262,21 @@ internal fun ChoiceDialog(
     footnote: String? = null,
     summaries: List<String?> = emptyList(),
 ) {
+    // Messages: the radio moves on tap; OK applies it, Cancel leaves things as they were.
+    var picked by remember(selected) { mutableIntStateOf(selected) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(title) },
+        title = { Text(title, style = MaterialTheme.typography.titleMedium) },
         text = {
             Column(Modifier.selectableGroup()) {
                 options.forEachIndexed { index, option ->
                     Row(
                         Modifier.fillMaxWidth().heightIn(min = 48.dp)
-                            .selectable(selected = index == selected, role = Role.RadioButton, onClick = { onSelect(index) })
+                            .selectable(selected = index == picked, role = Role.RadioButton, onClick = { picked = index })
                             .padding(vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        RadioButton(selected = index == selected, onClick = null)
+                        RadioButton(selected = index == picked, onClick = null)
                         Column(Modifier.padding(start = 16.dp)) {
                             Text(option, style = MaterialTheme.typography.bodyLarge)
                             summaries.getOrNull(index)?.let {
@@ -293,7 +295,8 @@ internal fun ChoiceDialog(
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+        confirmButton = { TextButton(onClick = { if (picked == selected) onDismiss() else onSelect(picked) }) { Text("OK") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }
 

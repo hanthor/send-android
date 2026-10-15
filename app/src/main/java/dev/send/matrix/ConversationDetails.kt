@@ -187,7 +187,8 @@ internal fun ConversationDetailsScreen(
     val direct = shown?.direct ?: isDirect
     Scaffold(
         containerColor = colors.surfaceContainer,
-        topBar = { ListScreenTopBar("Details", onBack) },
+        // Messages: back arrow only; the large header names the conversation.
+        topBar = { ListScreenTopBar("", onBack) },
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
         androidx.compose.foundation.lazy.LazyColumn(
@@ -208,7 +209,7 @@ internal fun ConversationDetailsScreen(
                         }
                     }
                     Spacer(Modifier.height(16.dp))
-                    Text(name, style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 24.dp))
+                    Text(name, style = MaterialTheme.typography.headlineMedium, color = colors.onPrimaryContainer, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 24.dp))
                     val subtitle = when {
                         shown == null -> null
                         direct -> shown.dmUserId
@@ -226,8 +227,8 @@ internal fun ConversationDetailsScreen(
                         )
                     }
                     Row(
-                        Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(top = 20.dp),
-                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        Modifier.fillMaxWidth().padding(horizontal = 12.dp).padding(top = 24.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         DetailsAction(Icons.Outlined.Call, "Voice call") { onCall(false) }
                         DetailsAction(Icons.Outlined.Videocam, "Video call") { onCall(true) }
@@ -456,12 +457,19 @@ private fun encryptionSummary(details: RoomDetails, name: String): String = when
 }
 
 @Composable
-private fun DetailsAction(icon: ImageVector, label: String, onClick: () -> Unit) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(80.dp)) {
-        FilledTonalIconButton(onClick = onClick, modifier = Modifier.size(56.dp)) {
-            Icon(icon, contentDescription = label)
+private fun androidx.compose.foundation.layout.RowScope.DetailsAction(icon: ImageVector, label: String, onClick: () -> Unit) {
+    // Messages: equal-width tonal pills with the label underneath.
+    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.weight(1f)) {
+        Surface(
+            onClick = onClick,
+            shape = androidx.compose.foundation.shape.CircleShape,
+            color = MaterialTheme.colorScheme.secondaryContainer,
+            contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+            modifier = Modifier.fillMaxWidth().height(56.dp),
+        ) {
+            Box(contentAlignment = Alignment.Center) { Icon(icon, contentDescription = label) }
         }
-        Text(label, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 6.dp), maxLines = 1)
+        Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 8.dp), maxLines = 1)
     }
 }
 
