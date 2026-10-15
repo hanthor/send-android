@@ -10,13 +10,13 @@ Baseline: Google Messages `20260924` compared on the same emulator
 |---|---|---|---|
 | Core screen styling | ~90% | Home top bar + sheet, rows, avatars, palette, conversation header, bubbles, composer, New chat; back/call buttons and composer field measure identical dp | In-app media viewer, conversation details page, settings screens |
 | Messaging actions | ~40% | Text, photo/video/file, voice (hold-to-record), reactions, pagination, local echo + Sending/Sent/Not sent, mark-as-read | Reply (swipe), edit, delete, copy, forward, typing indicators, "Read" receipts, link previews, emoji/GIF picker, in-conversation search |
-| Conversation list | ~35% | Search, snippet, relative time, unread badge, groups | Archive, pin, mute, swipe actions, multi-select, block/spam, leave |
+| Conversation list | ~40% | Search, snippet, relative time, unread badge, groups, mute (⋮ menu + muted icon) | Archive, pin, swipe actions, multi-select, block/spam, leave |
 | Motion | ~45% | Screen open/close transitions, M3 spring tokens, expand/collapse springs | FAB collapse on scroll, list item animations, predictive back, shared-element avatar, bubble entry, swipe gestures |
-| System integration | 0% | — | Notifications, push, inline reply, shortcuts, share target, bubbles |
+| System integration | ~45% | MessagingStyle notifications, UnifiedPush pusher + background-sync fallback, inline reply, mark read, long-lived conversation shortcuts, notification deep links | Share target, bubbles, widgets, Android Auto, FCM |
 | Calling | ~20% | Outgoing 1:1 audio via Element Call, mute/routing, PiP, ongoing-call notification | Incoming ring, accept/decline, video, CallStyle/Telecom, call events in timeline, group calls |
 | Account & E2EE safety | ~85% | Password/QR/SSO login, well-known discovery, session restore, Keystore-wrapped store, sign-out with store wipe, cross-signing bootstrap, recovery/key backup setup and restore, SAS emoji verification, unverified-session banner, "Waiting for this message…" bubbles | Change/reset recovery key, reset identity when no verified device or key is left, session list (other devices) |
 
-Overall: **looks ~85–90% like Messages, behaves ~35–40% like it.**
+Overall: **looks ~85–90% like Messages, behaves ~45% like it.**
 
 ## Phases
 
@@ -31,10 +31,13 @@ Verified by Android CI runs [38710089747](https://github.com/hanthor/send-androi
 - [x] *Acceptance:* a second Alice device verifies, restores history from backup, and decrypts in CI.
 - Not end to end in CI: the app as the *requesting* side of SAS ("Verify this device"); CI drives that side with a second SDK client and the app accepts. Fixtures cover the app's screens for it.
 
-### 2. Notifications & push
-- Pusher via `Client.setPusher` (UnifiedPush first, FCM optional); background sync fallback.
-- `NotificationClient` decrypts events → `MessagingStyle` notifications with inline reply and mark-read, long-lived conversation shortcuts, per-room mute (`RoomNotificationMode`).
-- *Acceptance:* Bob's message produces a decrypted notification with app killed; inline reply lands encrypted.
+### 2. Notifications & push — done
+Verified by Android CI run [38728600110](https://github.com/hanthor/send-android/actions/runs/38728600110) (`ZZNotificationsIntegrationTest`, `NotificationsUiTest`).
+- [x] Pusher via `Client.setPusher` (UnifiedPush first, gateway discovery, `deletePusher` on unregister/sign-out); WorkManager background sync when no distributor is registered. FCM not added (no Firebase project).
+- [x] Sync notification handler + `NotificationClient` decrypt events → `MessagingStyle` notifications (Person avatars, group titles, private lock-screen version) with inline reply and mark-read, long-lived conversation shortcuts with `LocusId`, tap-to-open, per-room mute (`RoomNotificationMode.MUTE` / `unmuteRoom`).
+- [x] *Acceptance:* with the activity in the background, Bob's message produces a decrypted notification; after simulated process death a pushed event is decrypted with `NotificationClient`; inline reply lands encrypted on Bob's client, mark-read clears the unread count, mute silences and unmute restores.
+- [x] Phase 3 hook: `m.rtc.notification` events reach `IncomingCalls.onIncomingCall` (no UI yet).
+- Not end to end in CI: delivery through a real UnifiedPush distributor (no distributor app on the emulator, and Synapse in Docker can't reach a gateway on it); CI checks the endpoint→pusher mapping in Synapse and the pushed-event path separately. Real process death (CI simulates it in-process), Doze/frozen-app timing of the 15-minute background sync, and the system Conversations section/permission dialog are left to device testing.
 
 ### 3. Calling (Messages-style)
 - Incoming: `RtcNotificationType` ring events (via phase 2) → full-screen `CallStyle` notification + AndroidX Core-Telecom; accept joins the room's MatrixRTC session through Element Call, decline uses `Room.declineCall`; `CallDeclineListener` stops ringing on other devices.
