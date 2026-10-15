@@ -7,7 +7,8 @@ base='http://127.0.0.1:8008'
 
 append_once() {
   local marker=$1
-  if "${compose[@]}" exec -T synapse grep -q "^# $marker" /data/homeserver.yaml; then return 1; fi
+  # </dev/null: `exec -T` forwards stdin, which holds the block to append.
+  if "${compose[@]}" exec -T synapse grep -q "^# $marker" /data/homeserver.yaml </dev/null; then return 1; fi
   { printf '# %s\n' "$marker"; cat; } | "${compose[@]}" exec -T synapse sh -c 'cat >> /data/homeserver.yaml'
 }
 
