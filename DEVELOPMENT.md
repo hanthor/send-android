@@ -12,10 +12,12 @@ dev/matrix/seed-demo.sh
 ```
 
 This creates `@alice:send.test` and `@bob:send.test` with password
-`local-dev-password` and sets Bob's display name. Sign into Alice in Send,
-create a new encrypted conversation with `@bob:send.test`, then send a message.
-The Android SDK creates the room encryption state and encrypts messages; the
-fixture never injects plaintext events into encrypted rooms.
+`local-dev-password` and sets Bob's display name. It also raises Synapse's
+login rate limits on this disposable server (and restarts it once), because
+the emulator tests sign in several devices within seconds. Sign into Alice in
+Send, create a new encrypted conversation with `@bob:send.test`, then send a
+message. The Android SDK creates the room encryption state and encrypts
+messages; the fixture never injects plaintext events into encrypted rooms.
 
 GitHub Actions provisions this disposable backend and runs the same real app
 flow on an Android emulator. Synapse is messaging-only; it has no MatrixRTC/
