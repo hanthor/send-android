@@ -20,7 +20,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -47,6 +46,10 @@ import org.matrix.rustcomponents.sdk.VerificationStateListener
 import uniffi.matrix_sdk_crypto.UtdCause
 import org.matrix.rustcomponents.sdk.Client
 import org.matrix.rustcomponents.sdk.ClientBuilder
+import org.matrix.rustcomponents.sdk.ClientException
+import org.matrix.rustcomponents.sdk.ClientSessionDelegate
+import org.matrix.rustcomponents.sdk.Session
+import org.matrix.rustcomponents.sdk.SlidingSyncVersion
 import org.matrix.rustcomponents.sdk.SlidingSyncVersionBuilder
 import org.matrix.rustcomponents.sdk.MessageType
 import org.matrix.rustcomponents.sdk.QrCodeData
@@ -286,13 +289,30 @@ class MatrixRepository(context: Context) {
         }
     }
 
+    // The SDK calls this on token refresh (save) and when it needs the stored tokens again (retrieve).
+    private val sessionDelegate = object : ClientSessionDelegate {
+        override fun retrieveSessionFromKeychain(userId: String): Session =
+            savedSession()?.takeIf { it.userId == userId }
+                ?: throw ClientException.Generic("No saved session for $userId", null)
+
+        override fun saveSessionInKeychain(session: Session) {
+            try {
+                persistSession(session)
+            } catch (error: Exception) {
+                android.util.Log.e(TAG, "Refreshed session could not be saved", error)
+            }
+        }
+    }
+
+    /**
+     * Reopens the session saved at sign-in (or on the last token refresh) on the existing store, as on a
+     * cold start. Returns false when there is nothing to restore.
+     */
     suspend fun restore(): Boolean = withContext(Dispatchers.IO) {
         if (client != null) return@withContext true
-        val homeserver = appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_HOMESERVER, null)
-            ?: return@withContext false
-        val sdk = createClient(homeserver)
+        val session = savedSession() ?: return@withContext false
+        val sdk = createClient(session.homeserverUrl)
         return@withContext try {
-            val session = sdk.session()
             sdk.restoreSession(session)
             client = sdk
             true
@@ -304,6 +324,7 @@ class MatrixRepository(context: Context) {
 
 
     suspend fun qrLogin(homeserver: String, qrPayload: String) = withContext(Dispatchers.IO) {
+        discardUnrestorableStore()
         val sdk = createClient(resolveHomeserverUrl(homeserver))
         try {
             check(sdk.isLoginWithQrCodeSupported()) { "This homeserver does not support Matrix QR sign-in." }
@@ -338,10 +359,11 @@ class MatrixRepository(context: Context) {
     @Volatile private var ssoHandler: SsoHandler? = null
 
     suspend fun beginSsoLogin(homeserver: String): String = withContext(Dispatchers.IO) {
+        cancelSsoLogin()
+        discardUnrestorableStore()
         val sdk = createClient(resolveHomeserverUrl(homeserver))
         try {
             val handler = sdk.startSsoLogin("dev.send.matrix://sso/callback", null)
-            ssoClient?.close()
             ssoClient = sdk
             ssoHandler = handler
             handler.url()
@@ -375,12 +397,11 @@ class MatrixRepository(context: Context) {
         ssoHandler = null
     }
     suspend fun passwordLogin(homeserver: String, user: String, password: String) = withContext(Dispatchers.IO) {
+        discardUnrestorableStore()
         val sdk = createClient(resolveHomeserverUrl(effectiveServerInput(homeserver, user)))
         try {
             sdk.login(user, password, "Send Android", null)
-            replaceAuthenticatedClient(sdk)
-            appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-                .putString(KEY_HOMESERVER, sdk.homeserver()).apply()
+            saveAuthenticatedClient(sdk)
         } catch (error: Exception) {
             sdk.close()
             throw error
@@ -388,9 +409,15 @@ class MatrixRepository(context: Context) {
     }
 
     private fun saveAuthenticatedClient(sdk: Client) {
+        persistSession(sdk.session())
         replaceAuthenticatedClient(sdk)
-        appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-            .putString(KEY_HOMESERVER, sdk.homeserver()).apply()
+    }
+
+    /** A new sign-in is a new device: a store left without saved credentials can't be reused, so remove it first. */
+    private fun discardUnrestorableStore() {
+        if (client == null && savedSession() == null && appContext.filesDir.resolve(STORE_DIR).exists()) {
+            wipeLocalSession()
+        }
     }
 
     private fun replaceAuthenticatedClient(sdk: Client) {
@@ -432,12 +459,18 @@ class MatrixRepository(context: Context) {
         roomListService = null
     }
 
-    fun close() {
+    /**
+     * Releases every SDK object (stopping sync first) without signing out, as process death would;
+     * [restore] reopens the saved session afterwards.
+     */
+    suspend fun close() = withContext(Dispatchers.IO) {
+        try {
+            syncService?.stop()
+        } catch (error: Exception) {
+            android.util.Log.w(TAG, "Sync did not stop cleanly", error)
+        }
         closeSessionResources()
-        ssoClient?.close()
-        ssoClient = null
-        ssoHandler = null
-        repositoryScope.cancel()
+        cancelSsoLogin()
     }
 
     suspend fun startSync() = withContext(Dispatchers.IO) {
@@ -663,13 +696,47 @@ class MatrixRepository(context: Context) {
     private fun wipeLocalSession() {
         appContext.filesDir.resolve(STORE_DIR).deleteRecursively()
         appContext.cacheDir.resolve("media").deleteRecursively()
-        check(
-            appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-                .remove(KEY_HOMESERVER)
-                .remove(KEY_STORE_KEY)
-                .commit(),
-        ) { "The signed-out session could not be cleared." }
+        // Saved session, store key and anything older builds kept here.
+        check(prefs().edit().clear().commit()) { "The signed-out session could not be cleared." }
         KeyStore.getInstance("AndroidKeyStore").apply { load(null) }.deleteEntry(STORE_KEY_ALIAS)
+    }
+
+    private fun prefs() = appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
+    /** Saves the SDK session (tokens, user, device, homeserver) sealed with the Keystore key for cold starts. */
+    private fun persistSession(session: Session) {
+        val json = org.json.JSONObject()
+            .put("accessToken", session.accessToken)
+            .put("refreshToken", session.refreshToken)
+            .put("userId", session.userId)
+            .put("deviceId", session.deviceId)
+            .put("homeserverUrl", session.homeserverUrl)
+            .put("oauthData", session.oauthData)
+            .put("slidingSyncVersion", session.slidingSyncVersion.name)
+        check(prefs().edit().putString(KEY_SESSION, seal(json.toString().toByteArray())).commit()) {
+            "The session could not be saved."
+        }
+    }
+
+    private fun savedSession(): Session? {
+        val sealed = prefs().getString(KEY_SESSION, null) ?: return null
+        return try {
+            val json = org.json.JSONObject(String(unseal(sealed)))
+            fun optional(name: String) = if (json.isNull(name)) null else json.getString(name)
+            Session(
+                accessToken = json.getString("accessToken"),
+                refreshToken = optional("refreshToken"),
+                userId = json.getString("userId"),
+                deviceId = json.getString("deviceId"),
+                homeserverUrl = json.getString("homeserverUrl"),
+                oauthData = optional("oauthData"),
+                slidingSyncVersion = SlidingSyncVersion.valueOf(json.getString("slidingSyncVersion")),
+            )
+        } catch (error: Exception) {
+            // E.g. the Keystore key was invalidated; the session can't be recovered, so sign in again.
+            android.util.Log.w(TAG, "Saved session is unreadable", error)
+            null
+        }
     }
 
     private suspend fun startRoomList(sync: org.matrix.rustcomponents.sdk.SyncService) {
@@ -1238,6 +1305,7 @@ class MatrixRepository(context: Context) {
             // Bootstraps this account's cross-signing identity on its first login, which recovery
             // (secret storage) and session verification build on.
             .autoEnableCrossSigning(true)
+            .setSessionDelegate(sessionDelegate)
             .build()
     }
 
@@ -1250,14 +1318,13 @@ class MatrixRepository(context: Context) {
         ).also { callSession = it }
     }
 
-    private fun storeKey(): ByteArray {
-        val prefs = appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        val alias = STORE_KEY_ALIAS
+    /** AES-GCM key held by Android Keystore; it seals the SDK store key and the saved session. */
+    private fun wrappingKey(): javax.crypto.SecretKey {
         val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-        val wrappingKey = keyStore.getKey(alias, null) as? javax.crypto.SecretKey
+        return keyStore.getKey(STORE_KEY_ALIAS, null) as? javax.crypto.SecretKey
             ?: KeyGenerator.getInstance("AES", "AndroidKeyStore").run {
                 init(android.security.keystore.KeyGenParameterSpec.Builder(
-                    alias,
+                    STORE_KEY_ALIAS,
                     android.security.keystore.KeyProperties.PURPOSE_ENCRYPT or android.security.keystore.KeyProperties.PURPOSE_DECRYPT
                 ).setBlockModes(android.security.keystore.KeyProperties.BLOCK_MODE_GCM)
                     .setEncryptionPaddings(android.security.keystore.KeyProperties.ENCRYPTION_PADDING_NONE)
@@ -1265,28 +1332,34 @@ class MatrixRepository(context: Context) {
                     .build())
                 generateKey()
             }
-        val encoded = prefs.getString(KEY_STORE_KEY, null)
-        if (encoded != null) {
-            val packed = Base64.decode(encoded, Base64.NO_WRAP)
-            val iv = packed.copyOfRange(0, 12)
-            val encryptedKey = packed.copyOfRange(12, packed.size)
-            return Cipher.getInstance("AES/GCM/NoPadding").run {
-                init(Cipher.DECRYPT_MODE, wrappingKey, GCMParameterSpec(128, iv))
-                doFinal(encryptedKey)
-            }
-        }
-        val raw = ByteArray(32).also(java.security.SecureRandom()::nextBytes)
+    }
+
+    /** Encrypts with the Keystore key; the result is Base64 of IV followed by ciphertext. */
+    private fun seal(plain: ByteArray): String {
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.ENCRYPT_MODE, wrappingKey)
-        val packed = cipher.iv + cipher.doFinal(raw)
-        check(prefs.edit().putString(KEY_STORE_KEY, Base64.encodeToString(packed, Base64.NO_WRAP)).commit())
+        cipher.init(Cipher.ENCRYPT_MODE, wrappingKey())
+        return Base64.encodeToString(cipher.iv + cipher.doFinal(plain), Base64.NO_WRAP)
+    }
+
+    private fun unseal(sealed: String): ByteArray {
+        val packed = Base64.decode(sealed, Base64.NO_WRAP)
+        return Cipher.getInstance("AES/GCM/NoPadding").run {
+            init(Cipher.DECRYPT_MODE, wrappingKey(), GCMParameterSpec(128, packed.copyOfRange(0, 12)))
+            doFinal(packed, 12, packed.size - 12)
+        }
+    }
+
+    private fun storeKey(): ByteArray {
+        prefs().getString(KEY_STORE_KEY, null)?.let { return unseal(it) }
+        val raw = ByteArray(32).also(java.security.SecureRandom()::nextBytes)
+        check(prefs().edit().putString(KEY_STORE_KEY, seal(raw)).commit())
         return raw
     }
 
     companion object {
         private const val PREFS = "matrix_session_locator"
-        private const val KEY_HOMESERVER = "homeserver"
         private const val KEY_STORE_KEY = "sdk_store_key"
+        private const val KEY_SESSION = "sdk_session"
         private const val TAG = "MatrixRepository"
         private const val THUMBNAIL_PX = 800
         private const val STORE_DIR = "matrix"
