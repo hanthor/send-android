@@ -34,8 +34,8 @@ private fun HomeScreenPreview() {
     SendTheme {
         HomeScreen(
             rooms = listOf(
-                MatrixRoom("!maya:example.org", "Maya", encrypted = true, direct = true),
-                MatrixRoom("!studio:example.org", "Design studio", encrypted = true, direct = false),
+                MatrixRoom("!maya:example.org", "Maya", encrypted = true, direct = true, lastMessage = "Made it home. Thanks for today!", lastTimestampMillis = 1_746_000_000_000L, unreadCount = 2),
+                MatrixRoom("!studio:example.org", "Design studio", encrypted = true, direct = false, lastMessage = "You: Photo", lastTimestampMillis = 1_745_900_000_000L),
                 MatrixRoom("!jules:example.org", "Jules", encrypted = true, direct = true),
             ),
             onOpen = {},
@@ -43,6 +43,7 @@ private fun HomeScreenPreview() {
             notice = "",
             creatingDirectRoom = false,
             onCreateDirectRoom = {},
+            onCreateGroup = { _, _ -> },
         )
     }
 }
@@ -79,6 +80,10 @@ private fun ConversationScreenPreview() {
             onOlder = {},
             onReact = { _, _ -> },
             onAudioCall = {},
+            onSendAttachment = {},
+            onSendVoice = {},
+            loadMedia = { _, _ -> error("Previews do not load Matrix media.") },
+            uploading = false,
             error = "",
         )
     }

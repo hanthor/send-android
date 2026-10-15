@@ -7,6 +7,9 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.semantics.SemanticsActions
 import io.element.android.call.ui.ElementCallOverlay
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
@@ -60,25 +63,52 @@ class UiComparisonScreenshotTest {
 
     @Test
     fun newChatRequiresAValidMatrixUserIdAndCapturesHomeScreen() {
+        var createdGroup: Pair<String, List<String>>? = null
         composeRule.setContent {
             SendTheme {
                 HomeScreen(
-                    rooms = listOf(MatrixRoom("!alice:example.org", "Alice", encrypted = true, direct = true)),
+                    rooms = listOf(
+                        MatrixRoom(
+                            "!alice:example.org",
+                            "Alice",
+                            encrypted = true,
+                            direct = true,
+                            lastMessage = "See you at 6?",
+                            lastTimestampMillis = System.currentTimeMillis(),
+                            unreadCount = 3,
+                        ),
+                    ),
                     onOpen = {},
                     error = "",
                     notice = "",
                     creatingDirectRoom = false,
                     onCreateDirectRoom = {},
+                    onCreateGroup = { name, members -> createdGroup = name to members },
                 )
             }
         }
 
         saveScreenshot("send-home-screen.png")
+        composeRule.onNodeWithText("See you at 6?").assertIsDisplayed()
+        composeRule.onNodeWithText("Now").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("3 unread").assertIsDisplayed()
         composeRule.onNodeWithText("Start chat", useUnmergedTree = true).performClick()
         composeRule.onNodeWithText("Create").assertIsNotEnabled()
         composeRule.onNodeWithText("Type a Matrix ID").performTextInput("@alice:example.org")
         saveScreenshot("send-new-chat-dialog.png")
         composeRule.onNodeWithText("Create").assertIsEnabled()
+
+        // Create group: the typed ID becomes the first member chip, more can be added, then an optional name.
+        composeRule.onNodeWithText("Create group").performClick()
+        composeRule.onNodeWithText("New group").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Remove @alice:example.org").assertIsDisplayed()
+        composeRule.onNodeWithText("Type a Matrix ID").performTextInput("@bob:example.org")
+        composeRule.onNodeWithText("Add @bob:example.org").performClick()
+        composeRule.onNodeWithText("Group name (optional)").performTextInput("Weekend plans")
+        composeRule.onNodeWithText("Create").performClick()
+        composeRule.runOnIdle {
+            assertEquals("Weekend plans" to listOf("@alice:example.org", "@bob:example.org"), createdGroup)
+        }
     }
 
     @Test
@@ -115,6 +145,10 @@ class UiComparisonScreenshotTest {
                         onOlder = {},
                         onReact = { eventId, emoji -> selectedReaction = eventId to emoji },
                         onAudioCall = {},
+                        onSendAttachment = {},
+                        onSendVoice = {},
+                        loadMedia = { _, _ -> error("No media in this fixture.") },
+                        uploading = false,
                         error = "",
                     )
                 }
@@ -133,6 +167,80 @@ class UiComparisonScreenshotTest {
         composeRule.runOnIdle {
             assertEquals("\$event-one" to "😂", selectedReaction)
         }
+    }
+
+    @Test
+    fun rendersAttachmentsAndComposerActions() {
+        composeRule.setContent {
+            SendTheme {
+                ConversationScreen(
+                    title = "Alice",
+                    isDirect = true,
+                    draft = "",
+                    onDraft = {},
+                    messages = listOf(
+                        MatrixMessage(
+                            id = "\$file",
+                            sender = "@alice:example.org",
+                            text = "",
+                            own = false,
+                            timestampMillis = 1_746_000_000_000L,
+                            reactions = emptyList(),
+                            attachment = MatrixAttachment(
+                                kind = AttachmentKind.File,
+                                filename = "itinerary.pdf",
+                                mimetype = "application/pdf",
+                                sizeBytes = 48_000L,
+                                durationMillis = null,
+                                width = null,
+                                height = null,
+                                sourceJson = "{}",
+                                thumbnailSourceJson = null,
+                            ),
+                        ),
+                        MatrixMessage(
+                            id = "\$voice",
+                            sender = "@me:example.org",
+                            text = "",
+                            own = true,
+                            timestampMillis = 1_746_000_060_000L,
+                            reactions = emptyList(),
+                            attachment = MatrixAttachment(
+                                kind = AttachmentKind.Voice,
+                                filename = "voice.ogg",
+                                mimetype = "audio/ogg",
+                                sizeBytes = 9_000L,
+                                durationMillis = 7_000L,
+                                width = null,
+                                height = null,
+                                sourceJson = "{}",
+                                thumbnailSourceJson = null,
+                                waveform = List(40) { (it % 8) / 8f },
+                            ),
+                        ),
+                    ),
+                    onBack = {},
+                    onSend = {},
+                    onOlder = {},
+                    onReact = { _, _ -> },
+                    onAudioCall = {},
+                    onSendAttachment = {},
+                    onSendVoice = {},
+                    loadMedia = { _, _ -> error("No media in this fixture.") },
+                    uploading = false,
+                    error = "",
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("itinerary.pdf").assertIsDisplayed()
+        composeRule.onNodeWithText("0:07").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Play voice message", useUnmergedTree = true).assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Attach file").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Gallery").assertIsDisplayed()
+        // Empty draft: the round action is the voice recorder; a plain tap explains the hold gesture.
+        composeRule.onNodeWithContentDescription("Voice message").performSemanticsAction(SemanticsActions.OnClick)
+        composeRule.onNodeWithText("Hold to record, release to send").assertIsDisplayed()
     }
 
     private fun saveScreenshot(fileName: String) {

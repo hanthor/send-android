@@ -24,6 +24,8 @@ import kotlinx.coroutines.runBlocking
 import org.matrix.rustcomponents.sdk.Client
 import org.matrix.rustcomponents.sdk.ClientBuilder
 import org.matrix.rustcomponents.sdk.MsgLikeKind
+import org.matrix.rustcomponents.sdk.MessageType
+import org.matrix.rustcomponents.sdk.TextMessageContent
 import org.matrix.rustcomponents.sdk.SlidingSyncVersionBuilder
 import org.matrix.rustcomponents.sdk.SqliteStoreBuilder
 import org.matrix.rustcomponents.sdk.SyncService
@@ -49,6 +51,8 @@ class ZLocalSynapseIntegrationTest {
     private var receiverTimelineHandle: TaskHandle? = null
     @Volatile private var receiverGotMessage = false
     @Volatile private var receiverGotReaction = false
+    @Volatile private var receiverGotPhoto = false
+    @Volatile private var receiverGotVoice = false
 
     @After
     fun closeReceiver() {
@@ -106,6 +110,10 @@ class ZLocalSynapseIntegrationTest {
         }
         composeRule.onNodeWithText(message).assertIsDisplayed()
         composeRule.waitUntil(timeoutMillis = 30_000) { receiverGotMessage }
+        // Local echoes render immediately; reactions unlock once the homeserver acknowledged the event.
+        composeRule.waitUntil(timeoutMillis = 30_000) {
+            repository.messages.value.any { it.text == message && it.status == DeliveryStatus.Sent }
+        }
         captureWalkthroughScreenshot("send-demo-conversation.png")
         composeRule.onNodeWithText(message).performTouchInput {
             down(center)
@@ -117,6 +125,104 @@ class ZLocalSynapseIntegrationTest {
             composeRule.onAllNodesWithText("👍").fetchSemanticsNodes().isNotEmpty()
         }
         composeRule.waitUntil(timeoutMillis = 30_000) { receiverGotReaction }
+
+        // Attachments go through the same repository paths the composer's picker / recorder use:
+        // a real PNG from MediaStore (content:// Uri) and an Ogg voice clip.
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val photoUri = insertTestPhoto()
+        try {
+            runBlocking(Dispatchers.IO) {
+                repository.openEncryptedRoom(demoRoom.id).use { room ->
+                    repository.timeline(room).use { timeline ->
+                        repository.sendAttachment(timeline, room, photoUri)
+                        val clip = java.io.File(context.cacheDir, "integration-voice.ogg")
+                        // Fixture bytes: the homeserver and SDK treat the clip as opaque encrypted media.
+                        clip.writeBytes(ByteArray(4096) { (it % 251).toByte() })
+                        repository.sendVoiceMessage(timeline, room, VoiceRecording(clip, 1_500L, List(40) { it / 40f }))
+                    }
+                }
+            }
+        } finally {
+            context.contentResolver.delete(photoUri, null, null)
+        }
+        composeRule.waitUntil(timeoutMillis = 60_000) {
+            composeRule.onAllNodesWithContentDescription("Photo").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.waitUntil(timeoutMillis = 60_000) {
+            composeRule.onAllNodesWithContentDescription("Play voice message", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.waitUntil(timeoutMillis = 60_000) { receiverGotPhoto && receiverGotVoice }
+        // The encrypted image round-trips through the SDK media API back to the original pixels.
+        fun sentPhoto() = repository.messages.value.firstOrNull { it.status == DeliveryStatus.Sent && it.attachment?.kind == AttachmentKind.Image }?.attachment
+        composeRule.waitUntil(timeoutMillis = 30_000) { sentPhoto() != null }
+        val photo = checkNotNull(sentPhoto())
+        val downloaded = runBlocking { repository.mediaFile(photo.sourceJson, photo.filename) }
+        val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        android.graphics.BitmapFactory.decodeFile(downloaded.absolutePath, bounds)
+        org.junit.Assert.assertEquals(64 to 48, bounds.outWidth to bounds.outHeight)
+        captureWalkthroughScreenshot("send-demo-attachments.png")
+
+        // Conversation list: Bob's reply becomes the snippet and raises an unread badge that clears once read.
+        composeRule.onNodeWithContentDescription("Back").performClick()
+        composeRule.waitUntil(timeoutMillis = 30_000) {
+            composeRule.onAllNodesWithContentDescription("Search").fetchSemanticsNodes().isNotEmpty()
+        }
+        val bobReply = "Bob here — free later?"
+        runBlocking(Dispatchers.IO) {
+            val timeline = checkNotNull(receiverTimeline)
+            timeline.send(checkNotNull(timeline.createMessageContent(MessageType.Text(TextMessageContent(bobReply, null)))))
+        }
+        composeRule.waitUntil(timeoutMillis = 60_000) {
+            composeRule.onAllNodesWithText(bobReply).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.waitUntil(timeoutMillis = 60_000) {
+            composeRule.onAllNodesWithContentDescription("unread", substring = true).fetchSemanticsNodes().isNotEmpty()
+        }
+        captureWalkthroughScreenshot("send-demo-unread.png")
+        val demoRoomName = repository.joinedRooms.value.first { it.id == demoRoom.id }.name
+        composeRule.onNodeWithText(demoRoomName).performClick()
+        composeRule.waitUntil(timeoutMillis = 30_000) {
+            composeRule.onAllNodesWithText(bobReply).fetchSemanticsNodes().isNotEmpty() &&
+                composeRule.onAllNodesWithText("Message").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithContentDescription("Back").performClick()
+        composeRule.waitUntil(timeoutMillis = 60_000) {
+            composeRule.onAllNodesWithContentDescription("Search").fetchSemanticsNodes().isNotEmpty() &&
+                composeRule.onAllNodesWithContentDescription("unread", substring = true).fetchSemanticsNodes().isEmpty()
+        }
+
+        // Create group: encrypted, non-direct private room created from the New chat page.
+        val groupName = "Send test group"
+        composeRule.onNodeWithText("Start chat", useUnmergedTree = true).performClick()
+        composeRule.onNodeWithText("Create group").performClick()
+        composeRule.onNodeWithText("Type a Matrix ID").performTextInput("@bob:send.test")
+        composeRule.onNodeWithText("Add @bob:send.test").performClick()
+        composeRule.onNodeWithText("Group name (optional)").performTextInput(groupName)
+        composeRule.onNodeWithText("Create").performClick()
+        composeRule.waitUntil(timeoutMillis = 60_000) {
+            repository.joinedRooms.value.any { it.name == groupName && it.encrypted && !it.direct }
+        }
+        composeRule.waitUntil(timeoutMillis = 30_000) {
+            composeRule.onAllNodesWithText(groupName).fetchSemanticsNodes().isNotEmpty()
+        }
+    }
+
+    private fun insertTestPhoto(): android.net.Uri {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val values = android.content.ContentValues().apply {
+            put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, "send-integration-photo.png")
+            put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "image/png")
+            put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, "Download/Send")
+        }
+        val resolver = context.contentResolver
+        val uri = resolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+            ?: error("Could not create the test photo.")
+        val bitmap = android.graphics.Bitmap.createBitmap(64, 48, android.graphics.Bitmap.Config.ARGB_8888)
+        bitmap.eraseColor(android.graphics.Color.rgb(66, 133, 244))
+        checkNotNull(resolver.openOutputStream(uri)).use { stream ->
+            check(bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, stream))
+        }
+        return uri
     }
 
 
@@ -162,6 +268,11 @@ class ZLocalSynapseIntegrationTest {
                             if (text.body == message) {
                                 receiverGotMessage = true
                                 if (event.reactions.any { it.key == "👍" }) receiverGotReaction = true
+                            }
+                            when (val type = text.msgType) {
+                                is MessageType.Image -> receiverGotPhoto = true
+                                is MessageType.Audio -> if (type.content.voice != null) receiverGotVoice = true
+                                else -> Unit
                             }
                         }
                     }
