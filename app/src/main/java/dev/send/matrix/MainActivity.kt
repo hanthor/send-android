@@ -145,8 +145,10 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
+import org.matrix.rustcomponents.sdk.RecoveryState
 import org.matrix.rustcomponents.sdk.Room
 import org.matrix.rustcomponents.sdk.Timeline
+import org.matrix.rustcomponents.sdk.VerificationState
 import io.element.android.call.ui.ElementCallOverlay
 import io.element.android.call.impl.ElementCallPictureInPicture
 import io.element.android.call.api.ElementCallController
@@ -264,6 +266,19 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
     var pendingUploads by remember { mutableIntStateOf(0) }
     val rooms by repository.joinedRooms.collectAsState()
     var callSession by remember { mutableStateOf<NativeMatrixCallSession?>(null) }
+    val account by repository.account.collectAsState()
+    val recoveryState by repository.recoveryState.collectAsState()
+    val backupState by repository.backupState.collectAsState()
+    val verificationState by repository.verificationState.collectAsState()
+    val hasDevicesToVerifyAgainst by repository.hasDevicesToVerifyAgainst.collectAsState()
+    val verificationFlow by repository.verificationFlow.collectAsState()
+    var showAccount by rememberSaveable { mutableStateOf(false) }
+    var showAbout by rememberSaveable { mutableStateOf(false) }
+    var showSecurity by rememberSaveable { mutableStateOf(false) }
+    var showSignOut by rememberSaveable { mutableStateOf(false) }
+    var signingOut by remember { mutableStateOf(false) }
+    var signOutError by rememberSaveable { mutableStateOf("") }
+    LaunchedEffect(showSecurity) { if (showSecurity) repository.refreshSecurityStatus() }
     LaunchedEffect(signedIn) {
         if (signedIn) {
             callSession = repository.callSession()
@@ -285,6 +300,41 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
         }
     }
     val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val decryptionActionLabel = when {
+        verificationState == VerificationState.UNVERIFIED -> "Verify this device"
+        recoveryState == RecoveryState.INCOMPLETE -> "Enter recovery key"
+        else -> null
+    }
+    fun signOut(serverSide: Boolean) {
+        signingOut = true
+        signOutError = ""
+        scope.launch {
+            try {
+                repository.logout(serverSide)
+                // Back to the sign-in hero with nothing from the old session left in UI state.
+                showSignOut = false
+                showSecurity = false
+                room = null
+                timeline = null
+                activeRoomId = ""
+                roomTitle = ""
+                activeRoomIsDirect = false
+                drafts = emptyMap()
+                notice = ""
+                error = ""
+                homeserver = ""
+                user = ""
+                password = ""
+                signedIn = false
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                signOutError = failure.message ?: "Your homeserver couldn't be reached."
+            } finally {
+                signingOut = false
+            }
+        }
+    }
     val qrScanner = rememberLauncherForActivityResult(ScanContract()) { result ->
         val payload = result.contents
         if (payload.isNullOrBlank()) {
@@ -484,7 +534,9 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
                 },
                 loadMedia = repository::mediaFile,
                 uploading = pendingUploads > 0,
-                error = error
+                error = error,
+                decryptionActionLabel = decryptionActionLabel,
+                onDecryptionAction = { showSecurity = true },
             )
             else -> HomeScreen(
                 rooms = rooms,
@@ -531,9 +583,72 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
                             error = failure.message ?: "Group could not be created."
                         }
                     }
-                }
+                },
+                onAccount = { showAccount = true },
+                onVerifyDevice = if (verificationState == VerificationState.UNVERIFIED && hasDevicesToVerifyAgainst) {
+                    { showSecurity = true }
+                } else null,
             )
         }
+        }
+        if (signedIn) {
+            // Security and verification sit above both the list and an open conversation.
+            AnimatedVisibility(visible = showSecurity, enter = SendMotion.openEnter, exit = SendMotion.closeExit) {
+                SecurityScreen(
+                    account = account,
+                    verification = verificationState,
+                    recovery = recoveryState,
+                    backup = backupState,
+                    hasOtherDevices = hasDevicesToVerifyAgainst,
+                    onBack = { showSecurity = false },
+                    onVerifyWithDevice = { scope.launch { repository.requestDeviceVerification() } },
+                    enableRecovery = { onProgress -> repository.enableRecovery(onProgress) },
+                    recover = { key -> repository.recover(key) },
+                )
+            }
+            val flow = verificationFlow
+            AnimatedVisibility(
+                visible = flow != VerificationFlow.Idle && flow !is VerificationFlow.Incoming,
+                enter = SendMotion.openEnter,
+                exit = SendMotion.closeExit,
+            ) {
+                VerificationScreen(
+                    flow = flow,
+                    onMatch = { scope.launch { repository.confirmVerification(matches = true) } },
+                    onMismatch = { scope.launch { repository.confirmVerification(matches = false) } },
+                    onCancel = { scope.launch { repository.cancelVerification() } },
+                    onDone = repository::dismissVerification,
+                )
+            }
+            if (flow is VerificationFlow.Incoming) {
+                VerificationRequestDialog(
+                    request = flow,
+                    onAccept = { scope.launch { repository.acceptVerificationRequest() } },
+                    onDecline = { scope.launch { repository.cancelVerification() } },
+                )
+            }
+            if (showAccount) {
+                AccountSheet(
+                    userId = account?.userId.orEmpty(),
+                    securitySummary = securitySummary(verificationState, recoveryState),
+                    onSecurity = { showAccount = false; showSecurity = true },
+                    onAbout = { showAccount = false; showAbout = true },
+                    onSignOut = { showAccount = false; signOutError = ""; showSignOut = true },
+                    onDismiss = { showAccount = false },
+                )
+            }
+            if (showAbout) LegalNoticesDialog(onDismiss = { showAbout = false })
+            if (showSignOut) {
+                SignOutDialog(
+                    recoveryEnabled = recoveryState == RecoveryState.ENABLED,
+                    busy = signingOut,
+                    error = signOutError,
+                    onSetUpRecovery = { showSignOut = false; showSecurity = true },
+                    onSignOut = { signOut(serverSide = true) },
+                    onSignOutLocally = { signOut(serverSide = false) },
+                    onDismiss = { showSignOut = false },
+                )
+            }
         }
     }
     }
@@ -1002,10 +1117,13 @@ internal fun HomeScreen(
     creatingDirectRoom: Boolean,
     onCreateDirectRoom: (String) -> Unit,
     onCreateGroup: (name: String, members: List<String>) -> Unit,
+    onAccount: () -> Unit,
+    /** Non-null while this session is unverified and another session could verify it; shows the banner. */
+    onVerifyDevice: (() -> Unit)?,
 ) {
     var showingNewChat by rememberSaveable { mutableStateOf(false) }
     var matrixUserId by rememberSaveable { mutableStateOf("") }
-    var showLegal by rememberSaveable { mutableStateOf(false) }
+    var verifyBannerDismissed by rememberSaveable { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
     var searching by rememberSaveable { mutableStateOf(false) }
     val encryptedRooms = rooms.filter { it.encrypted }
@@ -1049,7 +1167,7 @@ internal fun HomeScreen(
                     IconButton(onClick = { searching = true }) {
                         Icon(imageVector = Icons.Filled.Search, contentDescription = "Search", tint = colors.onSurface)
                     }
-                    IconButton(onClick = { showLegal = true }) {
+                    IconButton(onClick = onAccount) {
                         Icon(imageVector = Icons.Filled.AccountCircle, contentDescription = "Account", tint = colors.primary, modifier = Modifier.size(32.dp))
                     }
                 }
@@ -1076,6 +1194,11 @@ internal fun HomeScreen(
             modifier = Modifier.fillMaxSize(),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(top = 8.dp, bottom = 96.dp),
         ) {
+            if (onVerifyDevice != null && !verifyBannerDismissed) {
+                item(key = "verify-banner") {
+                    VerifyDeviceBanner(onVerify = onVerifyDevice, onDismiss = { verifyBannerDismissed = true })
+                }
+            }
             if (error.isNotBlank()) item { Text(error, color = colors.error, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) }
             if (notice.isNotBlank()) item { Text(notice, color = colors.onSurfaceVariant, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) }
             if (visibleRooms.isEmpty()) {
@@ -1094,9 +1217,6 @@ internal fun HomeScreen(
             }
         }
         }
-    }
-    if (showLegal) {
-        LegalNoticesDialog(onDismiss = { showLegal = false })
     }
     BackHandler(enabled = showingNewChat && !creatingDirectRoom) { showingNewChat = false }
     // Messages opens "New chat" with its fragment open transition and closes it with the close one.
@@ -1400,7 +1520,7 @@ internal fun conversationTimestamp(context: android.content.Context, timestampMi
 }
 
 @Composable
-private fun Avatar(name: String, size: androidx.compose.ui.unit.Dp) {
+internal fun Avatar(name: String, size: androidx.compose.ui.unit.Dp) {
     // Messages: saturated solid circle, white initial (person glyph when there is no name).
     val (bg, fg) = avatarPalette(name)
     Box(modifier = Modifier.size(size).background(bg, CircleShape), contentAlignment = Alignment.Center) {
@@ -1431,6 +1551,9 @@ internal fun ConversationScreen(
     loadMedia: MediaLoader,
     uploading: Boolean,
     error: String,
+    /** Label of the fix offered on undecryptable messages ("Verify this device", …), or null when none applies. */
+    decryptionActionLabel: String?,
+    onDecryptionAction: () -> Unit,
 ) {
     var reactionTargetId by remember { mutableStateOf<String?>(null) }
     var expandedTimeId by remember { mutableStateOf<String?>(null) }
@@ -1673,7 +1796,17 @@ internal fun ConversationScreen(
                         val onLongPress: () -> Unit = { if (message.status == DeliveryStatus.Sent) reactionTargetId = message.id }
                         val onTap: () -> Unit = { expandedTimeId = if (expandedTimeId == message.id) null else message.id }
                         val attachment = message.attachment
-                        if (attachment != null) {
+                        val decryptionFailure = message.decryptionFailure
+                        if (decryptionFailure != null) {
+                            UndecryptableBubble(
+                                failure = decryptionFailure,
+                                isFromMe = message.own,
+                                shape = shape,
+                                isLastInGroup = isLastInGroup,
+                                actionLabel = decryptionActionLabel?.takeIf { decryptionFailure.fixableOnThisDevice },
+                                onAction = onDecryptionAction,
+                            )
+                        } else if (attachment != null) {
                             Box(
                                 modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = if (isLastInGroup && message.text.isBlank()) 4.dp else 1.dp),
                                 contentAlignment = if (message.own) Alignment.CenterEnd else Alignment.CenterStart,
@@ -1689,7 +1822,7 @@ internal fun ConversationScreen(
                                 )
                             }
                         }
-                        if (attachment == null || message.text.isNotBlank()) {
+                        if (decryptionFailure == null && (attachment == null || message.text.isNotBlank())) {
                             MessageBubble(
                                 text = message.text,
                                 isFromMe = message.own,

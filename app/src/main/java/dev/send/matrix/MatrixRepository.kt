@@ -18,13 +18,33 @@ import java.security.MessageDigest
 import java.time.Duration
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import org.matrix.rustcomponents.sdk.BackupState
+import org.matrix.rustcomponents.sdk.BackupStateListener
+import org.matrix.rustcomponents.sdk.EnableRecoveryProgress
+import org.matrix.rustcomponents.sdk.EnableRecoveryProgressListener
+import org.matrix.rustcomponents.sdk.EncryptedMessage
+import org.matrix.rustcomponents.sdk.Encryption
+import org.matrix.rustcomponents.sdk.RecoveryState
+import org.matrix.rustcomponents.sdk.RecoveryStateListener
+import org.matrix.rustcomponents.sdk.SessionVerificationController
+import org.matrix.rustcomponents.sdk.SessionVerificationControllerDelegate
+import org.matrix.rustcomponents.sdk.SessionVerificationData
+import org.matrix.rustcomponents.sdk.SessionVerificationRequestDetails
+import org.matrix.rustcomponents.sdk.TaskHandle
+import org.matrix.rustcomponents.sdk.VerificationState
+import org.matrix.rustcomponents.sdk.VerificationStateListener
+import uniffi.matrix_sdk_crypto.UtdCause
 import org.matrix.rustcomponents.sdk.Client
 import org.matrix.rustcomponents.sdk.ClientBuilder
 import org.matrix.rustcomponents.sdk.SlidingSyncVersionBuilder
@@ -83,6 +103,26 @@ data class MatrixAttachment(
 
 enum class DeliveryStatus { Sending, Sent, Failed }
 
+/** Why an encrypted message can't be shown yet, mapped from the SDK's unable-to-decrypt cause. */
+enum class DecryptionFailure {
+    /** The room key hasn't reached this device (or the SDK doesn't know why). */
+    MissingKey,
+    /** Sent before this account joined the conversation. */
+    SentBeforeJoined,
+    /** Older than this device, and this device isn't verified. */
+    UnverifiedDevice,
+    /** Older than this device, and key backup isn't enabled here. */
+    BackupDisabled,
+    /** The sender only shares keys with verified devices. */
+    WithheldForUnverified,
+    /** The sender deliberately withheld the key. */
+    WithheldBySender,
+    /** The sender's verified identity changed. */
+    SenderIdentityChanged,
+    /** Sent from a device its owner never verified. */
+    InsecureSenderDevice,
+}
+
 data class MatrixMessage(
     val id: String,
     val sender: String,
@@ -93,7 +133,40 @@ data class MatrixMessage(
     val attachment: MatrixAttachment? = null,
     /** Local echoes are [DeliveryStatus.Sending] until the homeserver acknowledges them; their [id] is then a transaction id. */
     val status: DeliveryStatus = DeliveryStatus.Sent,
+    /** Set when the event is still encrypted for this device; [text] is empty then. */
+    val decryptionFailure: DecryptionFailure? = null,
 )
+
+/** The signed-in Matrix account and this device's session. */
+data class AccountInfo(val userId: String, val deviceId: String)
+
+data class VerificationEmoji(val symbol: String, val description: String)
+
+/** Progress of the SAS (emoji) device verification driven by the SDK's SessionVerificationController. */
+sealed interface VerificationFlow {
+    data object Idle : VerificationFlow
+    /** This device asked the user's other sessions to verify it. */
+    data object Requesting : VerificationFlow
+    /** Another session asked to verify; waiting for the user to accept or decline. */
+    data class Incoming(val userId: String, val deviceId: String, val deviceName: String?) : VerificationFlow
+    /** Request accepted here; waiting for the other session to start the emoji comparison. */
+    data object Accepted : VerificationFlow
+    /** SAS started; waiting for the key exchange that produces the emoji. */
+    data object Starting : VerificationFlow
+    data class Emojis(val emojis: List<VerificationEmoji>) : VerificationFlow
+    data class Decimals(val values: List<Int>) : VerificationFlow
+    /** Confirmed here; waiting for the other session to confirm too. */
+    data object Confirming : VerificationFlow
+    data object Verified : VerificationFlow
+    data class Cancelled(val reason: String?) : VerificationFlow
+    data class Failed(val reason: String?) : VerificationFlow
+}
+
+private val VerificationFlow.inProgress: Boolean
+    get() = when (this) {
+        VerificationFlow.Idle, VerificationFlow.Verified, is VerificationFlow.Cancelled, is VerificationFlow.Failed -> false
+        else -> true
+    }
 
 /** A finished voice recording ready for upload. */
 data class VoiceRecording(val file: File, val durationMillis: Long, val waveform: List<Float>)
@@ -119,6 +192,96 @@ class MatrixRepository(context: Context) {
     val roomListServiceState: StateFlow<org.matrix.rustcomponents.sdk.RoomListServiceState> = _roomListServiceState.asStateFlow()
     private val _messages = MutableStateFlow<List<MatrixMessage>>(emptyList())
     val messages: StateFlow<List<MatrixMessage>> = _messages.asStateFlow()
+
+    // E2EE account state: SDK listeners feed these while a session is active; they reset on sign-out.
+    @Volatile private var encryption: Encryption? = null
+    @Volatile private var verificationController: SessionVerificationController? = null
+    private val verificationControllerLock = Mutex()
+    private val securityHandles = mutableListOf<TaskHandle>()
+    @Volatile private var securityJob: Job? = null
+    /** True when this device asked to be verified, so it is the side that starts the SAS exchange. */
+    @Volatile private var outgoingVerification = false
+    private val _account = MutableStateFlow<AccountInfo?>(null)
+    val account: StateFlow<AccountInfo?> = _account.asStateFlow()
+    private val _recoveryState = MutableStateFlow(RecoveryState.UNKNOWN)
+    val recoveryState: StateFlow<RecoveryState> = _recoveryState.asStateFlow()
+    private val _backupState = MutableStateFlow(BackupState.UNKNOWN)
+    val backupState: StateFlow<BackupState> = _backupState.asStateFlow()
+    private val _verificationState = MutableStateFlow(VerificationState.UNKNOWN)
+    val verificationState: StateFlow<VerificationState> = _verificationState.asStateFlow()
+    private val _hasDevicesToVerifyAgainst = MutableStateFlow(false)
+    /** Whether another cross-signed session of this account exists that could verify this one. */
+    val hasDevicesToVerifyAgainst: StateFlow<Boolean> = _hasDevicesToVerifyAgainst.asStateFlow()
+    private val _verificationFlow = MutableStateFlow<VerificationFlow>(VerificationFlow.Idle)
+    val verificationFlow: StateFlow<VerificationFlow> = _verificationFlow.asStateFlow()
+
+    // Called on SDK threads; it only publishes state and hands follow-up SDK calls to the repository scope.
+    private val verificationDelegate = object : SessionVerificationControllerDelegate {
+        override fun didReceiveVerificationRequest(details: SessionVerificationRequestDetails) {
+            if (_verificationFlow.value.inProgress) return
+            repositoryScope.launch {
+                try {
+                    val controller = verificationController ?: return@launch
+                    controller.acknowledgeVerificationRequest(details.senderProfile.userId, details.flowId)
+                    outgoingVerification = false
+                    _verificationFlow.value = VerificationFlow.Incoming(
+                        userId = details.senderProfile.userId,
+                        deviceId = details.deviceId,
+                        deviceName = details.deviceDisplayName?.takeIf { it.isNotBlank() },
+                    )
+                } catch (error: Exception) {
+                    android.util.Log.w(TAG, "Could not acknowledge verification request", error)
+                }
+            }
+        }
+
+        override fun didAcceptVerificationRequest() {
+            if (!outgoingVerification) {
+                _verificationFlow.value = VerificationFlow.Accepted
+                return
+            }
+            _verificationFlow.value = VerificationFlow.Starting
+            repositoryScope.launch {
+                try {
+                    verificationController?.startSasVerification()
+                } catch (error: Exception) {
+                    _verificationFlow.value = VerificationFlow.Failed(error.message)
+                }
+            }
+        }
+
+        override fun didStartSasVerification() {
+            val current = _verificationFlow.value
+            if (current !is VerificationFlow.Emojis && current !is VerificationFlow.Decimals) {
+                _verificationFlow.value = VerificationFlow.Starting
+            }
+        }
+
+        override fun didReceiveVerificationData(data: SessionVerificationData) {
+            _verificationFlow.value = when (data) {
+                is SessionVerificationData.Emojis ->
+                    VerificationFlow.Emojis(data.emojis.map { VerificationEmoji(it.symbol(), it.description()) })
+                is SessionVerificationData.Decimals -> VerificationFlow.Decimals(data.values.map { it.toInt() })
+            }
+        }
+
+        override fun didFail() {
+            _verificationFlow.value = VerificationFlow.Failed(null)
+        }
+
+        override fun didCancel() {
+            // A cancel this device initiated already returned the flow to Idle.
+            if (_verificationFlow.value == VerificationFlow.Idle) return
+            val controller = verificationController
+            val info = controller?.sasCancelInfo() ?: controller?.requestCancelInfo()
+            _verificationFlow.value = VerificationFlow.Cancelled(info?.reason)
+        }
+
+        override fun didFinish() {
+            _verificationFlow.value = VerificationFlow.Verified
+            refreshSecurityStatus()
+        }
+    }
 
     suspend fun restore(): Boolean = withContext(Dispatchers.IO) {
         if (client != null) return@withContext true
@@ -235,6 +398,7 @@ class MatrixRepository(context: Context) {
     private fun closeSessionResources() {
         timelineHandle?.close()
         timelineHandle = null
+        closeSecurityResources()
         closeRoomListResources()
         syncService?.close()
         syncService = null
@@ -280,12 +444,228 @@ class MatrixRepository(context: Context) {
             startRoomList(service)
             service.start()
             syncService = service
+            startSecurity(sdk)
         } catch (error: Exception) {
+            closeSecurityResources()
             closeRoomListResources()
             service.close()
             syncService = null
             throw error
         }
+    }
+
+    /** Subscribes to the SDK's recovery, key-backup and verification state and prepares the verification controller. */
+    private fun startSecurity(sdk: Client) {
+        val sdkEncryption = sdk.encryption()
+        encryption = sdkEncryption
+        _account.value = AccountInfo(sdk.userId(), sdk.deviceId())
+        _recoveryState.value = sdkEncryption.recoveryState()
+        _backupState.value = sdkEncryption.backupState()
+        _verificationState.value = sdkEncryption.verificationState()
+        synchronized(securityHandles) {
+            securityHandles += sdkEncryption.recoveryStateListener(object : RecoveryStateListener {
+                override fun onUpdate(status: RecoveryState) {
+                    if (encryption === sdkEncryption) _recoveryState.value = status
+                }
+            })
+            securityHandles += sdkEncryption.backupStateListener(object : BackupStateListener {
+                override fun onUpdate(status: BackupState) {
+                    if (encryption === sdkEncryption) _backupState.value = status
+                }
+            })
+            securityHandles += sdkEncryption.verificationStateListener(object : VerificationStateListener {
+                override fun onUpdate(status: VerificationState) {
+                    if (encryption !== sdkEncryption) return
+                    _verificationState.value = status
+                    // Own-device changes drive this listener, so it is also when other sessions appear or get verified.
+                    refreshSecurityStatus()
+                }
+            })
+        }
+        securityJob = repositoryScope.launch {
+            // Cross-signing bootstrap (autoEnableCrossSigning) runs here after a first login.
+            sdkEncryption.waitForE2eeInitializationTasks()
+            updateSecurityStatus(sdkEncryption)
+        }
+    }
+
+    private fun closeSecurityResources() {
+        securityJob?.cancel()
+        securityJob = null
+        synchronized(securityHandles) {
+            securityHandles.forEach { it.close() }
+            securityHandles.clear()
+        }
+        verificationController?.let { controller ->
+            controller.setDelegate(null)
+            controller.close()
+        }
+        verificationController = null
+        encryption?.close()
+        encryption = null
+        outgoingVerification = false
+        _account.value = null
+        _recoveryState.value = RecoveryState.UNKNOWN
+        _backupState.value = BackupState.UNKNOWN
+        _verificationState.value = VerificationState.UNKNOWN
+        _hasDevicesToVerifyAgainst.value = false
+        _verificationFlow.value = VerificationFlow.Idle
+    }
+
+    /** Re-checks whether other sessions can verify this one and makes sure incoming verification requests are handled. */
+    fun refreshSecurityStatus() {
+        val sdkEncryption = encryption ?: return
+        repositoryScope.launch { updateSecurityStatus(sdkEncryption) }
+    }
+
+    private suspend fun updateSecurityStatus(sdkEncryption: Encryption) {
+        try {
+            val hasDevices = sdkEncryption.hasDevicesToVerifyAgainst()
+            if (encryption === sdkEncryption) _hasDevicesToVerifyAgainst.value = hasDevices
+        } catch (error: Exception) {
+            android.util.Log.w(TAG, "Could not list sessions to verify against", error)
+        }
+        try {
+            ensureVerificationController()
+        } catch (error: Exception) {
+            // The controller needs this account's cross-signing identity; it is retried on the next state change.
+            android.util.Log.w(TAG, "Session verification is not available yet", error)
+        }
+    }
+
+    private suspend fun ensureVerificationController(): SessionVerificationController = verificationControllerLock.withLock {
+        verificationController ?: requireClient().getSessionVerificationController().also { controller ->
+            controller.setDelegate(verificationDelegate)
+            verificationController = controller
+        }
+    }
+
+    private fun requireEncryption(): Encryption = encryption ?: error("Sign in to a Matrix account first.")
+
+    /**
+     * Creates key backup and secret storage (Encryption.enableRecovery), waiting until existing room keys are
+     * uploaded, and returns the recovery key. The key is never stored by Send.
+     */
+    suspend fun enableRecovery(onProgress: (String) -> Unit): String = withContext(Dispatchers.IO) {
+        requireEncryption().enableRecovery(
+            waitForBackupsToUpload = true,
+            passphrase = null,
+            progressListener = object : EnableRecoveryProgressListener {
+                override fun onUpdate(status: EnableRecoveryProgress) {
+                    val text = when (status) {
+                        is EnableRecoveryProgress.Starting -> "Starting…"
+                        is EnableRecoveryProgress.CreatingBackup -> "Creating key backup…"
+                        is EnableRecoveryProgress.CreatingRecoveryKey -> "Creating recovery key…"
+                        is EnableRecoveryProgress.BackingUp -> "Backing up keys (${status.backedUpCount} of ${status.totalCount})…"
+                        is EnableRecoveryProgress.RoomKeyUploadError -> "Some keys will finish backing up in the background."
+                        is EnableRecoveryProgress.Done -> null
+                    }
+                    if (text != null) onProgress(text)
+                }
+            },
+        )
+    }
+
+    /** Unlocks secret storage with the recovery key: imports cross-signing keys (verifying this device) and the backup key. */
+    suspend fun recover(recoveryKey: String) = withContext(Dispatchers.IO) {
+        val key = recoveryKey.trim()
+        require(key.isNotEmpty()) { "Enter your recovery key." }
+        requireEncryption().recover(key)
+    }
+
+    /** Waits until every room key this device holds has been uploaded to key backup. */
+    suspend fun waitForKeyBackup() = withContext(Dispatchers.IO) {
+        requireEncryption().waitForBackupUploadSteadyState(null)
+    }
+
+    /** Asks this account's other sessions to verify this device with emoji (SAS). */
+    suspend fun requestDeviceVerification(): Unit = withContext(Dispatchers.IO) {
+        try {
+            val controller = ensureVerificationController()
+            outgoingVerification = true
+            _verificationFlow.value = VerificationFlow.Requesting
+            controller.requestDeviceVerification()
+        } catch (error: Exception) {
+            _verificationFlow.value = VerificationFlow.Failed(error.message)
+        }
+    }
+
+    suspend fun acceptVerificationRequest(): Unit = withContext(Dispatchers.IO) {
+        try {
+            _verificationFlow.value = VerificationFlow.Accepted
+            ensureVerificationController().acceptVerificationRequest()
+        } catch (error: Exception) {
+            _verificationFlow.value = VerificationFlow.Failed(error.message)
+        }
+    }
+
+    /** Reports whether the emoji (or numbers) shown on both devices match. */
+    suspend fun confirmVerification(matches: Boolean): Unit = withContext(Dispatchers.IO) {
+        try {
+            val controller = ensureVerificationController()
+            if (matches) {
+                // Set first: the other side may finish before approveVerification returns.
+                _verificationFlow.value = VerificationFlow.Confirming
+                controller.approveVerification()
+            } else {
+                controller.declineVerification()
+            }
+        } catch (error: Exception) {
+            _verificationFlow.value = VerificationFlow.Failed(error.message)
+        }
+    }
+
+    /** Cancels (or declines) the current verification request on both devices. */
+    suspend fun cancelVerification(): Unit = withContext(Dispatchers.IO) {
+        _verificationFlow.value = VerificationFlow.Idle
+        try {
+            verificationController?.cancelVerification()
+        } catch (error: Exception) {
+            android.util.Log.w(TAG, "Verification could not be cancelled", error)
+        }
+    }
+
+    /** Clears a finished, cancelled or failed verification from the UI. */
+    fun dismissVerification() {
+        if (!_verificationFlow.value.inProgress) _verificationFlow.value = VerificationFlow.Idle
+    }
+
+    /**
+     * Signs out: waits briefly for pending key-backup uploads, logs the session out on the homeserver
+     * (unless [serverSide] is false because the server is unreachable), stops sync, closes every SDK
+     * resource and deletes the local SDK/crypto stores, media cache and session preferences.
+     */
+    suspend fun logout(serverSide: Boolean = true) = withContext(Dispatchers.IO) {
+        val sdk = client
+        if (sdk != null && serverSide) {
+            if (_backupState.value == BackupState.ENABLED) {
+                try {
+                    withTimeoutOrNull(BACKUP_UPLOAD_TIMEOUT_MS) { encryption?.waitForBackupUploadSteadyState(null) }
+                } catch (error: Exception) {
+                    android.util.Log.w(TAG, "Key backup did not settle before sign-out", error)
+                }
+            }
+            sdk.logout()
+        }
+        try {
+            syncService?.stop()
+        } catch (error: Exception) {
+            android.util.Log.w(TAG, "Sync did not stop cleanly", error)
+        }
+        closeSessionResources()
+        wipeLocalSession()
+    }
+
+    private fun wipeLocalSession() {
+        appContext.filesDir.resolve(STORE_DIR).deleteRecursively()
+        appContext.cacheDir.resolve("media").deleteRecursively()
+        check(
+            appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                .remove(KEY_HOMESERVER)
+                .remove(KEY_STORE_KEY)
+                .commit(),
+        ) { "The signed-out session could not be cleared." }
+        KeyStore.getInstance("AndroidKeyStore").apply { load(null) }.deleteEntry(STORE_KEY_ALIAS)
     }
 
     private suspend fun startRoomList(sync: org.matrix.rustcomponents.sdk.SyncService) {
@@ -529,7 +909,8 @@ class MatrixRepository(context: Context) {
     private fun toMessage(item: org.matrix.rustcomponents.sdk.TimelineItem): MatrixMessage? {
         val event = item.asEvent() ?: return null
         val content = event.content as? TimelineItemContent.MsgLike ?: return null
-        val message = (content.content.kind as? MsgLikeKind.Message)?.content ?: return null
+        val kind = content.content.kind
+        if (kind !is MsgLikeKind.Message && kind !is MsgLikeKind.UnableToDecrypt) return null
         val id = when (val identifier = event.eventOrTransactionId) {
             is EventOrTransactionId.EventId -> identifier.eventId
             is EventOrTransactionId.TransactionId -> identifier.transactionId
@@ -540,6 +921,20 @@ class MatrixRepository(context: Context) {
             is EventSendState.SendingFailed -> DeliveryStatus.Failed
             else -> DeliveryStatus.Sent
         }
+        if (kind is MsgLikeKind.UnableToDecrypt) {
+            // Kept in the timeline as a placeholder; the SDK swaps in the decrypted event once the key arrives.
+            return MatrixMessage(
+                id = id,
+                sender = event.sender,
+                text = "",
+                own = event.isOwn,
+                timestampMillis = event.timestamp.toLong(),
+                reactions = event.reactions.map { it.key },
+                status = status,
+                decryptionFailure = decryptionFailureOf(kind.msg),
+            )
+        }
+        val message = (kind as MsgLikeKind.Message).content
         val attachment = attachmentOf(message.msgType)
         val text = when (val type = message.msgType) {
             is MessageType.Image -> type.content.caption.orEmpty()
@@ -559,6 +954,18 @@ class MatrixRepository(context: Context) {
             status = status,
         )
     }
+
+    private fun decryptionFailureOf(message: EncryptedMessage): DecryptionFailure =
+        when ((message as? EncryptedMessage.MegolmV1AesSha2)?.cause) {
+            UtdCause.SENT_BEFORE_WE_JOINED -> DecryptionFailure.SentBeforeJoined
+            UtdCause.VERIFICATION_VIOLATION -> DecryptionFailure.SenderIdentityChanged
+            UtdCause.UNSIGNED_DEVICE, UtdCause.UNKNOWN_DEVICE -> DecryptionFailure.InsecureSenderDevice
+            UtdCause.HISTORICAL_MESSAGE_AND_BACKUP_IS_DISABLED -> DecryptionFailure.BackupDisabled
+            UtdCause.HISTORICAL_MESSAGE_AND_DEVICE_IS_UNVERIFIED -> DecryptionFailure.UnverifiedDevice
+            UtdCause.WITHHELD_FOR_UNVERIFIED_OR_INSECURE_DEVICE -> DecryptionFailure.WithheldForUnverified
+            UtdCause.WITHHELD_BY_SENDER -> DecryptionFailure.WithheldBySender
+            UtdCause.UNKNOWN, null -> DecryptionFailure.MissingKey
+        }
 
     private fun attachmentOf(type: MessageType): MatrixAttachment? = when (type) {
         is MessageType.Image -> type.content.let { image ->
@@ -809,7 +1216,7 @@ class MatrixRepository(context: Context) {
     }
 
     private suspend fun createClient(homeserver: String): Client {
-        val root = appContext.filesDir.resolve("matrix").apply { mkdirs() }
+        val root = appContext.filesDir.resolve(STORE_DIR).apply { mkdirs() }
         val store = root.resolve("sdk-store.db").absolutePath
         val crypto = root.resolve("crypto-store").absolutePath
         return ClientBuilder()
@@ -817,6 +1224,9 @@ class MatrixRepository(context: Context) {
             .slidingSyncVersionBuilder(SlidingSyncVersionBuilder.NATIVE)
             .sqliteStore(SqliteStoreBuilder(store, "").key(storeKey()))
             .sessionPaths(root.resolve("cache").absolutePath, crypto)
+            // Bootstraps this account's cross-signing identity on its first login, which recovery
+            // (secret storage) and session verification build on.
+            .autoEnableCrossSigning(true)
             .build()
     }
 
@@ -831,7 +1241,7 @@ class MatrixRepository(context: Context) {
 
     private fun storeKey(): ByteArray {
         val prefs = appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        val alias = "send.matrix.store-key"
+        val alias = STORE_KEY_ALIAS
         val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         val wrappingKey = keyStore.getKey(alias, null) as? javax.crypto.SecretKey
             ?: KeyGenerator.getInstance("AES", "AndroidKeyStore").run {
@@ -868,6 +1278,9 @@ class MatrixRepository(context: Context) {
         private const val KEY_STORE_KEY = "sdk_store_key"
         private const val TAG = "MatrixRepository"
         private const val THUMBNAIL_PX = 800
+        private const val STORE_DIR = "matrix"
+        private const val STORE_KEY_ALIAS = "send.matrix.store-key"
+        private const val BACKUP_UPLOAD_TIMEOUT_MS = 30_000L
         const val VOICE_MIMETYPE = "audio/ogg"
         @Volatile private var instance: MatrixRepository? = null
 
