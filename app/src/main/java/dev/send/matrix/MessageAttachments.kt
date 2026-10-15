@@ -437,7 +437,7 @@ private fun FileRow(attachment: MatrixAttachment, isFromMe: Boolean, shape: Shap
 /**
  * Messages' hold-to-record button: press starts recording, releasing over the button sends, sliding away
  * before release discards, and sliding up past the lock hint keeps recording hands-free ([onLock]); the
- * composer then shows stop/send/delete controls. A plain tap explains the gesture.
+ * recorder panel below the composer then takes over (restart, stop/playback, attach). A plain tap explains the gesture.
  */
 @Composable
 internal fun VoiceRecordButton(

@@ -72,7 +72,9 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateListOf
-import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.ui.draw.blur
+import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -386,9 +388,12 @@ internal fun ConversationScreen(
         )
     }
 
+    // Messages blurs what's behind the long-press overlay (API 31+; dimming alone below). The selected bubble stays sharp.
+    val backdropBlur by animateDpAsState(if (selected != null) 6.dp else 0.dp, SendMotion.effectsDefault(), label = "backdropBlur")
+    val backdrop = if (backdropBlur > 0.dp) Modifier.blur(backdropBlur) else Modifier
     Scaffold(
         containerColor = colors.surfaceContainer,
-        topBar = {
+        topBar = { Box(backdrop) {
             when {
                 searching -> ConversationSearchBar(
                     query = query,
@@ -468,9 +473,9 @@ internal fun ConversationScreen(
                     }
                 }
             }
-        },
+        } },
         bottomBar = {
-            Surface(color = colors.surface, modifier = Modifier.navigationBarsPadding().imePadding()) {
+            Surface(color = colors.surface, modifier = backdrop.navigationBarsPadding().imePadding()) {
                 Column(modifier = Modifier.padding(start = 12.dp, end = 12.dp, top = 6.dp, bottom = 10.dp)) {
                     if (error.isNotBlank()) {
                         Text(error, color = colors.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(bottom = 6.dp))
@@ -492,33 +497,6 @@ internal fun ConversationScreen(
                         }
                         ComposerContextBar("Replying to $name", messagePreviewText(replyTarget), "Cancel reply") { replyingTo = null }
                     }
-                    if (recordingLocked && !recordingAttached) {
-                        LockedRecordingPanel(
-                            elapsedMillis = recordingElapsed,
-                            levels = liveLevels,
-                            clip = recordedClip,
-                            playback = playback,
-                            playing = playback.activeId == RECORDED_CLIP_ID,
-                            onRestart = {
-                                playback.stop()
-                                recorder.cancel()
-                                recordedClip?.file?.delete()
-                                recordedClip = null
-                                recording = false
-                                if (!startRecording()) {
-                                    recordingLocked = false
-                                }
-                            },
-                            onStop = { stopLockedRecording() },
-                            onTogglePlay = ::togglePlayRecording,
-                            onAttach = {
-                                if (recordedClip != null || stopLockedRecording()) {
-                                    playback.stop()
-                                    recordingAttached = true
-                                }
-                            },
-                        )
-                    }
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
                         // Messages composer: 56dp pill with attach, field, emoji and gallery actions.
                         Surface(
@@ -535,19 +513,7 @@ internal fun ConversationScreen(
                                     onTogglePlay = ::togglePlayRecording,
                                     modifier = Modifier.fillMaxWidth(),
                                 )
-                            } else if (recordingLocked) {
-                                Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    IconButton(onClick = { discardRecording("Voice message discarded") }) {
-                                        Icon(Icons.Outlined.Delete, contentDescription = "Delete recording", tint = colors.onSurfaceVariant)
-                                    }
-                                    Text(
-                                        if (clip == null) "Recording voice message" else "Voice message · ${formatDuration(clip.durationMillis)}",
-                                        style = MaterialTheme.typography.bodyLarge,
-                                        color = colors.onSurfaceVariant,
-                                        maxLines = 1,
-                                    )
-                                }
-                            } else if (recording) {
+                            } else if (recording && !recordingLocked) {
                                 RecordingIndicator(
                                     elapsedMillis = recordingElapsed,
                                     cancelling = cancellingRecording,
@@ -617,15 +583,15 @@ internal fun ConversationScreen(
                             }
                         }
                         Spacer(modifier = Modifier.width(8.dp))
-                        // Messages' 56dp circular action: Send with a draft (or a locked recording), hold-to-record otherwise.
+                        // Messages' 56dp circular action: Send with a draft (or an attached recording), hold-to-record otherwise;
+                        // while the locked recorder is open it closes it, discarding the take.
                         val sendColors = IconButtonDefaults.filledIconButtonColors(containerColor = colors.primary, contentColor = colors.onPrimary)
-                        if (recordingLocked) {
+                        if (recordingLocked && recordingAttached) {
                             FilledIconButton(
                                 onClick = {
-                                    val clip = recordedClip ?: recorder.stop()
+                                    val clip = recordedClip
                                     playback.stop()
                                     recordedClip = null
-                                    recording = false
                                     recordingLocked = false
                                     recordingAttached = false
                                     if (clip != null) onSendVoice(clip) else composerHint = "Voice message too short"
@@ -634,6 +600,14 @@ internal fun ConversationScreen(
                                 colors = sendColors,
                             ) {
                                 Icon(imageVector = Icons.AutoMirrored.Filled.Send, contentDescription = "Send voice message")
+                            }
+                        } else if (recordingLocked) {
+                            FilledIconButton(
+                                onClick = { discardRecording("Voice message discarded") },
+                                modifier = Modifier.size(56.dp),
+                                colors = IconButtonDefaults.filledIconButtonColors(containerColor = colors.tertiaryContainer, contentColor = colors.onTertiaryContainer),
+                            ) {
+                                Icon(imageVector = Icons.Filled.GraphicEq, contentDescription = "Hide voice recorder")
                             }
                         } else if (draft.isNotBlank()) {
                             FilledIconButton(onClick = ::sendDraft, modifier = Modifier.size(56.dp), colors = sendColors) {
@@ -669,6 +643,33 @@ internal fun ConversationScreen(
                             )
                         }
                     }
+                    if (recordingLocked && !recordingAttached) {
+                        LockedRecordingPanel(
+                            elapsedMillis = recordingElapsed,
+                            levels = liveLevels,
+                            clip = recordedClip,
+                            playback = playback,
+                            playing = playback.activeId == RECORDED_CLIP_ID,
+                            onRestart = {
+                                playback.stop()
+                                recorder.cancel()
+                                recordedClip?.file?.delete()
+                                recordedClip = null
+                                recording = false
+                                if (!startRecording()) {
+                                    recordingLocked = false
+                                }
+                            },
+                            onStop = { stopLockedRecording() },
+                            onTogglePlay = ::togglePlayRecording,
+                            onAttach = {
+                                if (recordedClip != null || stopLockedRecording()) {
+                                    playback.stop()
+                                    recordingAttached = true
+                                }
+                            },
+                        )
+                    }
                     if (showEmojiPanel) {
                         EmojiPickerPanel(
                             onEmoji = { emoji -> onDraft(draft + emoji) },
@@ -685,7 +686,7 @@ internal fun ConversationScreen(
             color = colors.surface,
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
-                if (callBanner != null) RoomCallBannerRow(callBanner, onJoin = onJoinCall)
+                if (callBanner != null) Box(backdrop) { RoomCallBannerRow(callBanner, onJoin = onJoinCall) }
                 // "Read" / "Seen by N" belongs under the newest own message.
                 val newestOwnIndex = messages.indexOfLast { it.own && it.call == null && !it.deleted }
                 val newestOwnReaders = remember(messages, newestOwnIndex) { readersFrom(messages, newestOwnIndex) }
@@ -695,7 +696,7 @@ internal fun ConversationScreen(
                     reverseLayout = true,
                 ) {
                     if (typingShown) {
-                        item(key = "typing") { TypingBubble(typingUsers) }
+                        item(key = "typing") { Box(backdrop) { TypingBubble(typingUsers) } }
                     }
                     items(reversed.size, key = { reversed[it].id }) { index ->
                         val message = reversed[index]
@@ -712,7 +713,7 @@ internal fun ConversationScreen(
                             android.text.format.DateFormat.format("yyyyMMdd", it.timestampMillis).toString()
                         }
                         Column(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.fillMaxWidth().then(if (selectedId == message.id) Modifier else backdrop),
                             horizontalAlignment = if (message.call != null) Alignment.CenterHorizontally else if (message.own) Alignment.End else Alignment.Start,
                         ) {
                             if (prevDayKey != dayKey) {

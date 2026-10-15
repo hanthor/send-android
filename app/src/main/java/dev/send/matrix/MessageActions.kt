@@ -35,10 +35,12 @@ import kotlinx.coroutines.delay
 import androidx.compose.foundation.Canvas
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.StrokeJoin
-import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.clickable
 import androidx.compose.ui.draw.clip
 import android.text.format.DateUtils
@@ -102,26 +104,31 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 /** Messages' quick reactions, shown above a long-pressed message. */
-internal val QuickReactions = listOf("👍", "❤️", "😂", "😮", "😢", "🙏")
+internal val QuickReactions = listOf("👍", "❤️", "😂", "😮", "😢", "😡", "👎")
 
-/** The floating emoji row over a selected message; the trailing button opens the full emoji picker. */
+/** The floating emoji row over a selected message, spread across its width; the trailing button opens the full emoji picker. */
 @Composable
-internal fun ReactionRow(onReact: (String) -> Unit, onMore: () -> Unit) {
+internal fun ReactionRow(onReact: (String) -> Unit, onMore: () -> Unit, modifier: Modifier = Modifier) {
     Surface(
-        shape = RoundedCornerShape(28.dp),
+        shape = RoundedCornerShape(32.dp),
         color = MaterialTheme.colorScheme.surfaceContainerHighest,
         shadowElevation = 3.dp,
+        modifier = modifier,
     ) {
-        Row(Modifier.padding(horizontal = 6.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             QuickReactions.forEach { emoji ->
                 Box(
-                    modifier = Modifier.size(44.dp).clip(CircleShape).clickable { onReact(emoji) },
+                    modifier = Modifier.weight(1f).height(48.dp).clip(CircleShape).clickable { onReact(emoji) },
                     contentAlignment = Alignment.Center,
                 ) {
-                    Text(emoji, fontSize = 24.sp)
+                    Text(emoji, fontSize = 26.sp)
                 }
             }
-            IconButton(onClick = onMore, modifier = Modifier.size(44.dp)) {
+            IconButton(onClick = onMore, modifier = Modifier.weight(1f).height(48.dp)) {
                 Icon(Icons.Outlined.AddReaction, contentDescription = "More reactions", tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
@@ -207,7 +214,7 @@ internal fun MessageActionsOverlay(
                 val pillOrigin = TransformOrigin(if (alignEnd) 1f else 0f, 1f)
                 val menuOrigin = TransformOrigin(if (alignEnd) 1f else 0f, 0f)
                 Box(Modifier.popIn(progress.value, fade.value, pillOrigin)) {
-                    if (actions.react) ReactionRow(onReact = onReact, onMore = onMoreReactions)
+                    if (actions.react) ReactionRow(onReact = onReact, onMore = onMoreReactions, modifier = Modifier.fillMaxWidth())
                 }
                 Box(Modifier.popIn(progress.value, fade.value, menuOrigin)) {
                     MessageActionMenu(actions, onReply, onForward, onCopy, onEdit, onDelete, onInfo)
@@ -215,7 +222,9 @@ internal fun MessageActionsOverlay(
             },
         ) { measurables, constraints ->
             val loose = constraints.copy(minWidth = 0, minHeight = 0)
-            val pill = measurables[0].measure(loose)
+            // Messages' pill spans the screen less a small margin.
+            val pillWidth = (constraints.maxWidth - 2 * 8.dp.roundToPx()).coerceAtLeast(0)
+            val pill = measurables[0].measure(loose.copy(minWidth = pillWidth, maxWidth = pillWidth))
             val menu = measurables[1].measure(loose)
             layout(constraints.maxWidth, constraints.maxHeight) {
                 val o = origin ?: return@layout
@@ -229,7 +238,7 @@ internal fun MessageActionsOverlay(
                 val menuBelow = below + menu.height <= constraints.maxHeight - margin
                 val menuY = if (menuBelow) below else (hole.top.toInt() - gap - menu.height).coerceAtLeast(margin)
                 val pillY = ((if (menuBelow) hole.top.toInt() else menuY) - gap - pill.height).coerceAtLeast(0)
-                pill.place(x(pill.width), pillY)
+                pill.place((constraints.maxWidth - pill.width) / 2, pillY)
                 menu.place(x(menu.width), menuY)
             }
         }
@@ -491,78 +500,85 @@ internal fun LockedRecordingPanel(
             delay(50)
         }
     }
-    Surface(shape = RoundedCornerShape(28.dp), color = colors.surfaceContainerHigh, modifier = modifier.fillMaxWidth().padding(bottom = 8.dp)) {
-        Column(Modifier.padding(horizontal = 16.dp, vertical = 16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                if (clip == null) {
-                    Box(Modifier.size(10.dp).background(colors.error, CircleShape))
-                    Spacer(Modifier.width(8.dp))
-                }
-                val shown = when {
-                    clip == null -> elapsedMillis
-                    playing -> playback.positionMillis
-                    else -> clip.durationMillis
-                }
-                Text(formatDuration(shown), style = MaterialTheme.typography.titleMedium, color = colors.onSurface)
-            }
-            Spacer(Modifier.height(12.dp))
-            if (clip == null) {
-                LevelLine(levels, colors.primary, Modifier.fillMaxWidth().height(40.dp))
-            } else {
-                Waveform(
-                    samples = clip.waveform,
-                    progress = if (playing) playback.progress else 0f,
-                    played = colors.primary,
-                    pending = colors.outline,
-                    modifier = Modifier.fillMaxWidth().height(40.dp),
-                )
-            }
-            Spacer(Modifier.height(16.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                OutlinedButton(onClick = onRestart) { Text("Restart") }
-                Button(
-                    onClick = if (clip == null) onStop else onTogglePlay,
-                    colors = ButtonDefaults.buttonColors(containerColor = colors.error, contentColor = colors.onError),
-                    modifier = Modifier.width(72.dp),
-                ) {
-                    when {
-                        clip == null -> Icon(Icons.Filled.Stop, contentDescription = "Stop recording")
-                        playing -> Icon(Icons.Filled.Pause, contentDescription = "Pause recording")
-                        else -> Icon(Icons.Filled.PlayArrow, contentDescription = "Play recording")
+    Column(modifier.fillMaxWidth().padding(top = 12.dp)) {
+        Surface(shape = RoundedCornerShape(28.dp), color = colors.surfaceContainerHigh, modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (clip == null) {
+                        Box(Modifier.size(12.dp).background(colors.error, CircleShape))
+                        Spacer(Modifier.width(10.dp))
                     }
+                    val shown = when {
+                        clip == null -> elapsedMillis
+                        playing -> playback.positionMillis
+                        else -> clip.durationMillis
+                    }
+                    val seconds = shown / 1000
+                    Text("%02d:%02d".format(seconds / 60, seconds % 60), style = MaterialTheme.typography.headlineMedium, color = colors.onSurface)
                 }
-                Button(onClick = onAttach) { Text("Attach") }
+                Spacer(Modifier.height(16.dp))
+                val waveformModifier = Modifier.fillMaxWidth().height(72.dp).semantics { contentDescription = "Audio recording waveform" }
+                if (clip == null) {
+                    LevelDots(levels, colors.onSurface, waveformModifier)
+                } else {
+                    Waveform(
+                        samples = clip.waveform,
+                        progress = if (playing) playback.progress else 0f,
+                        played = colors.primary,
+                        pending = colors.outline,
+                        modifier = waveformModifier,
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        // Messages: three equal pills in their own row under the panel.
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            val pill = Modifier.weight(1f).height(56.dp)
+            FilledTonalButton(onClick = onRestart, modifier = pill) {
+                Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Restart")
+            }
+            Button(
+                onClick = if (clip == null) onStop else onTogglePlay,
+                colors = ButtonDefaults.buttonColors(containerColor = colors.error, contentColor = colors.onError),
+                modifier = pill,
+            ) {
+                when {
+                    clip == null -> Icon(Icons.Filled.Stop, contentDescription = "Stop recording")
+                    playing -> Icon(Icons.Filled.Pause, contentDescription = "Pause recording")
+                    else -> Icon(Icons.Filled.PlayArrow, contentDescription = "Play recording")
+                }
+            }
+            Button(onClick = onAttach, modifier = pill) {
+                Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Attach")
             }
         }
     }
 }
 
-/** The live microphone level as a line, newest sample on the right. */
+/** The live microphone level as Messages' dotted line: one dot per slot, stretched into a bar by louder samples, newest on the right. */
 @Composable
-private fun LevelLine(levels: List<Float>, color: Color, modifier: Modifier) {
+private fun LevelDots(levels: List<Float>, color: Color, modifier: Modifier) {
     Canvas(modifier) {
+        val dot = 3.dp.toPx()
+        val step = size.width / LIVE_LEVELS
         val mid = size.height / 2f
-        val stroke = 2.dp.toPx()
-        if (levels.size < 2) {
-            drawLine(color, Offset(0f, mid), Offset(size.width, mid), stroke)
-            return@Canvas
+        val offset = LIVE_LEVELS - levels.size
+        for (slot in 0 until LIVE_LEVELS) {
+            val level = levels.getOrNull(slot - offset) ?: 0f
+            val height = (size.height * level.coerceIn(0f, 1f)).coerceAtLeast(dot)
+            val x = step * slot + (step - dot) / 2f
+            drawRoundRect(color, topLeft = Offset(x, mid - height / 2f), size = Size(dot, height), cornerRadius = CornerRadius(dot / 2f))
         }
-        val step = size.width / (LIVE_LEVELS - 1)
-        val start = size.width - step * (levels.size - 1)
-        val path = Path()
-        levels.forEachIndexed { index, level ->
-            // Alternate above and below the centre so the line reads as a waveform.
-            val y = mid + (if (index % 2 == 0) -1 else 1) * level.coerceIn(0.04f, 1f) * mid
-            val x = start + index * step
-            if (index == 0) path.moveTo(x, y) else path.lineTo(x, y)
-        }
-        if (start > 0f) drawLine(color, Offset(0f, mid), Offset(start, mid), stroke)
-        drawPath(path, color, style = Stroke(width = stroke, cap = StrokeCap.Round, join = StrokeJoin.Round))
     }
 }
 
-/** How many recent levels [LevelLine] shows across its width. */
-internal const val LIVE_LEVELS = 48
+/** How many recent levels [LevelDots] shows across its width. */
+internal const val LIVE_LEVELS = 56
 
 /** A finished clip attached to the composer, sent with the round send button. */
 @Composable
