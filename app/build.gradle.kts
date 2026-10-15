@@ -35,6 +35,7 @@ dependencies {
     implementation(libs.androidx.browser)
     implementation(libs.androidx.core)
     implementation(libs.androidx.work)
+    implementation(libs.androidx.emoji2.emojipicker)
     implementation(libs.unifiedpush.connector)
     implementation(platform(libs.element.call.bom))
     implementation(libs.element.call.api)
