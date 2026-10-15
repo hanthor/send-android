@@ -171,6 +171,17 @@ class DetailsSettingsUiTest {
         composeRule.waitUntil(timeoutMillis) { composeRule.onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty() }
     }
 
+    /** Taps the clickable row showing [row] until [expected] appears (a tap landing while the page settles is retried). */
+    private fun tapUntilShown(row: String, expected: String) {
+        for (attempt in 1..3) {
+            scrollDetailsTo(row)
+            composeRule.onNode(hasText(row) and hasClickAction()).performClick()
+            val shown = runCatching { waitForText(expected, 4_000) }.isSuccess
+            if (shown) return
+        }
+        throw AssertionError("\"$expected\" didn't appear after tapping \"$row\" 3 times")
+    }
+
     private fun scrollDetailsTo(text: String) {
         composeRule.onNodeWithTag(DETAILS_LIST_TAG).performScrollToNode(hasText(text))
     }
@@ -256,9 +267,7 @@ class DetailsSettingsUiTest {
 
         // The sheet closes first; then Leave group.
         composeRule.waitUntil(10_000) { composeRule.onAllNodesWithTag(PERSON_SHEET_TAG).fetchSemanticsNodes().isEmpty() }
-        scrollDetailsTo("Leave group")
-        composeRule.onNode(hasText("Leave group") and hasClickAction()).performClick()
-        waitForText("Leave this group?")
+        tapUntilShown("Leave group", "Leave this group?")
         composeRule.onNodeWithText("Leave").performClick()
         composeRule.runOnIdle { assertTrue(fake.calls.toString(), "delete" in fake.calls) }
     }

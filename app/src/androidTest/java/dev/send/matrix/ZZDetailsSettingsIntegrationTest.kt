@@ -111,7 +111,11 @@ class ZZDetailsSettingsIntegrationTest {
         waitFor("Carol's invite on the homeserver", 60_000, { "carol=${serverMembership(room, CAROL)}" }) {
             serverMembership(room, CAROL) == "invite"
         }
-        softly { waitForUi("Carol listed as Invited", 60_000, ::state) { hasNodeWithText("Invited") } }
+        softly {
+            waitForUi("Carol listed as Invited", 60_000, ::state) {
+                composeRule.onAllNodesWithText("$CAROL · Invited", substring = true).fetchSemanticsNodes().isNotEmpty()
+            }
+        }
 
         // 4. Notifications: Mentions only and Off are push rules on the server; All messages removes both.
         setNotificationLevel("Mentions only")
