@@ -93,20 +93,35 @@ Image.new("RGB", (640, 480), (66, 133, 244)).save("/tmp/gm-sample.jpg")
 EOF
 inject_photo_mms() {
   as_root || { why="adbd could not restart as root to write the telephony provider"; return 1; }
-  local tid mid pid sent
+  local tid mid pid sent sub data bytes size
   tid=$(adb shell "content query --uri 'content://mms-sms/threadID?recipient=5550100'" | grep -o '_id=[0-9]*' | head -1 | cut -d= -f2)
   [ -n "$tid" ] || { why="telephony provider returned no thread for 555-0100"; return 1; }
+  sub=$(adb shell "content query --uri content://telephony/siminfo --projection _id" | grep -o '_id=[0-9]*' | head -1 | cut -d= -f2)
   sent=$(($(date +%s) - 3600))
+  size=$(stat -c %s /tmp/gm-sample.jpg)
+  # A downloaded (m_type 132 = retrieve-conf, retr_st 128 = ok) multipart message on the SIM's subscription.
   adb shell content insert --uri content://mms --bind thread_id:l:"$tid" --bind date:l:"$sent" --bind date_sent:l:"$sent" \
     --bind msg_box:i:1 --bind read:i:0 --bind seen:i:0 --bind m_type:i:132 --bind v:i:18 --bind text_only:i:0 \
-    --bind ct_t:s:application/vnd.wap.multipart.related --bind m_id:s:gm"$sent"
+    --bind pri:i:129 --bind retr_st:i:128 --bind m_size:i:"$size" --bind sub_id:i:"${sub:-1}" \
+    --bind ct_t:s:application/vnd.wap.multipart.related --bind m_id:s:gm"$sent" --bind tr_id:s:gm"$sent"
   mid=$(adb shell "content query --uri content://mms --projection _id --sort '_id DESC'" | grep -o '_id=[0-9]*' | head -1 | cut -d= -f2)
   [ -n "$mid" ] || { why="telephony provider rejected the MMS row"; return 1; }
   adb shell content insert --uri "content://mms/$mid/addr" --bind address:s:5550100 --bind type:i:137 --bind charset:i:106
-  adb shell content insert --uri "content://mms/$mid/part" --bind seq:i:0 --bind ct:s:image/jpeg --bind name:s:photo.jpg --bind cl:s:photo.jpg
+  adb shell content insert --uri "content://mms/$mid/part" --bind seq:i:0 --bind ct:s:image/jpeg --bind name:s:photo.jpg \
+    --bind cl:s:photo.jpg --bind cid:s:photo
   pid=$(adb shell "content query --uri content://mms/$mid/part --projection _id" | grep -o '_id=[0-9]*' | head -1 | cut -d= -f2)
   [ -n "$pid" ] || { why="telephony provider rejected the MMS image part"; return 1; }
-  adb shell "content write --uri content://mms/part/$pid" </tmp/gm-sample.jpg || { why="could not write the MMS image part"; return 1; }
+  adb shell "content write --uri content://mms/part/$pid" </tmp/gm-sample.jpg || true
+  bytes=$(adb shell "content read --uri content://mms/part/$pid" | wc -c)
+  if [ "$bytes" != "$size" ]; then
+    # Fall back to writing the provider's part file directly (still owned by the provider).
+    data=$(adb shell "content query --uri content://mms/$mid/part --projection _data" | grep -o '_data=[^,]*' | head -1 | cut -d= -f2 | tr -d '\r')
+    adb push /tmp/gm-sample.jpg /data/local/tmp/gm-sample.jpg >/dev/null
+    adb shell "cat /data/local/tmp/gm-sample.jpg > '$data' && chown radio:radio '$data'" || true
+    bytes=$(adb shell "content read --uri content://mms/part/$pid" | wc -c)
+  fi
+  [ "$bytes" = "$size" ] || { why="the MMS image part reads back $bytes of $size bytes"; return 1; }
+  adb shell "content query --uri content://mms/$mid --projection _id:thread_id:m_type:sub_id:m_size"
   adb shell "content query --uri content://mms/$mid/part --projection _id:ct:_data"
 }
 photo_why=""
@@ -126,6 +141,7 @@ sleep 6
 dismiss_onboarding
 sleep 2
 shot home
+mkdir -p "$out/debug" && adb logcat -d >"$out/debug/logcat-first-launch.txt" 2>&1 || true
 
 # Open transition: locate the row first (uiautomator dumps take seconds), then record
 # and tap immediately so the whole animation lands inside the recording.
@@ -328,7 +344,12 @@ capture_voice_locked || skip voice-locked "hold + slide-up onto the lock did not
 capture_media_viewer() {
   [ -z "$photo_why" ] || { why=$photo_why; return 1; }
   open_thread 555-0100 || { why="Messages did not import the injected 555-0100 photo message"; return 1; }
-  $ui tap-any "~photo" "~image" "~picture" "id:image_attachment_view" || { why="no photo bubble in the 555-0100 thread"; return 1; }
+  if ! $ui tap-any "~photo" "~image" "~picture" "id:image_attachment_view"; then
+    mkdir -p "$out/debug"
+    adb logcat -d >"$out/debug/logcat-media-viewer.txt" 2>&1 || true
+    why="Messages imported the 555-0100 thread but shows no photo bubble in it"
+    return 1
+  fi
   sleep 2.5
   shot media-viewer || { why="screencap failed"; return 1; }
 }
