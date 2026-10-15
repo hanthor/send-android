@@ -141,8 +141,9 @@ internal object MessageNotifier {
             .setWhen(style.messages.lastOrNull()?.timestamp ?: System.currentTimeMillis())
             .setShowWhen(true)
             .addExtras(android.os.Bundle().apply { putString(EXTRA_LAST_EVENT_ID, lastEventId) })
-            .addAction(replyAction(context, roomId))
+            // Messages orders the actions "Mark as read", then "Reply".
             .addAction(markReadAction(context, roomId, lastEventId))
+            .addAction(replyAction(context, roomId))
         if (status != null) builder.setSubText(status)
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
         NotificationManagerCompat.from(context).notify(roomId, NOTIFICATION_ID, builder.build())

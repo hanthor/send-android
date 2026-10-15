@@ -102,7 +102,7 @@ class UiComparisonScreenshotTest {
 
         // Create group: the typed ID becomes the first member chip, more can be added, then an optional name.
         composeRule.onNodeWithText("Create group").performClick()
-        composeRule.onNodeWithText("New group").assertIsDisplayed()
+        composeRule.onNodeWithText("New group chat").assertIsDisplayed()
         composeRule.onNodeWithContentDescription("Remove @alice:example.org").assertIsDisplayed()
         composeRule.onNodeWithText("Type a Matrix ID").performTextInput("@bob:example.org")
         composeRule.onNodeWithText("Add @bob:example.org").performClick()
