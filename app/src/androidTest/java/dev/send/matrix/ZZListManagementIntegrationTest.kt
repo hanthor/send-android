@@ -1,6 +1,7 @@
 package dev.send.matrix
 
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.ComposeTimeoutException
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.longClick
@@ -259,8 +260,15 @@ class ZZListManagementIntegrationTest {
     private fun aliceKnowsRoom(roomId: String): Boolean = repository.sdkRoom(roomId)?.also { it.close() } != null
 
     private fun roomsState(): String =
-        "rooms=${repository.joinedRooms.value.map { "${it.name}:pinned=${it.pinned}:archived=${it.archived}:unread=${it.markedUnread}:dm=${it.dmUserId}:${it.lastMessage}" }} " +
-            "ignored=${repository.ignoredUsers.value}"
+        "rooms=${repository.joinedRooms.value.map { "${it.name}:encrypted=${it.encrypted}:pinned=${it.pinned}:archived=${it.archived}:unread=${it.markedUnread}:dm=${it.dmUserId}:${it.lastMessage}" }} " +
+            "ignored=${repository.ignoredUsers.value} onScreen=${screenTexts()}"
+
+    /** Every text on screen, for timeout reports. */
+    private fun screenTexts(): List<String> = runCatching {
+        composeRule.onAllNodes(androidx.compose.ui.test.SemanticsMatcher("any node") { true }).fetchSemanticsNodes().mapNotNull { node ->
+            node.config.getOrNull(androidx.compose.ui.semantics.SemanticsProperties.Text)?.joinToString(" | ")
+        }
+    }.getOrElse { listOf("unavailable: ${it.message}") }
 
     private fun conversationState(): String =
         "visible=${NotificationRouter.visibleRoomId} messages=${repository.messages.value.map { "${it.sender}:${it.text}" }}"
