@@ -19,7 +19,7 @@ class LegalDialogTest {
     @Test
     fun legalDialogShowsCopyrightAndBundledNotices() {
         composeRule.setContent {
-            MaterialTheme {
+            SendTheme {
                 LegalNoticesDialog(onDismiss = {})
             }
         }
@@ -36,7 +36,7 @@ class LegalDialogTest {
     @Test
     fun signInScreenExposesAboutLicensesAction() {
         composeRule.setContent {
-            MaterialTheme {
+            SendTheme {
                 SignInScreen(
                     homeserver = "https://matrix.example.org",
                     onHomeserver = {},

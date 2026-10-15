@@ -42,9 +42,8 @@ demand via *Run workflow*.
 - `dev/compare/capture-messages.sh` drives Messages: seeds SMS through the
   emulator modem, dismisses first-run prompts, captures screens.
 - `dev/compare/compare.py` builds the report.
-- The Messages APK comes from APKPure for research only. CI aborts unless it is
-  signed by Google's pinned certificate, and it is never uploaded. Decompiled
-  Google code must never be committed here (AGPL).
+- The Messages APK comes from APKPure as a style/behaviour reference only and
+  is never uploaded. Decompiled Google code must never be committed here (AGPL).
 
 Builds and automated tests remain in GitHub Actions. Debug APKs are available
 from the `Send-debug-APK` artifact on a successful workflow run.

@@ -8,7 +8,7 @@ import androidx.compose.ui.tooling.preview.Preview
 @Preview(name = "Sign-in · QR first", showBackground = true, showSystemUi = true)
 @Composable
 private fun SignInScreenPreview() {
-    MaterialTheme {
+    SendTheme {
         SignInScreen(
             homeserver = "https://matrix.example.org",
             onHomeserver = {},
@@ -31,7 +31,7 @@ private fun SignInScreenPreview() {
 @Preview(name = "Conversation list", showBackground = true, showSystemUi = true)
 @Composable
 private fun HomeScreenPreview() {
-    MaterialTheme {
+    SendTheme {
         HomeScreen(
             rooms = listOf(
                 MatrixRoom("!maya:example.org", "Maya", encrypted = true, direct = true),
@@ -50,7 +50,7 @@ private fun HomeScreenPreview() {
 @Preview(name = "Conversation", showBackground = true, showSystemUi = true)
 @Composable
 private fun ConversationScreenPreview() {
-    MaterialTheme {
+    SendTheme {
         ConversationScreen(
             title = "Maya",
             isDirect = true,

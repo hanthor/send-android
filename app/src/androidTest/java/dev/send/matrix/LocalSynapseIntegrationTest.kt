@@ -82,7 +82,7 @@ class ZLocalSynapseIntegrationTest {
         composeRule.onAllNodesWithText(unencryptedRoom.name).assertCountEquals(0)
         val message = "Hello Bob — this is an encrypted demo message."
         startBobReceiver()
-        composeRule.onNodeWithText("New chat", useUnmergedTree = true).performClick()
+        composeRule.onNodeWithText("Start chat", useUnmergedTree = true).performClick()
         composeRule.onNodeWithText("Matrix user ID").performTextInput("@bob:send.test")
         captureWalkthroughScreenshot("send-demo-create-chat.png")
         composeRule.onNodeWithText("Create").performClick()
