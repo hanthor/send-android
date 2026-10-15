@@ -191,9 +191,13 @@ class MatrixRepository(context: Context) {
     private val _joinedRooms = MutableStateFlow<List<MatrixRoom>>(emptyList())
     val joinedRooms: StateFlow<List<MatrixRoom>> = _joinedRooms.asStateFlow()
     private val locallyCreatedRooms = mutableMapOf<String, MatrixRoom>()
-    /** Index-for-index mirror of the SDK room list; diffs apply here in arrival order, one batch at a time. */
+    /**
+     * Index-for-index mirror of the SDK room list. Diff batches apply one at a time (under [roomEntriesLock]);
+     * [roomListGeneration] changes when a session's list is torn down so late batches are dropped.
+     */
     private val roomEntries = mutableListOf<MatrixRoom>()
     private val roomEntriesLock = Mutex()
+    private var roomListGeneration = 0
     private val _roomListServiceState = MutableStateFlow(org.matrix.rustcomponents.sdk.RoomListServiceState.INITIAL)
     val roomListServiceState: StateFlow<org.matrix.rustcomponents.sdk.RoomListServiceState> = _roomListServiceState.asStateFlow()
     private val _messages = MutableStateFlow<List<MatrixMessage>>(emptyList())
@@ -437,8 +441,11 @@ class MatrixRepository(context: Context) {
         client?.close()
         client = null
         synchronized(locallyCreatedRooms) { locallyCreatedRooms.clear() }
-        roomEntries.clear()
-        _joinedRooms.value = emptyList()
+        synchronized(roomEntries) {
+            roomListGeneration++
+            roomEntries.clear()
+            _joinedRooms.value = emptyList()
+        }
         timelineItems.clear()
         _messages.value = emptyList()
         _roomListServiceState.value = org.matrix.rustcomponents.sdk.RoomListServiceState.INITIAL
@@ -751,14 +758,19 @@ class MatrixRepository(context: Context) {
         )
         val list = service.allRooms()
         roomList = list
+        val generation = synchronized(roomEntries) { roomListGeneration }
         val result = list.entriesWithDynamicAdapters(
             20u,
             object : org.matrix.rustcomponents.sdk.RoomListEntriesListener {
                 override fun onUpdate(updates: List<org.matrix.rustcomponents.sdk.RoomListEntriesUpdate>) {
                     repositoryScope.launch {
-                        // toMatrixRoom suspends, so without the lock a later batch could start from a stale list and be overwritten.
+                        // toMatrixRoom suspends: the lock keeps a later batch from starting on a stale list, and the
+                        // batch works on a copy so a sign-out meanwhile can't be overwritten by a late result.
                         roomEntriesLock.withLock {
-                            val current = roomEntries
+                            val current = synchronized(roomEntries) {
+                                if (generation != roomListGeneration) return@withLock
+                                roomEntries.toMutableList()
+                            }
                             for (update in updates) {
                                 when (update) {
                                     is org.matrix.rustcomponents.sdk.RoomListEntriesUpdate.Reset -> {
@@ -793,7 +805,12 @@ class MatrixRepository(context: Context) {
                                     org.matrix.rustcomponents.sdk.RoomListEntriesUpdate.Clear -> current.clear()
                                 }
                             }
-                            _joinedRooms.value = mergeLocallyCreatedRooms(current.toList())
+                            synchronized(roomEntries) {
+                                if (generation != roomListGeneration) return@withLock
+                                roomEntries.clear()
+                                roomEntries.addAll(current)
+                                _joinedRooms.value = mergeLocallyCreatedRooms(current)
+                            }
                         }
                     }
                 }
@@ -865,9 +882,12 @@ class MatrixRepository(context: Context) {
                 return@launch
             }
             roomEntriesLock.withLock {
-                val index = roomEntries.indexOfFirst { it.id == roomId }
-                if (index >= 0) roomEntries[index] = updated
-                _joinedRooms.value = mergeLocallyCreatedRooms(roomEntries.toList())
+                synchronized(roomEntries) {
+                    val index = roomEntries.indexOfFirst { it.id == roomId }
+                    if (index < 0) return@withLock
+                    roomEntries[index] = updated
+                    _joinedRooms.value = mergeLocallyCreatedRooms(roomEntries.toList())
+                }
             }
         }
     }
