@@ -293,7 +293,7 @@ class ListManagementUiTest {
                         userId = "@me:example.org",
                         securitySummary = "Device verified · recovery on",
                         onSecurity = {},
-                        onAbout = {},
+                        onSettings = {},
                         onSignOut = {},
                         onDismiss = {},
                         onArchived = { archived = true },
