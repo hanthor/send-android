@@ -68,7 +68,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Call
-import androidx.compose.material.icons.automirrored.outlined.Chat
+import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.SentimentSatisfied
@@ -983,7 +983,7 @@ internal fun HomeScreen(
                 containerColor = colors.primaryContainer,
                 contentColor = colors.onPrimaryContainer,
                 shape = RoundedCornerShape(16.dp),
-                icon = { Icon(Icons.AutoMirrored.Outlined.Chat, contentDescription = null) },
+                icon = { Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = null) },
                 text = { Text("Start chat", style = MaterialTheme.typography.titleMedium) },
             )
         },
@@ -1142,7 +1142,9 @@ private fun NewConversationScreen(
 @Composable
 private fun ConversationRow(name: String, snippet: String, onClick: () -> Unit) {
     Row(
-        modifier = Modifier.fillMaxWidth().clickable { onClick() }.padding(horizontal = 16.dp, vertical = 10.dp),
+        // Messages: pressed row shows a rounded pill highlight inset from the screen edges.
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp).clip(RoundedCornerShape(28.dp))
+            .clickable { onClick() }.padding(horizontal = 8.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Avatar(name = name, size = 52.dp)

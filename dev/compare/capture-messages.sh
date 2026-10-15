@@ -81,7 +81,7 @@ shot home
 # and tap immediately so the whole animation lands inside the recording.
 row=$($ui center "555-1234" "(555) 1234" "5551234" "+1 555-123-4" || $ui center "Hey, are you free to talk?" "Made it home. Thanks for today!" || true)
 if [ -n "$row" ]; then
-  adb shell screenrecord --time-limit 4 /sdcard/gm-open.mp4 &
+  adb shell screenrecord --time-limit 10 /sdcard/gm-open.mp4 &
   rec=$!
   sleep 1
   adb shell input tap $row
@@ -94,7 +94,7 @@ sleep 2
 shot conversation
 
 # Composer with a draft (send-state of the action button).
-adb shell input text "Sure%swhat's%sup?"
+adb shell input text "Sure%sthing"
 sleep 1
 shot composer-typing
 
@@ -104,7 +104,7 @@ adb shell monkey -p "$pkg" -c android.intent.category.LAUNCHER 1 >/dev/null
 $ui wait "Start chat" --timeout 30 || echo "::warning::conversation list did not reappear"
 fab=$($ui center "Start chat" "New conversation" "Start new conversation" || true)
 if [ -n "$fab" ]; then
-  adb shell screenrecord --time-limit 4 /sdcard/gm-new-chat.mp4 &
+  adb shell screenrecord --time-limit 10 /sdcard/gm-new-chat.mp4 &
   rec=$!
   sleep 1
   adb shell input tap $fab

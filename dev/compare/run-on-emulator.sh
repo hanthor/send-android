@@ -4,6 +4,8 @@ set -euo pipefail
 
 out=/tmp/compare
 mkdir -p "$out/ref"
+# Software-GPU emulators throw launcher/System UI ANR dialogs over captures.
+adb shell settings put global hide_error_dialogs 1
 adb shell wm density | grep -o '[0-9]\+' | tail -1 >"$out/dpi"
 
 ./gradlew --no-daemon "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g" :app:connectedDebugAndroidTest \
