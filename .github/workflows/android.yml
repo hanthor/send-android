@@ -21,8 +21,11 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - name: Install Android API 37 SDK
         run: sdkmanager 'platforms;android-37.2' 'build-tools;37.0.0'
-      - name: Start disposable local Synapse backend
+      - name: Start disposable local Synapse and MatrixRTC backend
         run: |
+          # The emulator reaches this host as 10.0.2.2, and MatrixRTC hands that address out (LiveKit
+          # URL, lk-jwt-service), so the host answers on it as well (DEVELOPMENT.md, "MatrixRTC").
+          sudo ip addr add 10.0.2.2/32 dev lo
           docker compose -f dev/matrix/compose.yaml config --quiet
           docker compose -f dev/matrix/compose.yaml run --rm synapse generate
           docker compose -f dev/matrix/compose.yaml up -d
@@ -37,6 +40,8 @@ jobs:
           if [ -z "$ready" ]; then docker compose -f dev/matrix/compose.yaml logs synapse; exit 1; fi
       - name: Seed demo Matrix accounts
         run: dev/matrix/seed-demo.sh
+      - name: Check MatrixRTC backend
+        run: dev/matrix/check-rtc.sh
       - name: Assemble, test, and lint
         run: ./gradlew --no-daemon "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g" :app:assembleDebug :app:testDebugUnitTest :app:lintDebug
       - name: Enable Android emulator KVM
@@ -77,6 +82,9 @@ jobs:
           path: /tmp/send-ui-screenshots/*.png
           if-no-files-found: warn
           retention-days: 30
+      - name: Show backend logs
+        if: failure()
+        run: docker compose -f dev/matrix/compose.yaml logs --tail 400 synapse federation livekit lk-jwt-service
       - name: Stop disposable local Synapse backend
         if: always()
         run: docker compose -f dev/matrix/compose.yaml down

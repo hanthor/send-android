@@ -9,5 +9,38 @@ services:
     volumes:
       - synapse-data:/data
 
+  # Synapse's federation API as https://send.test:8448, with a throwaway certificate. lk-jwt-service
+  # checks a caller's OpenID token at GET /_matrix/federation/v1/openid/userinfo on the user's server.
+  federation:
+    image: caddy:2.10
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    ports:
+      - "127.0.0.1:8448:8448"
+
+  # MatrixRTC media (Element Call): the LiveKit SFU and its Matrix authorisation service. Both use the
+  # host network because the URLs they hand out name the host as the Android emulator sees it
+  # (10.0.2.2), and the host has to answer on that address too: see "MatrixRTC" in DEVELOPMENT.md.
+  livekit:
+    image: livekit/livekit-server:v1.13.10
+    network_mode: host
+    command: --config /etc/livekit.yaml
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml:ro
+
+  lk-jwt-service:
+    image: ghcr.io/element-hq/lk-jwt-service:0.9.0
+    network_mode: host
+    extra_hosts:
+      - "send.test:127.0.0.1"
+    environment:
+      LIVEKIT_JWT_BIND: ":8090"
+      LIVEKIT_URL: ws://10.0.2.2:7880
+      LIVEKIT_KEY: sendci
+      LIVEKIT_SECRET: send-ci-livekit-secret-0123456789abcdef
+      LIVEKIT_FULL_ACCESS_HOMESERVERS: send.test
+      # The federation endpoint above serves Caddy's self-signed certificate.
+      LIVEKIT_INSECURE_SKIP_VERIFY_TLS: YES_I_KNOW_WHAT_I_AM_DOING
+
 volumes:
   synapse-data:

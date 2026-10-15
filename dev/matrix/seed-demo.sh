@@ -5,17 +5,38 @@ compose=(docker compose -f dev/matrix/compose.yaml)
 password='local-dev-password'
 base='http://127.0.0.1:8008'
 
+append_once() {
+  local marker=$1
+  # </dev/null: `exec -T` forwards stdin, which holds the block to append.
+  if "${compose[@]}" exec -T synapse grep -q "^# $marker" /data/homeserver.yaml </dev/null; then return 1; fi
+  { printf '# %s\n' "$marker"; cat; } | "${compose[@]}" exec -T synapse sh -c 'cat >> /data/homeserver.yaml'
+}
+
+changed=
 # The emulator tests sign in several SDK clients (Alice's devices, Bob) within seconds, which
 # Synapse's default login rate limit (burst of 5 per address) rejects. Relax it on this
-# disposable server only, then wait for Synapse to come back.
-if ! "${compose[@]}" exec -T synapse grep -q '^# send-test-overrides' /data/homeserver.yaml; then
-  "${compose[@]}" exec -T synapse sh -c 'cat >> /data/homeserver.yaml' <<'YAML'
-# send-test-overrides
+# disposable server only.
+append_once send-test-overrides <<'YAML' && changed=1
 rc_login:
   address: {per_second: 10, burst_count: 100}
   account: {per_second: 10, burst_count: 100}
   failed_attempts: {per_second: 10, burst_count: 100}
 YAML
+# MatrixRTC (Element Call): MSC4143 transport discovery naming lk-jwt-service from compose.yaml,
+# MSC4140 delayed events for the call's delayed leave, and room-event rate limits that leave room for
+# call memberships, rings and their key exchange next to the tests' messages.
+append_once send-matrixrtc-overrides <<'YAML' && changed=1
+experimental_features:
+  msc4143_enabled: true
+matrix_rtc:
+  transports:
+    - type: livekit
+      livekit_service_url: http://10.0.2.2:8090
+max_event_delay_duration: 24h
+rc_message: {per_second: 50, burst_count: 200}
+rc_delayed_event_mgmt: {per_second: 10, burst_count: 100}
+YAML
+if [ -n "$changed" ]; then
   "${compose[@]}" restart synapse
   ready=
   for attempt in $(seq 1 60); do

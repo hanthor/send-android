@@ -1,0 +1,11 @@
+{
+	admin off
+	skip_install_trust
+	auto_https disable_redirects
+}
+
+# The federation API of the disposable homeserver, for lk-jwt-service's OpenID check only.
+https://send.test:8448 {
+	tls internal
+	reverse_proxy synapse:8008
+}
