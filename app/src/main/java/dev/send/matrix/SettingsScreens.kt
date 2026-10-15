@@ -211,6 +211,21 @@ internal fun SettingsScreen(
 ) {
     var choosingTheme by rememberSaveable { mutableStateOf(false) }
     var choosingPreviews by rememberSaveable { mutableStateOf(false) }
+    if (choosingPreviews) {
+        // Messages: Automatic previews is its own page of switches.
+        SettingsPage("Automatic previews", onBack = { choosingPreviews = false }) {
+            SettingsGroup(Modifier.padding(top = 4.dp)) {
+                row { SettingsSwitchRow("Show web link previews", linkPreviews, onLinkPreviews) }
+            }
+            Text(
+                "Previews are fetched by your homeserver, which then learns the links in your messages.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 28.dp),
+            )
+        }
+        return
+    }
     SettingsPage("Settings", onBack) {
         SettingsGroup(Modifier.padding(top = 4.dp)) {
             row { SettingsRow("Notifications", notificationSummary, onClick = onNotifications) }
@@ -235,16 +250,6 @@ internal fun SettingsScreen(
             selected = theme.ordinal,
             onSelect = { index -> choosingTheme = false; onTheme(ThemeChoice.entries[index]) },
             onDismiss = { choosingTheme = false },
-        )
-    }
-    if (choosingPreviews) {
-        ChoiceDialog(
-            title = "Automatic previews",
-            options = listOf(previewsLabel(true), previewsLabel(false)),
-            selected = if (linkPreviews) 0 else 1,
-            onSelect = { index -> choosingPreviews = false; onLinkPreviews(index == 0) },
-            onDismiss = { choosingPreviews = false },
-            footnote = "Previews are fetched by your homeserver, which then knows the links you receive.",
         )
     }
 }
