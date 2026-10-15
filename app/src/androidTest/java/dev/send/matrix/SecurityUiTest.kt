@@ -33,22 +33,26 @@ class SecurityUiTest {
             SendTheme {
                 AccountSheet(
                     userId = "@alice:example.org",
+                    profile = OwnProfile("Alice", null),
+                    onProfile = { opened += "profile" },
                     securitySummary = securitySummary(VerificationState.VERIFIED, RecoveryState.DISABLED),
                     onSecurity = { opened += "security" },
-                    onAbout = { opened += "about" },
+                    onSettings = { opened += "settings" },
                     onSignOut = { opened += "sign-out" },
                     onDismiss = {},
                 )
             }
         }
 
+        composeRule.onNodeWithText("Alice").assertIsDisplayed()
         composeRule.onNodeWithText("@alice:example.org").assertIsDisplayed()
         composeRule.onNodeWithText("Device verified · recovery off").assertIsDisplayed()
         composeRule.auditShot("account")
+        composeRule.onNodeWithText("Alice").performClick()
         composeRule.onNodeWithText("Security").performClick()
-        composeRule.onNodeWithText("About & licenses").performClick()
+        composeRule.onNodeWithText("Settings").performClick()
         composeRule.onNodeWithText("Sign out").performClick()
-        composeRule.runOnIdle { assertEquals(listOf("security", "about", "sign-out"), opened) }
+        composeRule.runOnIdle { assertEquals(listOf("profile", "security", "settings", "sign-out"), opened) }
     }
 
     @Test

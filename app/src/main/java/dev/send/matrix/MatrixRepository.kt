@@ -97,6 +97,12 @@ import org.matrix.rustcomponents.sdk.FileInfo
 import org.matrix.rustcomponents.sdk.ImageInfo
 import org.matrix.rustcomponents.sdk.LatestEventValue
 import org.matrix.rustcomponents.sdk.MediaSource
+import org.matrix.rustcomponents.sdk.AccountManagementAction
+import org.matrix.rustcomponents.sdk.MembershipState
+import org.matrix.rustcomponents.sdk.ProfileListener
+import org.matrix.rustcomponents.sdk.UserProfile
+import uniffi.matrix_sdk.RoomMemberRole
+import uniffi.ruma_events.StateEventType
 import org.matrix.rustcomponents.sdk.MsgLikeKind
 import org.matrix.rustcomponents.sdk.EmbeddedEventDetails
 import org.matrix.rustcomponents.sdk.EditedContent
@@ -132,6 +138,8 @@ data class MatrixRoom(
     val markedUnread: Boolean = false,
     /** For a DM, the other person's Matrix ID (the room's single hero); null for groups. */
     val dmUserId: String? = null,
+    /** Room avatar (`m.room.avatar`), or for a DM without one the other person's avatar; `mxc://` URL. */
+    val avatarUrl: String? = null,
 )
 
 /** A starred message as listed on the conversation's Starred screen. */
@@ -243,6 +251,90 @@ data class MatrixMessage(
 /** The signed-in Matrix account and this device's session. */
 data class AccountInfo(val userId: String, val deviceId: String)
 
+/** This account's profile as others see it. */
+data class OwnProfile(val displayName: String?, val avatarUrl: String?)
+
+/** A conversation's notification level (Details → Notifications): the room's push rule. */
+enum class NotificationLevel(val label: String) {
+    All("All messages"),
+    Mentions("Mentions only"),
+    Off("Off"),
+}
+
+internal fun RoomNotificationMode.toLevel(): NotificationLevel = when (this) {
+    RoomNotificationMode.ALL_MESSAGES -> NotificationLevel.All
+    RoomNotificationMode.MENTIONS_AND_KEYWORDS_ONLY -> NotificationLevel.Mentions
+    RoomNotificationMode.MUTE -> NotificationLevel.Off
+}
+
+internal fun NotificationLevel.toMode(): RoomNotificationMode = when (this) {
+    NotificationLevel.All -> RoomNotificationMode.ALL_MESSAGES
+    NotificationLevel.Mentions -> RoomNotificationMode.MENTIONS_AND_KEYWORDS_ONLY
+    NotificationLevel.Off -> RoomNotificationMode.MUTE
+}
+
+enum class PersonRole { Admin, Moderator, Member }
+
+/** Someone in a conversation: joined, or invited and not yet joined. */
+data class RoomPerson(
+    val userId: String,
+    val displayName: String?,
+    val avatarUrl: String?,
+    val invited: Boolean = false,
+    val role: PersonRole = PersonRole.Member,
+    val isMe: Boolean = false,
+) {
+    val name: String get() = displayName ?: userId
+}
+
+/** Cross-signing state of the other person in a DM, as this device's crypto store sees it. */
+enum class IdentityState {
+    /** Verified by this account. */
+    Verified,
+    /** Has a cross-signing identity this account hasn't verified. */
+    NotVerified,
+    /** Was verified, and their identity changed since. */
+    Changed,
+    /** No cross-signing identity known. */
+    Unknown,
+}
+
+/** Conversation details: what the page shows and which edits the room's power levels allow this account. */
+data class RoomDetails(
+    val roomId: String,
+    val name: String,
+    val topic: String?,
+    val avatarUrl: String?,
+    val direct: Boolean,
+    val encrypted: Boolean,
+    val people: List<RoomPerson>,
+    val notifications: NotificationLevel,
+    val canInvite: Boolean,
+    val canRename: Boolean,
+    val canSetTopic: Boolean,
+    val canSetAvatar: Boolean,
+    val dmUserId: String?,
+    val dmIdentity: IdentityState?,
+)
+
+/** One of this account's sessions (devices) as the homeserver lists them. */
+data class SessionDevice(
+    val id: String,
+    val name: String?,
+    val lastSeenMillis: Long?,
+    val lastSeenIp: String?,
+    val current: Boolean,
+)
+
+/** Where signing another session out stands. */
+sealed interface DeviceSignOut {
+    data object Done : DeviceSignOut
+    /** Confirm with the account password; [wrongPassword] when the last one was rejected. */
+    data class Password(val session: String, val wrongPassword: Boolean) : DeviceSignOut
+    /** Confirm in a browser at [url], then try again with [session] (null: the account page finishes it). */
+    data class Browser(val url: String, val session: String?) : DeviceSignOut
+}
+
 data class VerificationEmoji(val symbol: String, val description: String)
 
 /** Progress of the SAS (emoji) device verification driven by the SDK's SessionVerificationController. */
@@ -324,6 +416,10 @@ class MatrixRepository(context: Context) {
     private val _starredEvents = MutableStateFlow<Map<String, List<String>>>(emptyMap())
     /** Starred messages per room, oldest star first, from the account data event [STARRED_EVENT_TYPE]. */
     val starredEvents: StateFlow<Map<String, List<String>>> = _starredEvents.asStateFlow()
+    @Volatile private var ownProfileHandle: TaskHandle? = null
+    private val _ownProfile = MutableStateFlow<OwnProfile?>(null)
+    /** This account's display name and avatar (Settings → profile), kept current from the homeserver. */
+    val ownProfile: StateFlow<OwnProfile?> = _ownProfile.asStateFlow()
     private val starredLock = Mutex()
     /** The starred map this device last wrote and when, until sync brings it back into the store. */
     private var starredWrite: Pair<Map<String, List<String>>, Long>? = null
@@ -605,6 +701,9 @@ class MatrixRepository(context: Context) {
         ignoredUsersHandle?.close()
         ignoredUsersHandle = null
         _ignoredUsers.value = emptySet()
+        ownProfileHandle?.close()
+        ownProfileHandle = null
+        _ownProfile.value = null
         _starredEvents.value = emptyMap()
         starredWrite = null
         syncService?.close()
@@ -695,7 +794,19 @@ class MatrixRepository(context: Context) {
                 }
             })
         }
+        if (ownProfileHandle == null) {
+            ownProfileHandle = sdk.subscribeToOwnProfile(object : ProfileListener {
+                override fun onUpdate(profile: UserProfile) {
+                    if (client === sdk) _ownProfile.value = OwnProfile(profile.displayName, profile.avatarUrl)
+                }
+            })
+        }
         repositoryScope.launch {
+            try {
+                refreshOwnProfile()
+            } catch (error: Exception) {
+                android.util.Log.w(TAG, "Own profile could not be read", error)
+            }
             try {
                 refreshIgnoredUsers()
             } catch (error: Exception) {
@@ -1228,6 +1339,7 @@ class MatrixRepository(context: Context) {
             archived = info?.isLowPriority == true,
             markedUnread = info?.isMarkedUnread == true,
             dmUserId = if (direct) info?.heroes?.singleOrNull()?.userId else null,
+            avatarUrl = info?.avatarUrl ?: if (direct) info?.heroes?.singleOrNull()?.avatarUrl else null,
         )
         synchronized(locallyCreatedRooms) { locallyCreatedRooms.remove(matrixRoom.id) }
         return matrixRoom
@@ -2195,6 +2307,281 @@ class MatrixRepository(context: Context) {
         room.use { it.declineCall(notificationEventId) }
     }
 
+    // ---- Conversation details, profile and sessions (phase 6) ----
+
+    /** An avatar (`mxc://`) as a homeserver thumbnail about [sizePx] square, decoded for display. */
+    suspend fun avatarBitmap(url: String, sizePx: Int): Bitmap? = withContext(Dispatchers.IO) {
+        val side = sizePx.coerceIn(32, 512).toULong()
+        val bytes = MediaSource.fromUrl(url).use { requireClient().getMediaThumbnail(it, side, side) }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+    }
+
+    /** Everything conversation details shows: name, topic, people, notification level, what this account may change. */
+    suspend fun roomDetails(roomId: String): RoomDetails = withContext(Dispatchers.IO) {
+        val sdk = requireClient()
+        val room = sdk.getRoom(roomId) ?: error("Conversation is unavailable.")
+        room.use {
+            val info = room.roomInfo()
+            val ownUserId = room.ownUserId()
+            val iterator = try {
+                room.members()
+            } catch (error: Exception) {
+                android.util.Log.w(TAG, "Members of $roomId unavailable from the server; using the store", error)
+                room.membersNoSync()
+            }
+            val members = iterator.use {
+                buildList {
+                    while (true) {
+                        val chunk = iterator.nextChunk(100u)
+                        if (chunk.isNullOrEmpty()) break
+                        addAll(chunk)
+                    }
+                }
+            }
+            val people = members.filter { it.membership is MembershipState.Join || it.membership is MembershipState.Invite }
+                .map { member ->
+                    RoomPerson(
+                        userId = member.userId,
+                        displayName = member.displayName?.takeIf { it.isNotBlank() },
+                        avatarUrl = member.avatarUrl,
+                        invited = member.membership is MembershipState.Invite,
+                        role = when (member.suggestedRoleForPowerLevel) {
+                            RoomMemberRole.CREATOR, RoomMemberRole.ADMINISTRATOR -> PersonRole.Admin
+                            RoomMemberRole.MODERATOR -> PersonRole.Moderator
+                            else -> PersonRole.Member
+                        },
+                        isMe = member.userId == ownUserId,
+                    )
+                }
+                // You first, then joined before invited, then by name.
+                .sortedWith(compareBy<RoomPerson>({ !it.isMe }, { it.invited }, { it.name.lowercase() }))
+            val direct = room.isDirect()
+            val dmUserId = if (direct) info.heroes.singleOrNull()?.userId ?: people.singleOrNull { !it.isMe }?.userId else null
+            val identity = dmUserId?.let { userId ->
+                try {
+                    requireEncryption().userIdentity(userId, true)?.use { identity ->
+                        when {
+                            identity.hasVerificationViolation() -> IdentityState.Changed
+                            identity.isVerified() -> IdentityState.Verified
+                            else -> IdentityState.NotVerified
+                        }
+                    } ?: IdentityState.Unknown
+                } catch (error: Exception) {
+                    android.util.Log.w(TAG, "Identity of $userId unavailable", error)
+                    IdentityState.Unknown
+                }
+            }
+            val settings = requireNotificationSettings()
+            val mode = settings.getRoomNotificationSettings(roomId, room.isEncrypted(), room.activeMembersCount() <= 2uL).mode
+            room.getPowerLevels().use { power ->
+                RoomDetails(
+                    roomId = roomId,
+                    name = room.displayName().orEmpty().ifBlank { roomId },
+                    topic = room.topic()?.takeIf { it.isNotBlank() },
+                    avatarUrl = info.avatarUrl ?: if (direct) info.heroes.singleOrNull()?.avatarUrl else null,
+                    direct = direct,
+                    encrypted = room.isEncrypted(),
+                    people = people,
+                    notifications = mode.toLevel(),
+                    canInvite = power.canOwnUserInvite(),
+                    canRename = power.canOwnUserSendState(StateEventType.RoomName),
+                    canSetTopic = power.canOwnUserSendState(StateEventType.RoomTopic),
+                    canSetAvatar = power.canOwnUserSendState(StateEventType.RoomAvatar),
+                    dmUserId = dmUserId,
+                    dmIdentity = identity,
+                )
+            }
+        }
+    }
+
+    /** Sets the room's push rule for [level] (All / Mentions / Off); Off is the same MUTE rule as Mute. */
+    suspend fun setRoomNotifications(roomId: String, level: NotificationLevel) = withContext(Dispatchers.IO) {
+        val settings = requireNotificationSettings()
+        settings.setRoomNotificationMode(roomId, level.toMode())
+        if (level == NotificationLevel.Off) MessageNotifier.cancel(appContext, roomId)
+        _mutedRoomIds.value = if (level == NotificationLevel.Off) _mutedRoomIds.value + roomId else _mutedRoomIds.value - roomId
+    }
+
+    /** Invites [userId] into [roomId] (Details → Add people). */
+    suspend fun inviteToRoom(roomId: String, userId: String) = withContext(Dispatchers.IO) {
+        val invitee = requireMatrixUserId(userId)
+        val room = requireClient().getRoom(roomId) ?: error("Conversation is unavailable.")
+        room.use { it.inviteUserById(invitee) }
+    }
+
+    /** Renames a group (`m.room.name`); a blank name removes it so members' names show instead. */
+    suspend fun renameRoom(roomId: String, name: String) = withContext(Dispatchers.IO) {
+        val room = requireClient().getRoom(roomId) ?: error("Conversation is unavailable.")
+        room.use { it.setName(name.trim()) }
+        refreshRoom(roomId)
+    }
+
+    suspend fun setRoomTopic(roomId: String, topic: String) = withContext(Dispatchers.IO) {
+        val room = requireClient().getRoom(roomId) ?: error("Conversation is unavailable.")
+        room.use { it.setTopic(topic.trim()) }
+    }
+
+    /** Uploads a picked photo as the group's avatar (`m.room.avatar`). */
+    suspend fun setRoomAvatar(roomId: String, uri: Uri) = withContext(Dispatchers.IO) {
+        val image = avatarJpeg(uri)
+        val room = requireClient().getRoom(roomId) ?: error("Conversation is unavailable.")
+        room.use {
+            it.uploadAvatar(
+                AVATAR_MIMETYPE,
+                image.bytes,
+                ImageInfo(image.height.toULong(), image.width.toULong(), AVATAR_MIMETYPE, image.bytes.size.toULong(), null, null, null, null),
+            )
+        }
+        refreshRoom(roomId)
+    }
+
+    /** The encrypted DM with [userId] (opening an existing one), creating it when there is none. */
+    suspend fun directRoomWith(userId: String): String = withContext(Dispatchers.IO) {
+        val existing = requireClient().getDmRoom(userId)?.use { room -> room.id().takeIf { room.isEncrypted() } }
+        existing ?: createEncryptedDirectRoom(userId)
+    }
+
+    /** Re-reads this account's display name and avatar from the homeserver. */
+    suspend fun refreshOwnProfile(): OwnProfile = withContext(Dispatchers.IO) {
+        val sdk = requireClient()
+        val profile = sdk.getProfile(sdk.userId())
+        OwnProfile(profile.displayName, profile.avatarUrl).also { if (client === sdk) _ownProfile.value = it }
+    }
+
+    /** Sets this account's display name (it also updates the account's membership in every room). */
+    suspend fun setDisplayName(name: String) = withContext(Dispatchers.IO) {
+        val trimmed = name.trim()
+        require(trimmed.isNotEmpty()) { "Enter a name." }
+        requireClient().setDisplayName(trimmed)
+        _ownProfile.value = (_ownProfile.value ?: OwnProfile(null, null)).copy(displayName = trimmed)
+        refreshOwnProfile()
+    }
+
+    suspend fun setProfileAvatar(uri: Uri) = withContext(Dispatchers.IO) {
+        val image = avatarJpeg(uri)
+        requireClient().uploadAvatar(AVATAR_MIMETYPE, image.bytes)
+        refreshOwnProfile()
+    }
+
+    suspend fun removeProfileAvatar() = withContext(Dispatchers.IO) {
+        requireClient().removeAvatar()
+        _ownProfile.value = _ownProfile.value?.copy(avatarUrl = null)
+        refreshOwnProfile()
+    }
+
+    private class AvatarImage(val bytes: ByteArray, val width: Int, val height: Int)
+
+    /** A picked photo scaled to at most [AVATAR_PX] and re-encoded as JPEG for upload. */
+    private fun avatarJpeg(uri: Uri): AvatarImage {
+        val resolver = appContext.contentResolver
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) } ?: error("The photo could not be read.")
+        check(bounds.outWidth > 0 && bounds.outHeight > 0) { "That file isn't a photo." }
+        val options = BitmapFactory.Options().apply { inSampleSize = sampleSize(bounds.outWidth, bounds.outHeight, AVATAR_PX) }
+        val decoded = resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, options) } ?: error("The photo could not be read.")
+        val scale = minOf(1f, AVATAR_PX.toFloat() / maxOf(decoded.width, decoded.height))
+        val bitmap = if (scale < 1f) {
+            Bitmap.createScaledBitmap(decoded, (decoded.width * scale).toInt(), (decoded.height * scale).toInt(), true).also { decoded.recycle() }
+        } else decoded
+        try {
+            val out = java.io.ByteArrayOutputStream()
+            check(bitmap.compress(Bitmap.CompressFormat.JPEG, 90, out)) { "The photo could not be prepared." }
+            return AvatarImage(out.toByteArray(), bitmap.width, bitmap.height)
+        } finally {
+            bitmap.recycle()
+        }
+    }
+
+    /** This account's sessions (devices) from the homeserver, this one first, then most recently active. */
+    suspend fun devices(): List<SessionDevice> = withContext(Dispatchers.IO) {
+        val current = requireClient().deviceId()
+        val (code, text) = clientApi("GET", "/_matrix/client/v3/devices", null)
+        check(code in 200..299) { apiError(text) ?: "Your sessions couldn't be loaded." }
+        val list = org.json.JSONObject(text).optJSONArray("devices") ?: org.json.JSONArray()
+        List(list.length()) { index ->
+            val device = list.getJSONObject(index)
+            val id = device.getString("device_id")
+            SessionDevice(
+                id = id,
+                name = device.optString("display_name").takeIf { it.isNotBlank() && !device.isNull("display_name") },
+                lastSeenMillis = device.optLong("last_seen_ts").takeIf { it > 0 },
+                lastSeenIp = device.optString("last_seen_ip").takeIf { it.isNotBlank() && !device.isNull("last_seen_ip") },
+                current = id == current,
+            )
+        }.sortedWith(compareBy<SessionDevice>({ !it.current }, { -(it.lastSeenMillis ?: 0L) }))
+    }
+
+    /**
+     * Signs another session out (`POST /delete_devices`). The homeserver asks to confirm it's you: with [password]
+     * (and the [session] it handed out) for password accounts, or in a browser for others, after which the call is
+     * repeated with just the [session]. Accounts on an OAuth (MAS) server delete sessions on the account page.
+     */
+    suspend fun signOutDevice(deviceId: String, password: String? = null, session: String? = null): DeviceSignOut = withContext(Dispatchers.IO) {
+        val sdk = requireClient()
+        check(deviceId != sdk.deviceId()) { "Use Sign out to sign this device out." }
+        if (sdk.session().oauthData != null) {
+            val url = sdk.accountUrl(AccountManagementAction.DeviceDelete(deviceId)) ?: error("Your account page isn't available.")
+            return@withContext DeviceSignOut.Browser(url, session = null)
+        }
+        val body = org.json.JSONObject().put("devices", org.json.JSONArray().put(deviceId))
+        if (session != null) {
+            val auth = org.json.JSONObject().put("session", session)
+            if (password != null) {
+                auth.put("type", AUTH_PASSWORD)
+                    .put("identifier", org.json.JSONObject().put("type", "m.id.user").put("user", sdk.userId()))
+                    .put("password", password)
+            }
+            body.put("auth", auth)
+        }
+        val (code, text) = clientApi("POST", "/_matrix/client/v3/delete_devices", body.toString())
+        if (code in 200..299) return@withContext DeviceSignOut.Done
+        val json = runCatching { org.json.JSONObject(text) }.getOrNull()
+        val authSession = json?.optString("session")?.takeIf { it.isNotBlank() }
+        if (code != 401 || json == null || authSession == null) error(apiError(text) ?: "This session couldn't be signed out.")
+        val flows = json.optJSONArray("flows") ?: org.json.JSONArray()
+        val stages = List(flows.length()) { index ->
+            val stageList = flows.getJSONObject(index).optJSONArray("stages") ?: org.json.JSONArray()
+            List(stageList.length()) { stageList.getString(it) }
+        }
+        when {
+            stages.any { it == listOf(AUTH_PASSWORD) } ->
+                DeviceSignOut.Password(authSession, wrongPassword = password != null && json.has("errcode"))
+            stages.firstOrNull()?.firstOrNull() != null -> {
+                val stage = stages.first().first()
+                val base = sdk.session().homeserverUrl.trimEnd('/')
+                DeviceSignOut.Browser("$base/_matrix/client/v3/auth/${encodePath(stage)}/fallback/web?session=${encodePath(authSession)}", authSession)
+            }
+            else -> error(apiError(text) ?: "Your homeserver didn't say how to confirm it's you.")
+        }
+    }
+
+    /** A client-server API call with this session's access token; returns the status code and body. */
+    private fun clientApi(method: String, path: String, body: String?): Pair<Int, String> {
+        val session = requireClient().session()
+        val connection = java.net.URL(session.homeserverUrl.trimEnd('/') + path).openConnection() as java.net.HttpURLConnection
+        try {
+            connection.requestMethod = method
+            connection.connectTimeout = 20_000
+            connection.readTimeout = 20_000
+            connection.setRequestProperty("Authorization", "Bearer ${session.accessToken}")
+            if (body != null) {
+                connection.doOutput = true
+                connection.setRequestProperty("Content-Type", "application/json")
+                connection.outputStream.use { it.write(body.toByteArray()) }
+            }
+            val code = connection.responseCode
+            val stream = if (code in 200..299) connection.inputStream else connection.errorStream
+            return code to (stream?.bufferedReader()?.use { it.readText() }.orEmpty())
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private fun apiError(text: String): String? =
+        runCatching { org.json.JSONObject(text).optString("error") }.getOrNull()?.takeIf { it.isNotBlank() }
+
+    private fun encodePath(value: String): String = java.net.URLEncoder.encode(value, "UTF-8").replace("+", "%20")
+
     /** AES-GCM key held by Android Keystore; it seals the SDK store key and the saved session. */
     private fun wrappingKey(): javax.crypto.SecretKey {
         val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
@@ -2248,6 +2635,10 @@ class MatrixRepository(context: Context) {
         const val VOICE_MIMETYPE = "audio/ogg"
         /** Global account data holding this account's starred messages: `{"rooms": {roomId: [eventId, …]}}`. */
         const val STARRED_EVENT_TYPE = "dev.send.starred"
+        private const val AVATAR_MIMETYPE = "image/jpeg"
+        /** Longest edge of uploaded avatars. */
+        private const val AVATAR_PX = 1024
+        private const val AUTH_PASSWORD = "m.login.password"
         private const val STARRED_ECHO_MS = 60_000L
         private const val PENDING_ROOM_FLAGS_MS = 60_000L
 

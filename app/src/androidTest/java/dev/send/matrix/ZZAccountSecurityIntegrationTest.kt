@@ -97,7 +97,7 @@ class ZZAccountSecurityIntegrationTest {
         }
         composeRule.onNodeWithContentDescription("Account").performClick()
         composeRule.onNodeWithText(ALICE).assertIsDisplayed()
-        composeRule.onNodeWithText("About & licenses").assertIsDisplayed()
+        composeRule.onNodeWithText("Settings").assertIsDisplayed()
         composeRule.onNodeWithText("Security").performClick()
         composeRule.onNodeWithText("Set up recovery").performScrollTo().performClick()
         composeRule.waitUntil(timeoutMillis = 120_000) {

@@ -52,7 +52,7 @@ import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Security
-import androidx.compose.material.icons.outlined.Notifications
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.VerifiedUser
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -124,12 +124,14 @@ internal fun AccountSheet(
     userId: String,
     securitySummary: String,
     onSecurity: () -> Unit,
-    onAbout: () -> Unit,
     onSignOut: () -> Unit,
     onDismiss: () -> Unit,
-    /** How notifications reach this device ("Push via ntfy", "Background sync…", "Off"); shown with [onNotifications]. */
-    notificationSummary: String? = null,
-    onNotifications: (() -> Unit)? = null,
+    /** Opens Settings (Messages: account menu → Messages settings). */
+    onSettings: () -> Unit,
+    /** Display name and avatar shown on the account card. */
+    profile: OwnProfile? = null,
+    /** Opens the profile page from the account card; null leaves the card inert. */
+    onProfile: (() -> Unit)? = null,
     /** Opens the Archived conversations screen (Messages: account menu → Archived). */
     onArchived: (() -> Unit)? = null,
     /** Opens Blocked contacts. */
@@ -149,13 +151,25 @@ internal fun AccountSheet(
                     }
                     Text("Send", style = MaterialTheme.typography.titleMedium, modifier = Modifier.align(Alignment.Center))
                 }
-                Surface(shape = RoundedCornerShape(24.dp), color = colors.surface, modifier = Modifier.fillMaxWidth()) {
+                Surface(
+                    shape = RoundedCornerShape(24.dp),
+                    color = colors.surface,
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp))
+                        .then(if (onProfile != null) Modifier.clickable(onClickLabel = "Profile", onClick = onProfile) else Modifier),
+                ) {
                     Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Avatar(name = userId.removePrefix("@").substringBefore(':'), size = 40.dp)
+                        val name = profile?.displayName?.takeIf { it.isNotBlank() }
+                        Avatar(name = name ?: userId.removePrefix("@").substringBefore(':'), size = 40.dp, url = profile?.avatarUrl)
                         Spacer(Modifier.width(16.dp))
                         Column(Modifier.weight(1f)) {
-                            Text(userId, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text("Matrix account", style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant)
+                            Text(name ?: userId, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(
+                                if (name != null) userId else "Matrix account",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = colors.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
                         }
                     }
                 }
@@ -163,10 +177,7 @@ internal fun AccountSheet(
                 if (onArchived != null) AccountMenuRow(Icons.Outlined.Archive, "Archived", null, onArchived)
                 if (onBlocked != null) AccountMenuRow(Icons.Outlined.Block, "Blocked contacts", null, onBlocked)
                 AccountMenuRow(Icons.Outlined.Security, "Security", securitySummary, onSecurity)
-                if (onNotifications != null) {
-                    AccountMenuRow(Icons.Outlined.Notifications, "Notifications", notificationSummary, onNotifications)
-                }
-                AccountMenuRow(Icons.Outlined.Info, "About & licenses", null, onAbout)
+                AccountMenuRow(Icons.Outlined.Settings, "Settings", null, onSettings)
                 AccountMenuRow(Icons.AutoMirrored.Outlined.Logout, "Sign out", null, onSignOut)
             }
         }
