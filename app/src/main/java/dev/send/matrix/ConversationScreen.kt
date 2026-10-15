@@ -44,6 +44,9 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SentimentSatisfied
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.outlined.StarOutline
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.material.icons.outlined.AddCircleOutline
 import androidx.compose.material.icons.outlined.Call
 import androidx.compose.material.icons.outlined.Image
@@ -139,8 +142,8 @@ internal fun ConversationScreen(
     onEdit: (message: MatrixMessage, text: String) -> Unit = { _, _ -> },
     /** Deletes an own message for everyone (after the user confirmed). */
     onDelete: (MatrixMessage) -> Unit = {},
-    /** Opens the conversation picker to forward a message. */
-    onForward: (MatrixMessage) -> Unit = {},
+    /** Opens the conversation picker to forward messages (one from the long-press menu, several from "Select more"). */
+    onForward: (List<MatrixMessage>) -> Unit = {},
     /** Loads older history until the event is in [messages] (the original of a quoted reply). */
     onLoadUntil: (eventId: String) -> Unit = {},
     /** Other people typing here right now. */
@@ -149,6 +152,12 @@ internal fun ConversationScreen(
     loadLinkPreview: (suspend (String) -> LinkPreview?)? = null,
     /** Voice recorder for the composer; the microphone recorder when null. */
     voiceCapture: VoiceCapture? = null,
+    /** Event IDs starred in this conversation (account data); their bubbles show a star. */
+    starredIds: Set<String> = emptySet(),
+    /** Stars or unstars an event; null hides Star from the long-press menu. */
+    onToggleStar: ((eventId: String, starred: Boolean) -> Unit)? = null,
+    /** Loads this conversation's starred messages for ⋮ → Starred; null hides the entry. */
+    loadStarred: (suspend () -> List<StarredMessage>)? = null,
 ) {
     val context = LocalContext.current
     val colors = MaterialTheme.colorScheme
@@ -172,6 +181,10 @@ internal fun ConversationScreen(
     var matchPosition by remember { mutableIntStateOf(0) }
     var flashId by remember { mutableStateOf<String?>(null) }
     var pendingJump by remember { mutableStateOf<String?>(null) }
+    /** Messages picked after "Select more", in the order they were picked; non-empty means selection mode. */
+    var multiSelected by remember { mutableStateOf<List<String>>(emptyList()) }
+    var confirmDeleteMany by remember { mutableStateOf<List<MatrixMessage>?>(null) }
+    var showStarred by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
     val composerFocus = remember { FocusRequester() }
 
@@ -204,6 +217,13 @@ internal fun ConversationScreen(
     // A selection, edit or reply whose message left the timeline (redacted elsewhere, history reset) ends.
     LaunchedEffect(messages) {
         if (selectedId != null && selected == null) selectedId = null
+        if (multiSelected.isNotEmpty()) {
+            val present = messages.mapTo(HashSet()) { it.id }
+            if (multiSelected.any { it !in present }) multiSelected = multiSelected.filter { it in present }
+        }
+    }
+    fun toggleMulti(message: MatrixMessage) {
+        multiSelected = if (message.id in multiSelected) multiSelected - message.id else multiSelected + message.id
     }
     val documentPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) onSendAttachment(uri)
@@ -341,6 +361,7 @@ internal fun ConversationScreen(
     BackHandler {
         when {
             selectedId != null -> selectedId = null
+            multiSelected.isNotEmpty() -> multiSelected = emptyList()
             showEmojiPanel -> showEmojiPanel = false
             searching -> closeSearch()
             recordingLocked -> discardRecording("Voice message discarded")
@@ -356,7 +377,7 @@ internal fun ConversationScreen(
         MessageActionsOverlay(
             bubbles = selectedBubbles,
             alignEnd = selected.own,
-            actions = actionsFor(selected),
+            actions = actionsFor(selected).let { it.copy(star = it.star && onToggleStar != null) },
             onDismiss = { selectedId = null },
             onReact = { emoji ->
                 selectedId = null
@@ -369,7 +390,16 @@ internal fun ConversationScreen(
             onReply = { startReply(selected) },
             onForward = {
                 selectedId = null
-                onForward(selected)
+                onForward(listOf(selected))
+            },
+            starred = selected.id in starredIds,
+            onStar = {
+                selectedId = null
+                onToggleStar?.invoke(selected.id, selected.id !in starredIds)
+            },
+            onSelectMore = {
+                selectedId = null
+                multiSelected = listOf(selected.id)
             },
             onCopy = {
                 context.getSystemService(ClipboardManager::class.java)
@@ -395,6 +425,24 @@ internal fun ConversationScreen(
         containerColor = colors.surfaceContainer,
         topBar = { Box(backdrop) {
             when {
+                multiSelected.isNotEmpty() -> {
+                    val picked = messages.filter { it.id in multiSelected }
+                    val pickedActions = picked.map(::actionsFor)
+                    MessageSelectionBar(
+                        count = picked.size,
+                        onClose = { multiSelected = emptyList() },
+                        onCopy = if (pickedActions.any { it.copy }) ({
+                            val text = picked.filter { actionsFor(it).copy }.joinToString("\n") { it.text }
+                            context.getSystemService(ClipboardManager::class.java)?.setPrimaryClip(ClipData.newPlainText("Messages", text))
+                            multiSelected = emptyList()
+                        }) else null,
+                        onForward = if (picked.isNotEmpty() && pickedActions.all { it.forward }) ({
+                            multiSelected = emptyList()
+                            onForward(picked)
+                        }) else null,
+                        onDelete = if (picked.isNotEmpty() && pickedActions.all { it.delete }) ({ confirmDeleteMany = picked }) else null,
+                    )
+                }
                 searching -> ConversationSearchBar(
                     query = query,
                     onQuery = { query = it },
@@ -459,6 +507,17 @@ internal fun ConversationScreen(
                                     text = { Text("Load older messages") },
                                     onClick = { showMenu = false; onOlder() },
                                 )
+                                if (loadStarred != null) {
+                                    DropdownMenuItem(
+                                        text = { Text("Starred") },
+                                        leadingIcon = { Icon(Icons.Outlined.StarOutline, contentDescription = null) },
+                                        onClick = {
+                                            showMenu = false
+                                            showEmojiPanel = false
+                                            showStarred = true
+                                        },
+                                    )
+                                }
                                 if (onToggleMute != null) {
                                     DropdownMenuItem(
                                         text = { Text(if (muted) "Unmute" else "Mute") },
@@ -739,8 +798,8 @@ internal fun ConversationScreen(
                                     isFirstInGroup = isFirstInGroup,
                                     isLastInGroup = isLastInGroup,
                                     selected = selectedId == message.id,
-                                    highlighted = flashId == message.id || currentMatch == message.id,
-                                    swipeEnabled = selectedId == null && editing == null && !recordingLocked,
+                                    highlighted = flashId == message.id || currentMatch == message.id || message.id in multiSelected,
+                                    swipeEnabled = selectedId == null && multiSelected.isEmpty() && editing == null && !recordingLocked,
                                     query = if (searching) query else "",
                                     loadMedia = loadMedia,
                                     playback = playback,
@@ -748,18 +807,29 @@ internal fun ConversationScreen(
                                     decryptionActionLabel = decryptionActionLabel,
                                     onDecryptionAction = onDecryptionAction,
                                     onTap = {
-                                        if (selectedId != null) selectedId = null
-                                        else expandedTimeId = if (expandedTimeId == message.id) null else message.id
+                                        when {
+                                            multiSelected.isNotEmpty() -> toggleMulti(message)
+                                            selectedId != null -> selectedId = null
+                                            else -> expandedTimeId = if (expandedTimeId == message.id) null else message.id
+                                        }
                                     },
                                     onLongPress = {
-                                        keyboard?.hide()
-                                        showEmojiPanel = false
-                                        selectedId = message.id
+                                        if (multiSelected.isNotEmpty()) {
+                                            toggleMulti(message)
+                                        } else {
+                                            keyboard?.hide()
+                                            showEmojiPanel = false
+                                            selectedId = message.id
+                                        }
                                     },
                                     onReply = { startReply(message) },
-                                    onQuote = { eventId -> jumpTo(eventId) },
+                                    onQuote = { eventId -> if (multiSelected.isEmpty()) jumpTo(eventId) else toggleMulti(message) },
                                     onOpenVisual = {
-                                        if (selectedId != null) selectedId = null else viewing = message
+                                        when {
+                                            multiSelected.isNotEmpty() -> toggleMulti(message)
+                                            selectedId != null -> selectedId = null
+                                            else -> viewing = message
+                                        }
                                     },
                                     reportBounds = if (selectedId == message.id) ({ selectedBubbles = it }) else null,
                                 )
@@ -779,9 +849,10 @@ internal fun ConversationScreen(
                                     }
                                 }
                                 // Messages: time under every cluster (or a tapped message), delivery/read state for own
-                                // messages, and "Edited" on replaced ones.
+                                // messages, "Edited" on replaced ones and a star on starred ones.
+                                val starred = message.id in starredIds
                                 val showTime = isLastInGroup || expandedTimeId == message.id || message.status == DeliveryStatus.Failed
-                                if (showTime || message.edited) {
+                                if (showTime || message.edited || starred) {
                                     val time = DateUtils.formatDateTime(context, message.timestampMillis, DateUtils.FORMAT_SHOW_TIME)
                                     val label = if (message.own && message.status == DeliveryStatus.Sending) {
                                         "Sending…"
@@ -793,12 +864,26 @@ internal fun ConversationScreen(
                                             deliveryLabel(message, readers, isDirect).takeIf { message.own && showTime && !message.deleted },
                                         ).joinToString(" · ")
                                     }
-                                    Text(
-                                        label,
-                                        style = MaterialTheme.typography.labelMedium,
-                                        color = if (message.status == DeliveryStatus.Failed) colors.error else colors.onSurfaceVariant,
+                                    Row(
                                         modifier = Modifier.padding(start = 26.dp, end = 26.dp, top = 2.dp, bottom = 8.dp),
-                                    )
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        if (starred) {
+                                            Icon(
+                                                Icons.Filled.Star,
+                                                contentDescription = "Starred",
+                                                tint = colors.primary,
+                                                modifier = Modifier.padding(end = 4.dp).size(14.dp),
+                                            )
+                                        }
+                                        if (label.isNotEmpty()) {
+                                            Text(
+                                                label,
+                                                style = MaterialTheme.typography.labelMedium,
+                                                color = if (message.status == DeliveryStatus.Failed) colors.error else colors.onSurfaceVariant,
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -818,6 +903,35 @@ internal fun ConversationScreen(
             },
             onDismiss = { confirmDelete = null },
         )
+    }
+    confirmDeleteMany?.let { picked ->
+        DeleteMessageDialog(
+            count = picked.size,
+            onDelete = {
+                confirmDeleteMany = null
+                multiSelected = emptyList()
+                if (picked.any { it.id == replyingTo?.id }) replyingTo = null
+                if (picked.any { it.id == editing?.id }) cancelEdit()
+                picked.forEach(onDelete)
+            },
+            onDismiss = { confirmDeleteMany = null },
+        )
+    }
+    if (loadStarred != null) {
+        AnimatedVisibility(visible = showStarred, enter = SendMotion.openEnter, exit = SendMotion.closeExit) {
+            StarredMessagesScreen(
+                title = title,
+                isDirect = isDirect,
+                starredIds = starredIds,
+                load = loadStarred,
+                onOpen = { eventId ->
+                    showStarred = false
+                    jumpTo(eventId)
+                },
+                onUnstar = { eventId -> onToggleStar?.invoke(eventId, false) },
+                onBack = { showStarred = false },
+            )
+        }
     }
     infoFor?.let { message ->
         val index = messages.indexOfFirst { it.id == message.id }

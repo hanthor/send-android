@@ -34,6 +34,17 @@ PAIRS = {
     "account": ("gm-account", "send-account-device"),
     "settings": ("gm-settings", "send-security-device"),
     "notification": ("gm-notification", "send-notification-device"),
+    # Conversation list management (phase 5).
+    "swipe-archive": ("gm-swipe-archive", "send-swipe-archive-device"),
+    "archive-snackbar": ("gm-archive-snackbar", "send-archive-snackbar-device"),
+    "conversation-selection": ("gm-conversation-selection", "send-conversation-selection-device"),
+    "conversation-selection-menu": ("gm-conversation-selection-menu", "send-conversation-selection-menu-device"),
+    "delete-conversation-confirm": ("gm-delete-conversation-confirm", "send-delete-conversation-confirm-device"),
+    "block-confirm": ("gm-block-confirm", "send-block-confirm-device"),
+    "archived": ("gm-archived", "send-archived-device"),
+    "blocked-contacts": ("gm-blocked-contacts", "send-blocked-contacts-device"),
+    "starred": ("gm-starred", "send-starred-messages-device"),
+    "message-selection": ("gm-message-selection", "send-message-selection-device"),
 }
 
 # element -> labels matched against text / content-desc (first hit wins), or an EditText class match.
@@ -57,6 +68,12 @@ ELEMENTS = {
     "forward action": ["forward", "share"],
     "info action": ["info", "details", "view details"],
     "close selection": ["close", "exit selection", "done"],
+    # Conversation selection and starring.
+    "pin action": ["pin", "unpin"],
+    "archive action": ["archive", "unarchive"],
+    "block action": ["block"],
+    "star action": ["star", "unstar", "star message"],
+    "select more action": ["select more", "select"],
 }
 
 

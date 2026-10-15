@@ -36,7 +36,9 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.StarOutline
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.semantics.contentDescription
@@ -143,6 +145,8 @@ internal data class MessageActionSet(
     val delete: Boolean,
     val forward: Boolean,
     val react: Boolean,
+    /** Star / Unstar (needs an event ID; the screen hides it when starring isn't wired). */
+    val star: Boolean,
 )
 
 internal fun actionsFor(message: MatrixMessage): MessageActionSet {
@@ -155,6 +159,7 @@ internal fun actionsFor(message: MatrixMessage): MessageActionSet {
         delete = message.own && !message.deleted && message.call == null,
         forward = readable && onServer && (message.text.isNotBlank() || message.attachment != null),
         react = readable && onServer,
+        star = readable && onServer,
     )
 }
 
@@ -184,6 +189,11 @@ internal fun MessageActionsOverlay(
     onEdit: () -> Unit,
     onDelete: () -> Unit,
     onInfo: () -> Unit,
+    /** Whether the message is starred: the Star action then reads Unstar. */
+    starred: Boolean = false,
+    onStar: () -> Unit = {},
+    /** Starts multi-select with this message; null hides "Select more". */
+    onSelectMore: (() -> Unit)? = null,
 ) {
     val density = LocalDensity.current
     val anchor = bubbles.reduce { a, b -> Rect(minOf(a.left, b.left), minOf(a.top, b.top), maxOf(a.right, b.right), maxOf(a.bottom, b.bottom)) }
@@ -217,7 +227,7 @@ internal fun MessageActionsOverlay(
                     if (actions.react) ReactionRow(onReact = onReact, onMore = onMoreReactions, modifier = Modifier.fillMaxWidth())
                 }
                 Box(Modifier.popIn(progress.value, fade.value, menuOrigin)) {
-                    MessageActionMenu(actions, onReply, onForward, onCopy, onEdit, onDelete, onInfo)
+                    MessageActionMenu(actions, onReply, onForward, onCopy, onEdit, onDelete, onInfo, starred, onStar, onSelectMore)
                 }
             },
         ) { measurables, constraints ->
@@ -263,6 +273,9 @@ private fun MessageActionMenu(
     onEdit: () -> Unit,
     onDelete: () -> Unit,
     onInfo: () -> Unit,
+    starred: Boolean,
+    onStar: () -> Unit,
+    onSelectMore: (() -> Unit)?,
 ) {
     Surface(
         shape = RoundedCornerShape(16.dp),
@@ -274,8 +287,10 @@ private fun MessageActionMenu(
             if (actions.reply) MessageActionItem(Icons.AutoMirrored.Filled.Reply, "Reply", onReply)
             if (actions.forward) MessageActionItem(Icons.AutoMirrored.Filled.Forward, "Forward", onForward)
             if (actions.copy) MessageActionItem(Icons.Outlined.ContentCopy, "Copy", onCopy)
+            if (actions.star) MessageActionItem(if (starred) Icons.Filled.Star else Icons.Outlined.StarOutline, if (starred) "Unstar" else "Star", onStar)
             if (actions.edit) MessageActionItem(Icons.Outlined.Edit, "Edit", onEdit)
             if (actions.delete) MessageActionItem(Icons.Outlined.Delete, "Delete", onDelete)
+            if (onSelectMore != null) MessageActionItem(Icons.Outlined.CheckCircle, "Select more", onSelectMore)
             MessageActionItem(Icons.Outlined.Info, "Info", onInfo)
         }
     }
@@ -294,14 +309,42 @@ private fun MessageActionItem(icon: ImageVector, label: String, onClick: () -> U
 }
 
 @Composable
-internal fun DeleteMessageDialog(onDelete: () -> Unit, onDismiss: () -> Unit) {
+internal fun DeleteMessageDialog(onDelete: () -> Unit, onDismiss: () -> Unit, count: Int = 1) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Delete message?") },
-        text = { Text("This message will be deleted for everyone in this conversation.") },
+        title = { Text(if (count == 1) "Delete message?" else "Delete $count messages?") },
+        text = {
+            Text(
+                if (count == 1) "This message will be deleted for everyone in this conversation."
+                else "These messages will be deleted for everyone in this conversation.",
+            )
+        },
         confirmButton = { TextButton(onClick = onDelete) { Text("Delete") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
+}
+
+/**
+ * Top bar while several messages are selected ("Select more"): close, the count, and Copy, Forward and Delete when
+ * they apply to every selected message.
+ */
+@Composable
+internal fun MessageSelectionBar(
+    count: Int,
+    onClose: () -> Unit,
+    onCopy: (() -> Unit)?,
+    onForward: (() -> Unit)?,
+    onDelete: (() -> Unit)?,
+) {
+    Surface(color = MaterialTheme.colorScheme.surfaceContainer, modifier = Modifier.statusBarsPadding()) {
+        Row(Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onClose) { Icon(Icons.Filled.Close, contentDescription = "Close") }
+            Text(count.toString(), style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(start = 8.dp).weight(1f))
+            if (onCopy != null) IconButton(onClick = onCopy) { Icon(Icons.Outlined.ContentCopy, contentDescription = "Copy") }
+            if (onForward != null) IconButton(onClick = onForward) { Icon(Icons.AutoMirrored.Filled.Forward, contentDescription = "Forward") }
+            if (onDelete != null) IconButton(onClick = onDelete) { Icon(Icons.Outlined.Delete, contentDescription = "Delete") }
+        }
+    }
 }
 
 /** Messages' "Message details": sender, times, delivery and read receipts. */

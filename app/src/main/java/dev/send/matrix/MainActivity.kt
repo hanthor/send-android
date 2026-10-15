@@ -83,6 +83,8 @@ import androidx.compose.material.icons.filled.SentimentSatisfied
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.outlined.AddCircleOutline
 import androidx.compose.material.icons.outlined.GroupAdd
 import androidx.compose.material.icons.outlined.Groups
@@ -356,6 +358,10 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
     var showNotifications by rememberSaveable { mutableStateOf(false) }
     var showNotificationPrompt by rememberSaveable { mutableStateOf(false) }
     val mutedRoomIds by repository.mutedRoomIds.collectAsState()
+    val ignoredUsers by repository.ignoredUsers.collectAsState()
+    val starredEvents by repository.starredEvents.collectAsState()
+    var showArchived by rememberSaveable { mutableStateOf(false) }
+    var showBlocked by rememberSaveable { mutableStateOf(false) }
     val pushStatus by PushRegistration.status.collectAsState()
     val lifecycleState by LocalLifecycleOwner.current.lifecycle.currentStateFlow.collectAsState()
     val notificationsOn = remember(lifecycleState) { notificationsAllowed(activity) }
@@ -429,7 +435,8 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
             repository.setTyping(current, false)
         }
     }
-    var forwarding by remember { mutableStateOf<MatrixMessage?>(null) }
+    /** Messages picked for forwarding (one from the long-press menu, several from "Select more"). */
+    var forwarding by remember { mutableStateOf<List<MatrixMessage>?>(null) }
     val decryptionActionLabel = when {
         verificationState == VerificationState.UNVERIFIED -> "Verify this device"
         recoveryState == RecoveryState.INCOMPLETE -> "Enter recovery key"
@@ -466,6 +473,59 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
             // Cleared only once handled: clearing the key earlier would cancel this effect mid-open.
             if (activity.pendingConversation.value == roomId) activity.pendingConversation.value = null
         }
+    }
+    /** Runs a list or star action; a failure is reported above the conversation list. */
+    fun listAction(failure: String, action: suspend () -> Unit) {
+        scope.launch {
+            try {
+                action()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (problem: Exception) {
+                error = problem.message ?: failure
+            }
+        }
+    }
+    val openFromList: (MatrixRoom) -> Unit = { selected ->
+        scope.launch {
+            error = ""
+            try {
+                openConversation(selected.id, selected.name, selected.direct)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                error = failure.message ?: "Conversation could not be opened."
+            }
+        }
+    }
+    // Archive, pin, unread and delete are tags/flags/membership on each room; block is the account's ignore list.
+    val listActions = remember(repository) {
+        ConversationListActions(
+            setArchived = { picked, archived ->
+                listAction(if (archived) "Conversation could not be archived." else "Conversation could not be unarchived.") {
+                    repository.setArchived(picked.map { it.id }, archived)
+                }
+            },
+            setPinned = { picked, pinned ->
+                listAction(if (pinned) "Conversation could not be pinned." else "Conversation could not be unpinned.") {
+                    repository.setPinned(picked.map { it.id }, pinned)
+                }
+            },
+            setUnread = { picked, unread ->
+                listAction("Conversation could not be marked ${if (unread) "unread" else "read"}.") {
+                    repository.setMarkedUnread(picked.map { it.id }, unread)
+                }
+            },
+            setMuted = { picked, muted ->
+                listAction(if (muted) "Conversation could not be muted." else "Conversation could not be unmuted.") {
+                    repository.setRoomsMuted(picked.map { it.id }, muted)
+                }
+            },
+            delete = { picked ->
+                listAction("Conversation could not be deleted.") { repository.deleteConversations(picked.map { it.id }) }
+            },
+            block = { userId -> listAction("$userId could not be blocked.") { repository.blockUser(userId) } },
+        )
     }
     fun signOut(serverSide: Boolean) {
         signingOut = true
@@ -682,7 +742,7 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
                         catch (failure: Exception) { error = failure.message ?: "Message could not be deleted." }
                     }
                 },
-                onForward = { message -> forwarding = message },
+                onForward = { picked -> forwarding = picked },
                 onLoadUntil = { eventId ->
                     val currentTimeline = timeline
                     if (currentTimeline != null) scope.launch {
@@ -763,20 +823,21 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
                         }
                     }
                 },
+                starredIds = starredEvents[activeRoomId].orEmpty().toSet(),
+                onToggleStar = { eventId, star ->
+                    val roomId = activeRoomId
+                    listAction(if (star) "Message could not be starred." else "Message could not be unstarred.") {
+                        repository.setStarred(roomId, eventId, star)
+                    }
+                },
+                loadStarred = { repository.starredMessages(activeRoomId) },
             )
             else -> HomeScreen(
                 rooms = rooms,
                 mutedRoomIds = mutedRoomIds,
-                onOpen = { selected ->
-                    scope.launch {
-                        error = ""
-                        try {
-                            openConversation(selected.id, selected.name, selected.direct)
-                        } catch (failure: Exception) {
-                            error = failure.message ?: "Conversation could not be opened."
-                        }
-                    }
-                },
+                blockedUserIds = ignoredUsers,
+                listActions = listActions,
+                onOpen = openFromList,
                 error = error,
                 notice = notice,
                 creatingDirectRoom = activeJob?.isActive == true,
@@ -814,20 +875,20 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
         if (signedIn) {
             // Forward: pick another encrypted conversation; the copy is sent there and that conversation opens.
             val forwardTarget = forwarding
-            val shownForward = remember { mutableStateOf<MatrixMessage?>(null) }.apply { if (forwardTarget != null) value = forwardTarget }
+            val shownForward = remember { mutableStateOf<List<MatrixMessage>?>(null) }.apply { if (forwardTarget != null) value = forwardTarget }
             AnimatedVisibility(visible = forwardTarget != null && timeline != null, enter = SendMotion.openEnter, exit = SendMotion.closeExit) {
                 ForwardScreen(
-                    rooms = rooms.filter { it.encrypted && it.id != activeRoomId },
+                    rooms = rooms.filter { it.encrypted && it.id != activeRoomId && (it.dmUserId == null || it.dmUserId !in ignoredUsers) },
                     mutedRoomIds = mutedRoomIds,
-                    preview = shownForward.value?.let(::messagePreviewText).orEmpty(),
+                    preview = shownForward.value?.let { picked -> picked.singleOrNull()?.let(::messagePreviewText) ?: "${picked.size} messages" }.orEmpty(),
                     onPick = { target ->
                         val currentTimeline = timeline
-                        val message = forwardTarget
+                        val picked = forwardTarget
                         forwarding = null
-                        if (currentTimeline != null && message != null) scope.launch {
+                        if (currentTimeline != null && picked != null) scope.launch {
                             error = ""
                             try {
-                                repository.forward(currentTimeline, message.id, target.id)
+                                for (message in picked) repository.forward(currentTimeline, message.id, target.id)
                                 openConversation(target.id, target.name, target.direct)
                             } catch (cancelled: CancellationException) {
                                 throw cancelled
@@ -837,6 +898,23 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
                         }
                     },
                     onBack = { forwarding = null },
+                )
+            }
+            // Account menu → Archived; hidden (not closed) while a conversation opened from it is on screen.
+            AnimatedVisibility(visible = showArchived && timeline == null, enter = SendMotion.openEnter, exit = SendMotion.closeExit) {
+                ArchivedScreen(
+                    rooms = archivedConversations(rooms, ignoredUsers),
+                    mutedRoomIds = mutedRoomIds,
+                    actions = listActions,
+                    onOpen = openFromList,
+                    onBack = { showArchived = false },
+                )
+            }
+            AnimatedVisibility(visible = showBlocked, enter = SendMotion.openEnter, exit = SendMotion.closeExit) {
+                BlockedContactsScreen(
+                    userIds = ignoredUsers.sorted(),
+                    onUnblock = { userId -> listAction("$userId could not be unblocked.") { repository.unblockUser(userId) } },
+                    onBack = { showBlocked = false },
                 )
             }
             // Security and verification sit above both the list and an open conversation.
@@ -882,6 +960,8 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
                     notificationSummary = notificationSummary(activity, notificationsOn, pushStatus),
                     onNotifications = { showAccount = false; showNotifications = true },
                     onAbout = { showAccount = false; showAbout = true },
+                    onArchived = { showAccount = false; showArchived = true },
+                    onBlocked = { showAccount = false; showBlocked = true },
                     onSignOut = { showAccount = false; signOutError = ""; showSignOut = true },
                     onDismiss = { showAccount = false },
                 )
@@ -1393,19 +1473,29 @@ internal fun HomeScreen(
     onVerifyDevice: (() -> Unit)?,
     /** Conversations muted with a MUTE push rule; their rows show the muted icon. */
     mutedRoomIds: Set<String> = emptySet(),
+    /** People this account blocked; their DMs stay out of the list. */
+    blockedUserIds: Set<String> = emptySet(),
+    /** Swipe-to-archive, long-press selection and its bar; without them rows only open. */
+    listActions: ConversationListActions? = null,
 ) {
     var showingNewChat by rememberSaveable { mutableStateOf(false) }
     var matrixUserId by rememberSaveable { mutableStateOf("") }
     var verifyBannerDismissed by rememberSaveable { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
     var searching by rememberSaveable { mutableStateOf(false) }
-    val encryptedRooms = rooms.filter { it.encrypted }
-    val visibleRooms = if (query.isBlank()) encryptedRooms else encryptedRooms.filter { it.name.contains(query, ignoreCase = true) }
+    val inboxRooms = inboxConversations(rooms, blockedUserIds)
+    val visibleRooms = if (query.isBlank()) inboxRooms else inboxRooms.filter { it.name.contains(query, ignoreCase = true) }
     val colors = MaterialTheme.colorScheme
-    BackHandler(enabled = searching) { searching = false; query = "" }
+    val listState = rememberConversationListState()
+    PruneSelection(listState, visibleRooms)
+    val selectedRooms = listState.selectedIds.mapNotNull { id -> visibleRooms.firstOrNull { it.id == id } }
+    BackHandler(enabled = searching && !listState.selecting) { searching = false; query = "" }
     Scaffold(
         containerColor = colors.surfaceContainer,
-        topBar = {
+        snackbarHost = { androidx.compose.material3.SnackbarHost(listState.snackbar) },
+        topBar = { if (listActions != null && listState.selecting) {
+            ConversationSelectionBar(selectedRooms, mutedRoomIds, listState, listActions, archivedView = false)
+        } else {
             // Messages: plain top bar — wordmark left, search + account right; no pill.
             Row(
                 modifier = Modifier.fillMaxWidth().statusBarsPadding().height(64.dp).padding(start = 16.dp, end = 4.dp),
@@ -1445,7 +1535,7 @@ internal fun HomeScreen(
                     }
                 }
             }
-        },
+        } },
         floatingActionButton = {
             ExtendedFloatingActionButton(
                 onClick = { showingNewChat = true },
@@ -1477,20 +1567,24 @@ internal fun HomeScreen(
             if (visibleRooms.isEmpty()) {
                 item {
                     Text(
-                        if (encryptedRooms.isNotEmpty()) "No conversations match “$query”." else if (rooms.any { !it.encrypted }) "Unencrypted rooms are hidden. Send only opens end-to-end encrypted conversations." else "No conversations are available yet.",
+                        when {
+                            inboxRooms.isNotEmpty() -> "No conversations match “$query”."
+                            rooms.any { it.encrypted && it.archived } -> "No conversations here. Archived conversations are under Archived in the account menu."
+                            rooms.any { !it.encrypted } -> "Unencrypted rooms are hidden. Send only opens end-to-end encrypted conversations."
+                            else -> "No conversations are available yet."
+                        },
                         color = colors.onSurfaceVariant,
                         style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 24.dp),
                     )
                 }
             } else {
-                items(visibleRooms, key = { it.id }) { chat ->
-                    ConversationRow(room = chat, muted = chat.id in mutedRoomIds, onClick = { onOpen(chat) })
-                }
+                managedConversationRows(visibleRooms, mutedRoomIds, listState, listActions, archivedView = false, onOpen = onOpen)
             }
         }
         }
     }
+    if (listActions != null) ConversationListDialogs(listState, listActions)
     BackHandler(enabled = showingNewChat && !creatingDirectRoom) { showingNewChat = false }
     // Messages opens "New chat" with its fragment open transition and closes it with the close one.
     AnimatedVisibility(visible = showingNewChat, enter = SendMotion.openEnter, exit = SendMotion.closeExit) {
@@ -1704,20 +1798,42 @@ private fun NewConversationScreen(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-internal fun ConversationRow(room: MatrixRoom, muted: Boolean, onClick: () -> Unit) {
+internal fun ConversationRow(
+    room: MatrixRoom,
+    muted: Boolean,
+    onClick: () -> Unit,
+    /** Picked in the list's selection mode: tinted row, check mark in place of the avatar. */
+    selected: Boolean = false,
+    /** Long-press (starts or extends the selection); null when the list has no selection mode. */
+    onLongClick: (() -> Unit)? = null,
+) {
     val context = LocalContext.current
     val colors = MaterialTheme.colorScheme
-    val unread = room.unreadCount > 0
+    val unread = room.isUnread
     // Messages: unread conversations get a bold name, bold snippet and timestamp, and a count badge.
     val emphasis = if (unread) FontWeight.Bold else FontWeight.Normal
     Row(
-        // Messages: pressed row shows a rounded pill highlight inset from the screen edges.
+        // Messages: pressed (and selected) rows show a rounded pill highlight inset from the screen edges.
         modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp).clip(RoundedCornerShape(28.dp))
-            .clickable { onClick() }.padding(horizontal = 8.dp, vertical = 10.dp),
+            .background(if (selected) colors.secondaryContainer else colors.surface)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+            .padding(horizontal = 8.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Avatar(name = room.name, size = 52.dp)
+        androidx.compose.animation.Crossfade(targetState = selected, animationSpec = SendMotion.effectsFast(), label = "rowSelection") { checked ->
+            if (checked) {
+                Box(
+                    Modifier.size(52.dp).background(colors.primary, CircleShape).clearAndSetSemantics { contentDescription = "Selected" },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(Icons.Filled.Check, contentDescription = null, tint = colors.onPrimary)
+                }
+            } else {
+                Avatar(name = room.name, size = 52.dp)
+            }
+        }
         Spacer(modifier = Modifier.width(16.dp))
         Column(modifier = Modifier.weight(1f)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -1730,6 +1846,14 @@ internal fun ConversationRow(room: MatrixRoom, muted: Boolean, onClick: () -> Un
                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
+                if (room.pinned) {
+                    Icon(
+                        imageVector = Icons.Filled.PushPin,
+                        contentDescription = "Pinned",
+                        tint = colors.onSurfaceVariant,
+                        modifier = Modifier.padding(start = 6.dp).size(16.dp),
+                    )
+                }
                 if (muted) {
                     Icon(
                         imageVector = Icons.Outlined.NotificationsOff,
@@ -1768,7 +1892,7 @@ internal fun ConversationRow(room: MatrixRoom, muted: Boolean, onClick: () -> Un
                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
-                if (unread) {
+                if (room.unreadCount > 0) {
                     val label = if (room.unreadCount > 99) "99+" else room.unreadCount.toString()
                     Box(
                         modifier = Modifier.padding(start = 8.dp).heightIn(min = 22.dp).widthIn(min = 22.dp)
@@ -1779,6 +1903,12 @@ internal fun ConversationRow(room: MatrixRoom, muted: Boolean, onClick: () -> Un
                     ) {
                         Text(label, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = colors.onPrimary)
                     }
+                } else if (room.markedUnread) {
+                    // Marked unread without new messages: Messages' plain dot instead of a count.
+                    Box(
+                        Modifier.padding(start = 8.dp).size(12.dp).background(colors.primary, CircleShape)
+                            .clearAndSetSemantics { contentDescription = "Marked unread" },
+                    )
                 }
             }
         }
