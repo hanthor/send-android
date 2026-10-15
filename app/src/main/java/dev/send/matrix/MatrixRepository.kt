@@ -188,6 +188,9 @@ class MatrixRepository(context: Context) {
     private val _joinedRooms = MutableStateFlow<List<MatrixRoom>>(emptyList())
     val joinedRooms: StateFlow<List<MatrixRoom>> = _joinedRooms.asStateFlow()
     private val locallyCreatedRooms = mutableMapOf<String, MatrixRoom>()
+    /** Index-for-index mirror of the SDK room list; diffs apply here in arrival order, one batch at a time. */
+    private val roomEntries = mutableListOf<MatrixRoom>()
+    private val roomEntriesLock = Mutex()
     private val _roomListServiceState = MutableStateFlow(org.matrix.rustcomponents.sdk.RoomListServiceState.INITIAL)
     val roomListServiceState: StateFlow<org.matrix.rustcomponents.sdk.RoomListServiceState> = _roomListServiceState.asStateFlow()
     private val _messages = MutableStateFlow<List<MatrixMessage>>(emptyList())
@@ -407,6 +410,7 @@ class MatrixRepository(context: Context) {
         client?.close()
         client = null
         synchronized(locallyCreatedRooms) { locallyCreatedRooms.clear() }
+        roomEntries.clear()
         _joinedRooms.value = emptyList()
         timelineItems.clear()
         _messages.value = emptyList()
@@ -685,42 +689,45 @@ class MatrixRepository(context: Context) {
             object : org.matrix.rustcomponents.sdk.RoomListEntriesListener {
                 override fun onUpdate(updates: List<org.matrix.rustcomponents.sdk.RoomListEntriesUpdate>) {
                     repositoryScope.launch {
-                        val current = _joinedRooms.value.toMutableList()
-                        for (update in updates) {
-                            when (update) {
-                                is org.matrix.rustcomponents.sdk.RoomListEntriesUpdate.Reset -> {
-                                    current.clear()
-                                    for (room in update.values) current.add(toMatrixRoom(room))
+                        // toMatrixRoom suspends, so without the lock a later batch could start from a stale list and be overwritten.
+                        roomEntriesLock.withLock {
+                            val current = roomEntries
+                            for (update in updates) {
+                                when (update) {
+                                    is org.matrix.rustcomponents.sdk.RoomListEntriesUpdate.Reset -> {
+                                        current.clear()
+                                        for (room in update.values) current.add(toMatrixRoom(room))
+                                    }
+                                    is org.matrix.rustcomponents.sdk.RoomListEntriesUpdate.Append -> {
+                                        for (room in update.values) current.add(toMatrixRoom(room))
+                                    }
+                                    is org.matrix.rustcomponents.sdk.RoomListEntriesUpdate.PushBack ->
+                                        current.add(toMatrixRoom(update.value))
+                                    is org.matrix.rustcomponents.sdk.RoomListEntriesUpdate.PushFront ->
+                                        current.add(0, toMatrixRoom(update.value))
+                                    is org.matrix.rustcomponents.sdk.RoomListEntriesUpdate.Insert ->
+                                        current.add(update.index.toInt().coerceIn(0, current.size), toMatrixRoom(update.value))
+                                    is org.matrix.rustcomponents.sdk.RoomListEntriesUpdate.Set -> {
+                                        val index = update.index.toInt()
+                                        if (index in current.indices) current[index] = toMatrixRoom(update.value)
+                                    }
+                                    is org.matrix.rustcomponents.sdk.RoomListEntriesUpdate.Remove -> {
+                                        val index = update.index.toInt()
+                                        if (index in current.indices) current.removeAt(index)
+                                    }
+                                    is org.matrix.rustcomponents.sdk.RoomListEntriesUpdate.PopBack ->
+                                        if (current.isNotEmpty()) current.removeAt(current.lastIndex)
+                                    is org.matrix.rustcomponents.sdk.RoomListEntriesUpdate.PopFront ->
+                                        if (current.isNotEmpty()) current.removeAt(0)
+                                    is org.matrix.rustcomponents.sdk.RoomListEntriesUpdate.Truncate -> {
+                                        val size = update.length.toInt().coerceAtLeast(0)
+                                        if (size < current.size) current.subList(size, current.size).clear()
+                                    }
+                                    org.matrix.rustcomponents.sdk.RoomListEntriesUpdate.Clear -> current.clear()
                                 }
-                                is org.matrix.rustcomponents.sdk.RoomListEntriesUpdate.Append -> {
-                                    for (room in update.values) current.add(toMatrixRoom(room))
-                                }
-                                is org.matrix.rustcomponents.sdk.RoomListEntriesUpdate.PushBack ->
-                                    current.add(toMatrixRoom(update.value))
-                                is org.matrix.rustcomponents.sdk.RoomListEntriesUpdate.PushFront ->
-                                    current.add(0, toMatrixRoom(update.value))
-                                is org.matrix.rustcomponents.sdk.RoomListEntriesUpdate.Insert ->
-                                    current.add(update.index.toInt().coerceIn(0, current.size), toMatrixRoom(update.value))
-                                is org.matrix.rustcomponents.sdk.RoomListEntriesUpdate.Set -> {
-                                    val index = update.index.toInt()
-                                    if (index in current.indices) current[index] = toMatrixRoom(update.value)
-                                }
-                                is org.matrix.rustcomponents.sdk.RoomListEntriesUpdate.Remove -> {
-                                    val index = update.index.toInt()
-                                    if (index in current.indices) current.removeAt(index)
-                                }
-                                is org.matrix.rustcomponents.sdk.RoomListEntriesUpdate.PopBack ->
-                                    if (current.isNotEmpty()) current.removeAt(current.lastIndex)
-                                is org.matrix.rustcomponents.sdk.RoomListEntriesUpdate.PopFront ->
-                                    if (current.isNotEmpty()) current.removeAt(0)
-                                is org.matrix.rustcomponents.sdk.RoomListEntriesUpdate.Truncate -> {
-                                    val size = update.length.toInt().coerceAtLeast(0)
-                                    if (size < current.size) current.subList(size, current.size).clear()
-                                }
-                                org.matrix.rustcomponents.sdk.RoomListEntriesUpdate.Clear -> current.clear()
                             }
+                            _joinedRooms.value = mergeLocallyCreatedRooms(current.toList())
                         }
-                        _joinedRooms.value = mergeLocallyCreatedRooms(current)
                     }
                 }
             },
@@ -790,7 +797,11 @@ class MatrixRepository(context: Context) {
                 android.util.Log.w(TAG, "Could not refresh $roomId", error)
                 return@launch
             }
-            _joinedRooms.value = _joinedRooms.value.map { if (it.id == roomId) updated else it }
+            roomEntriesLock.withLock {
+                val index = roomEntries.indexOfFirst { it.id == roomId }
+                if (index >= 0) roomEntries[index] = updated
+                _joinedRooms.value = mergeLocallyCreatedRooms(roomEntries.toList())
+            }
         }
     }
 

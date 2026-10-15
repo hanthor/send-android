@@ -1,5 +1,6 @@
 package dev.send.matrix
 
+import androidx.compose.ui.test.ComposeTimeoutException
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
@@ -88,7 +89,6 @@ class ZZAccountSecurityIntegrationTest {
 
     @Test
     fun recoveryVerificationBackupRestoreAndSignOut() {
-        val repository = MatrixRepository.get(context)
         signInIfNeeded()
 
         // 1. Alice's first device sets up recovery from the account menu and is shown the key once.
@@ -204,26 +204,42 @@ class ZZAccountSecurityIntegrationTest {
         composeRule.waitUntil(timeoutMillis = 10_000) {
             composeRule.onAllNodesWithText("Verify this device").fetchSemanticsNodes().isNotEmpty()
         }
-        composeRule.waitUntil(timeoutMillis = 60_000) {
+        waitFor("the backup room in the conversation list", 60_000, { "rooms=${repository.joinedRooms.value.map { "${it.name}:${it.encrypted}" }}" }) {
             composeRule.onAllNodesWithText(GROUP_NAME).fetchSemanticsNodes().isNotEmpty()
         }
         composeRule.onNodeWithText(GROUP_NAME).performClick()
-        composeRule.waitUntil(timeoutMillis = 60_000) {
+        waitFor("an undecryptable bubble", 60_000, ::timelineState) {
             composeRule.onAllNodesWithText("Waiting for this message…").fetchSemanticsNodes().isNotEmpty()
         }
         composeRule.onAllNodesWithTag(DECRYPTION_ACTION_TAG).onFirst().performClick()
         composeRule.onNodeWithText("Verify with recovery key").performScrollTo().performClick()
         composeRule.onNodeWithTag(RECOVERY_KEY_INPUT_TAG).performTextInput(recoveryKey)
         composeRule.onNodeWithText("Continue").performClick()
-        composeRule.waitUntil(timeoutMillis = 120_000) {
+        waitFor("recovery on the new device", 120_000, {
+            "verification=${repository.verificationState.value} recovery=${repository.recoveryState.value} backup=${repository.backupState.value}"
+        }) {
             repository.verificationState.value == VerificationState.VERIFIED &&
                 repository.recoveryState.value == RecoveryState.ENABLED
         }
         closeSecurity()
-        composeRule.waitUntil(timeoutMillis = 120_000) {
+        waitFor("the message to decrypt in place", 120_000, ::timelineState) {
             composeRule.onAllNodesWithText(message).fetchSemanticsNodes().isNotEmpty()
         }
         composeRule.onNodeWithText(message).assertIsDisplayed()
+    }
+
+    private val repository get() = MatrixRepository.get(context)
+
+    private fun timelineState(): String =
+        "messages=${repository.messages.value.map { "${it.sender}:${it.decryptionFailure ?: it.text.take(24)}" }}"
+
+    /** waitUntil that reports app state on timeout, so CI failures say what the app saw. */
+    private fun waitFor(what: String, timeoutMillis: Long, state: () -> String, condition: () -> Boolean) {
+        try {
+            composeRule.waitUntil(timeoutMillis = timeoutMillis, condition = condition)
+        } catch (timeout: ComposeTimeoutException) {
+            throw AssertionError("Timed out waiting for $what; ${state()}", timeout)
+        }
     }
 
     private fun checkSecondNotCancelled() {

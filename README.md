@@ -33,6 +33,11 @@ end-to-end encrypted rooms can be opened for messaging.
   composer, hold the round button to record a voice message, play voice clips
   and open media inline, conversation snippets with relative times and unread
   badges cleared by read receipts, and encrypted group creation.
+- **Account safety** — the account menu holds Security and Sign out: set up
+  recovery (key backup, recovery key shown once), verify a new session with
+  emoji from another device or with the recovery key, and see
+  "Waiting for this message…" bubbles that explain why a message can't be
+  decrypted yet and how to fix it. Sign out wipes the local encrypted store.
 
 ## Signing in
 
@@ -64,7 +69,9 @@ Builds and automated tests run in GitHub Actions (see
 - `./gradlew :app:assembleDebug :app:testDebugUnitTest :app:lintDebug`
 - Emulator instrumentation against disposable Synapse: real password sign-in,
   bare-server and Matrix-ID login enablement, encrypted-room creation,
-  encrypted message send, reactions, and screenshot capture.
+  encrypted message send, reactions, recovery setup, emoji verification of a
+  second device, history restore from key backup, sign-out, and screenshot
+  capture.
 - Green runs upload the debug APK (`Send-debug-APK`), test results
   (`Send-Android-Test-Results`), and screenshots (`Send-UI-Screenshots`).
 
