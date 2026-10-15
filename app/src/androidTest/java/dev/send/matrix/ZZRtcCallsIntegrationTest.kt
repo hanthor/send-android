@@ -190,6 +190,11 @@ class ZZRtcCallsIntegrationTest {
             NotificationRouter.visibleRoomId == roomId &&
                 composeRule.onAllNodesWithContentDescription("Voice call").fetchSemanticsNodes().isNotEmpty()
         }
+        // Joining Bob's running session rang nobody: Element Call only rings when nobody else is in the call.
+        assertTrue(
+            "answering re-rang Bob: rung=$bobRung timeline=$bobTimelineRings",
+            bobRung.values.none { it.startsWith(ALICE) } && bobTimelineRings.values.none { it == ALICE },
+        )
         // Only the ring of the call placed below counts.
         bobRung.clear()
         val placedAt = System.currentTimeMillis()
