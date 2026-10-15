@@ -29,6 +29,10 @@ end-to-end encrypted rooms can be opened for messaging.
   overlapping reaction pills, dark-mode dynamic color.
 - **Encrypted everything** — unencrypted rooms stay hidden; reactions,
   pagination, and outgoing audio calls included.
+- **Messages features on Matrix** — attach files or photos/videos from the
+  composer, hold the round button to record a voice message, play voice clips
+  and open media inline, conversation snippets with relative times and unread
+  badges cleared by read receipts, and encrypted group creation.
 
 ## Signing in
 

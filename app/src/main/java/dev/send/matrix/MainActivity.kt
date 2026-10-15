@@ -11,7 +11,15 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.browser.customtabs.CustomTabsIntent
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
@@ -74,6 +82,13 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.SentimentSatisfied
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.outlined.AddCircleOutline
+import androidx.compose.material.icons.outlined.GroupAdd
+import androidx.compose.material.icons.outlined.Groups
+import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.InputChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -94,6 +109,9 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -129,6 +147,7 @@ import com.journeyapps.barcodescanner.ScanOptions
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import org.matrix.rustcomponents.sdk.Room
 import org.matrix.rustcomponents.sdk.Timeline
 import io.element.android.call.ui.ElementCallOverlay
@@ -245,6 +264,7 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
     var activeRoomIsDirect by rememberSaveable { mutableStateOf(false) }
     var drafts by rememberSaveable { mutableStateOf<Map<String, String>>(emptyMap()) }
     var notice by rememberSaveable { mutableStateOf("") }
+    var pendingUploads by remember { mutableIntStateOf(0) }
     val rooms by repository.joinedRooms.collectAsState()
     var callSession by remember { mutableStateOf<NativeMatrixCallSession?>(null) }
     LaunchedEffect(signedIn) {
@@ -254,6 +274,19 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
         } else callSession = null
     }
     val messages by repository.messages.collectAsState()
+    // Opening a conversation (and every new arrival while it is open) sends a read receipt so unread badges clear.
+    val latestMessageId = messages.lastOrNull()?.id
+    LaunchedEffect(timeline, latestMessageId) {
+        val current = timeline ?: return@LaunchedEffect
+        if (latestMessageId == null) return@LaunchedEffect
+        try {
+            repository.markAsRead(current, activeRoomId)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            android.util.Log.w("SendApp", "Read receipt could not be sent", failure)
+        }
+    }
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     val qrScanner = rememberLauncherForActivityResult(ScanContract()) { result ->
         val payload = result.contents
@@ -416,6 +449,32 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
                     }
                 },
                 onAudioCall = { callSession?.startAudioCall(activeRoomId) },
+                onSendAttachment = { uri ->
+                    val currentRoom = room
+                    val currentTimeline = timeline
+                    if (currentRoom != null && currentTimeline != null) scope.launch {
+                        error = ""
+                        pendingUploads += 1
+                        try { repository.sendAttachment(currentTimeline, currentRoom, uri) }
+                        catch (cancelled: CancellationException) { throw cancelled }
+                        catch (failure: Exception) { error = failure.message ?: "Attachment could not be sent." }
+                        finally { pendingUploads -= 1 }
+                    }
+                },
+                onSendVoice = { recording ->
+                    val currentRoom = room
+                    val currentTimeline = timeline
+                    if (currentRoom != null && currentTimeline != null) scope.launch {
+                        error = ""
+                        pendingUploads += 1
+                        try { repository.sendVoiceMessage(currentTimeline, currentRoom, recording) }
+                        catch (cancelled: CancellationException) { throw cancelled }
+                        catch (failure: Exception) { error = failure.message ?: "Voice message could not be sent." }
+                        finally { pendingUploads -= 1 }
+                    } else recording.file.delete()
+                },
+                loadMedia = repository::mediaFile,
+                uploading = pendingUploads > 0,
                 error = error
             )
             else -> HomeScreen(
@@ -449,6 +508,18 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
                             notice = "Encrypted conversation created."
                         } catch (failure: Exception) {
                             error = failure.message ?: "Conversation could not be created."
+                        }
+                    }
+                },
+                onCreateGroup = { name, members ->
+                    error = ""
+                    notice = "Creating encrypted group…"
+                    activeJob = scope.launch {
+                        try {
+                            repository.createEncryptedGroup(name, members)
+                            notice = "Encrypted group created."
+                        } catch (failure: Exception) {
+                            error = failure.message ?: "Group could not be created."
                         }
                     }
                 }
@@ -925,6 +996,7 @@ internal fun HomeScreen(
     notice: String,
     creatingDirectRoom: Boolean,
     onCreateDirectRoom: (String) -> Unit,
+    onCreateGroup: (name: String, members: List<String>) -> Unit,
 ) {
     var showingNewChat by rememberSaveable { mutableStateOf(false) }
     var matrixUserId by rememberSaveable { mutableStateOf("") }
@@ -1012,7 +1084,7 @@ internal fun HomeScreen(
                 }
             } else {
                 items(visibleRooms, key = { it.id }) { chat ->
-                    ConversationRow(name = chat.name, snippet = "End-to-end encrypted", onClick = { onOpen(chat) })
+                    ConversationRow(room = chat, onClick = { onOpen(chat) })
                 }
             }
         }
@@ -1032,10 +1104,16 @@ internal fun HomeScreen(
                 onCreateDirectRoom(matrixUserId)
                 showingNewChat = false
             },
+            onCreateGroup = { name, members ->
+                onCreateGroup(name, members)
+                matrixUserId = ""
+                showingNewChat = false
+            },
         )
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun NewConversationScreen(
     value: String,
@@ -1043,14 +1121,40 @@ private fun NewConversationScreen(
     creating: Boolean,
     onBack: () -> Unit,
     onCreate: () -> Unit,
+    onCreateGroup: (name: String, members: List<String>) -> Unit,
 ) {
     // Full-screen Messages-style picker: To: bar on top, contact row below. No popup dialog.
     val colors = MaterialTheme.colorScheme
-    val valid = !creating && value.trim().let {
-        it.startsWith("@") && it.indexOf(':') > 1 && !it.any(Char::isWhitespace)
+    var groupMode by rememberSaveable { mutableStateOf(false) }
+    var members by rememberSaveable { mutableStateOf<List<String>>(emptyList()) }
+    var groupName by rememberSaveable { mutableStateOf("") }
+    val typed = value.trim()
+    val typedValid = isMatrixUserId(typed)
+    val valid = !creating && if (groupMode) members.isNotEmpty() || typedValid else typedValid
+    fun addTypedMember() {
+        if (typedValid && typed !in members) members = members + typed
+        if (typedValid) onValue("")
     }
+    fun leaveGroupMode() {
+        groupMode = false
+        members = emptyList()
+        groupName = ""
+    }
+    val create = {
+        if (groupMode) {
+            val everyone = if (typedValid) (members + typed).distinct() else members
+            onCreateGroup(groupName, everyone)
+        } else onCreate()
+    }
+    BackHandler(enabled = groupMode && !creating) { leaveGroupMode() }
     val focus = remember { androidx.compose.ui.focus.FocusRequester() }
     LaunchedEffect(Unit) { focus.requestFocus() }
+    val fieldColors = TextFieldDefaults.colors(
+        focusedContainerColor = Color.Transparent,
+        unfocusedContainerColor = Color.Transparent,
+        focusedIndicatorColor = Color.Transparent,
+        unfocusedIndicatorColor = Color.Transparent,
+    )
     Scaffold(
         containerColor = colors.surfaceContainer,
         topBar = {
@@ -1059,63 +1163,117 @@ private fun NewConversationScreen(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    IconButton(onClick = onBack, enabled = !creating) {
+                    IconButton(onClick = { if (groupMode) leaveGroupMode() else onBack() }, enabled = !creating) {
                         Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                     Text(
-                        text = "New chat",
+                        text = if (groupMode) "New group" else "New chat",
                         style = MaterialTheme.typography.titleLarge,
                         color = colors.onSurface,
                         modifier = Modifier.weight(1f),
                     )
-                    TextButton(onClick = onCreate, enabled = valid) {
+                    TextButton(onClick = create, enabled = valid) {
                         Text(if (creating) "Creating…" else "Create")
                     }
                 }
             }
         },
     ) { innerPadding ->
-        androidx.compose.foundation.layout.Column(
+        Column(
             modifier = Modifier.fillMaxSize().padding(innerPadding).padding(horizontal = 16.dp, vertical = 8.dp),
         ) {
-            // Messages: light "To:" pill on the tinted page, keyboard up immediately.
+            // Messages: light "To:" pill on the tinted page, keyboard up immediately; group members become chips.
             Surface(
-                modifier = Modifier.fillMaxWidth().height(56.dp),
+                modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp),
                 shape = RoundedCornerShape(28.dp),
                 color = colors.surface,
             ) {
-                Row(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                    verticalArrangement = Arrangement.Center,
+                    itemVerticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
                     Text(text = "To:", style = MaterialTheme.typography.bodyLarge, color = colors.onSurface)
-                    Spacer(modifier = Modifier.width(4.dp))
+                    members.forEach { member ->
+                        InputChip(
+                            selected = false,
+                            onClick = { members = members - member },
+                            enabled = !creating,
+                            label = { Text(member, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis) },
+                            trailingIcon = { Icon(Icons.Filled.Close, contentDescription = "Remove $member", modifier = Modifier.size(18.dp)) },
+                            shape = RoundedCornerShape(50),
+                        )
+                    }
                     TextField(
                         value = value,
                         onValueChange = onValue,
                         placeholder = { Text("Type a Matrix ID") },
                         singleLine = true,
                         enabled = !creating,
-                        modifier = Modifier.weight(1f).focusRequester(focus),
-                        colors = TextFieldDefaults.colors(
-                            focusedContainerColor = Color.Transparent,
-                            unfocusedContainerColor = Color.Transparent,
-                            focusedIndicatorColor = Color.Transparent,
-                            unfocusedIndicatorColor = Color.Transparent,
+                        keyboardOptions = KeyboardOptions(imeAction = if (groupMode) ImeAction.Next else ImeAction.Done),
+                        keyboardActions = KeyboardActions(
+                            onNext = { addTypedMember() },
+                            onDone = { if (valid) create() },
                         ),
+                        modifier = Modifier.weight(1f).widthIn(min = 160.dp).focusRequester(focus),
+                        colors = fieldColors,
                     )
                 }
             }
             Spacer(Modifier.height(12.dp))
-            if (value.isBlank()) {
+            if (groupMode) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth().height(56.dp),
+                    shape = RoundedCornerShape(28.dp),
+                    color = colors.surface,
+                ) {
+                    TextField(
+                        value = groupName,
+                        onValueChange = { groupName = it },
+                        placeholder = { Text("Group name (optional)") },
+                        singleLine = true,
+                        enabled = !creating,
+                        leadingIcon = { Icon(Icons.Outlined.Groups, contentDescription = null) },
+                        modifier = Modifier.fillMaxSize(),
+                        colors = fieldColors,
+                    )
+                }
+                Spacer(Modifier.height(12.dp))
+            } else {
+                // Messages: tonal "Create group" pill under the To: field.
+                FilledTonalButton(
+                    onClick = {
+                        groupMode = true
+                        addTypedMember()
+                    },
+                    enabled = !creating,
+                    shape = RoundedCornerShape(50),
+                ) {
+                    Icon(Icons.Outlined.GroupAdd, contentDescription = null, modifier = Modifier.size(20.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Create group")
+                }
+                Spacer(Modifier.height(12.dp))
+            }
+            if (typed.isBlank()) {
                 Text(
-                    text = "Enter a full Matrix ID like @bob:example.org to start an encrypted conversation.",
+                    text = if (groupMode) {
+                        "Add everyone by full Matrix ID. The group is private and end-to-end encrypted."
+                    } else {
+                        "Enter a full Matrix ID like @bob:example.org to start an encrypted conversation."
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                     color = colors.onSurfaceVariant,
                 )
-            } else if (valid) {
+            } else if (typedValid) {
                 Row(
-                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).clickable { onCreate() }.padding(horizontal = 4.dp, vertical = 10.dp),
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp))
+                        .clickable(enabled = !creating) { if (groupMode) addTypedMember() else onCreate() }
+                        .padding(horizontal = 4.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    val (avatarBg, avatarFg) = avatarPalette(value.trim())
+                    val (avatarBg, avatarFg) = avatarPalette(typed)
                     Box(
                         modifier = Modifier.size(48.dp).background(avatarBg, CircleShape),
                         contentAlignment = Alignment.Center,
@@ -1123,8 +1281,12 @@ private fun NewConversationScreen(
                         Text(text = "?", style = MaterialTheme.typography.titleMedium, color = avatarFg)
                     }
                     Spacer(modifier = Modifier.width(16.dp))
-                    androidx.compose.foundation.layout.Column(modifier = Modifier.weight(1f)) {
-                        Text(text = "Create chat with ${value.trim()}", style = MaterialTheme.typography.titleMedium, color = colors.onSurface)
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = if (groupMode) "Add $typed" else "Create chat with $typed",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = colors.onSurface,
+                        )
                         Text(text = "End-to-end encrypted", style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant)
                     }
                 }
@@ -1144,42 +1306,91 @@ private fun NewConversationScreen(
 }
 
 @Composable
-private fun ConversationRow(name: String, snippet: String, onClick: () -> Unit) {
+private fun ConversationRow(room: MatrixRoom, onClick: () -> Unit) {
+    val context = LocalContext.current
+    val colors = MaterialTheme.colorScheme
+    val unread = room.unreadCount > 0
+    // Messages: unread conversations get a bold name, bold snippet and timestamp, and a count badge.
+    val emphasis = if (unread) FontWeight.Bold else FontWeight.Normal
     Row(
         // Messages: pressed row shows a rounded pill highlight inset from the screen edges.
         modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp).clip(RoundedCornerShape(28.dp))
             .clickable { onClick() }.padding(horizontal = 8.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Avatar(name = name, size = 52.dp)
+        Avatar(name = room.name, size = 52.dp)
         Spacer(modifier = Modifier.width(16.dp))
-        androidx.compose.foundation.layout.Column(modifier = Modifier.weight(1f)) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+        Column(modifier = Modifier.weight(1f)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = name,
+                    text = room.name,
                     style = MaterialTheme.typography.titleMedium.copy(fontSize = 18.sp),
-                    color = MaterialTheme.colorScheme.onSurface,
+                    fontWeight = if (unread) FontWeight.Bold else null,
+                    color = colors.onSurface,
                     maxLines = 1,
                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
+                room.lastTimestampMillis?.let { timestamp ->
+                    Text(
+                        text = conversationTimestamp(context, timestamp),
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = emphasis,
+                        color = if (unread) colors.onSurface else colors.onSurfaceVariant,
+                        modifier = Modifier.padding(start = 8.dp),
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(2.dp))
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Icon(
                     imageVector = Icons.Filled.Lock,
                     contentDescription = "Encrypted",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(14.dp).padding(start = 8.dp),
+                    tint = colors.onSurfaceVariant,
+                    modifier = Modifier.padding(end = 4.dp).size(14.dp),
                 )
+                Text(
+                    text = room.lastMessage ?: "End-to-end encrypted",
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = emphasis,
+                    color = if (unread) colors.onSurface else colors.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                if (unread) {
+                    val label = if (room.unreadCount > 99) "99+" else room.unreadCount.toString()
+                    Box(
+                        modifier = Modifier.padding(start = 8.dp).heightIn(min = 22.dp).widthIn(min = 22.dp)
+                            .background(colors.primary, CircleShape)
+                            .clearAndSetSemantics { contentDescription = "${room.unreadCount} unread" }
+                            .padding(horizontal = 6.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(label, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = colors.onPrimary)
+                    }
+                }
             }
-            Spacer(modifier = Modifier.height(2.dp))
-            Text(
-                text = snippet,
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-            )
         }
     }
+}
+
+/** Messages-style list timestamp: "Now", time today, weekday this week, otherwise the date. */
+internal fun conversationTimestamp(context: android.content.Context, timestampMillis: Long, nowMillis: Long = System.currentTimeMillis()): String {
+    val age = nowMillis - timestampMillis
+    if (age in -DateUtils.MINUTE_IN_MILLIS until DateUtils.MINUTE_IN_MILLIS) return "Now"
+    if (DateUtils.isToday(timestampMillis)) return DateUtils.formatDateTime(context, timestampMillis, DateUtils.FORMAT_SHOW_TIME)
+    if (age in 0 until 6 * DateUtils.DAY_IN_MILLIS) {
+        return DateUtils.formatDateTime(context, timestampMillis, DateUtils.FORMAT_SHOW_WEEKDAY or DateUtils.FORMAT_ABBREV_WEEKDAY)
+    }
+    val sameYear = java.util.Calendar.getInstance().run {
+        timeInMillis = nowMillis
+        val year = get(java.util.Calendar.YEAR)
+        timeInMillis = timestampMillis
+        year == get(java.util.Calendar.YEAR)
+    }
+    val yearFlag = if (sameYear) DateUtils.FORMAT_NO_YEAR else DateUtils.FORMAT_SHOW_YEAR
+    return DateUtils.formatDateTime(context, timestampMillis, DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_ABBREV_MONTH or yearFlag)
 }
 
 @Composable
@@ -1209,11 +1420,39 @@ internal fun ConversationScreen(
     onOlder: () -> Unit,
     onReact: (String, String) -> Unit,
     onAudioCall: () -> Unit,
+    onSendAttachment: (Uri) -> Unit,
+    onSendVoice: (VoiceRecording) -> Unit,
+    loadMedia: MediaLoader,
+    uploading: Boolean,
     error: String,
 ) {
     var reactionTargetId by remember { mutableStateOf<String?>(null) }
+    var expandedTimeId by remember { mutableStateOf<String?>(null) }
     var showMenu by remember { mutableStateOf(false) }
     val context = LocalContext.current
+    val playback = rememberVoicePlayback()
+    val recorder = remember { VoiceRecorder(context.applicationContext) }
+    var recording by remember { mutableStateOf(false) }
+    var recordingElapsed by remember { mutableLongStateOf(0L) }
+    var cancellingRecording by remember { mutableStateOf(false) }
+    var composerHint by remember { mutableStateOf("") }
+    DisposableEffect(recorder) { onDispose { recorder.cancel() } }
+    LaunchedEffect(recording) {
+        while (recording) {
+            recorder.sampleAmplitude()
+            recordingElapsed = recorder.elapsedMillis
+            delay(100)
+        }
+    }
+    val documentPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) onSendAttachment(uri)
+    }
+    val mediaPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) onSendAttachment(uri)
+    }
+    val micPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        composerHint = if (granted) "Hold to record, release to send" else "Microphone access is needed to record voice messages."
+    }
     androidx.activity.compose.BackHandler { onBack() }
     Scaffold(
         containerColor = MaterialTheme.colorScheme.surfaceContainer,
@@ -1247,12 +1486,14 @@ internal fun ConversationScreen(
                             Icon(imageVector = Icons.Filled.MoreVert, contentDescription = "More options")
                         }
                         DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
-                            androidx.compose.material3.DropdownMenuItem(
-                                text = { Text("End-to-end encrypted") },
-                                leadingIcon = { Icon(Icons.Filled.Lock, contentDescription = null) },
-                                enabled = false,
-                                onClick = {},
-                            )
+                            Row(
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Icon(Icons.Filled.Lock, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp))
+                                Spacer(Modifier.width(12.dp))
+                                Text("End-to-end encrypted", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
                             androidx.compose.material3.DropdownMenuItem(
                                 text = { Text("Load older messages") },
                                 onClick = { showMenu = false; onOlder() },
@@ -1268,15 +1509,28 @@ internal fun ConversationScreen(
                     if (error.isNotBlank()) {
                         Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(bottom = 6.dp))
                     }
+                    val status = if (uploading) "Sending attachment…" else composerHint
+                    if (status.isNotBlank()) {
+                        Text(status, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(start = 16.dp, bottom = 6.dp))
+                    }
                     var showEmoji by remember { mutableStateOf(false) }
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
-                        // Messages composer: 56dp pill with the field and inline emoji action.
+                        // Messages composer: 56dp pill with attach, field, emoji and gallery actions.
                         Surface(
                             modifier = Modifier.weight(1f).heightIn(min = 56.dp),
                             shape = RoundedCornerShape(28.dp),
                             color = MaterialTheme.colorScheme.surfaceContainerHigh,
                         ) {
-                            Row(Modifier.fillMaxWidth().padding(start = 8.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                            if (recording) {
+                                RecordingIndicator(
+                                    elapsedMillis = recordingElapsed,
+                                    cancelling = cancellingRecording,
+                                    modifier = Modifier.fillMaxWidth().height(56.dp),
+                                )
+                            } else Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                IconButton(onClick = { documentPicker.launch(arrayOf("*/*")) }) {
+                                    Icon(imageVector = Icons.Outlined.AddCircleOutline, contentDescription = "Attach file", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
                                 TextField(
                                     value = draft,
                                     onValueChange = onDraft,
@@ -1310,22 +1564,58 @@ internal fun ConversationScreen(
                                         }
                                     }
                                 }
+                                IconButton(onClick = { mediaPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) }) {
+                                    Icon(imageVector = Icons.Outlined.Image, contentDescription = "Gallery", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
                             }
                         }
                         Spacer(modifier = Modifier.width(8.dp))
-                        // Messages' 56dp circular action button.
-                        FilledIconButton(
-                            onClick = onSend,
-                            enabled = draft.isNotBlank(),
-                            modifier = Modifier.size(56.dp),
-                            colors = androidx.compose.material3.IconButtonDefaults.filledIconButtonColors(
-                                containerColor = MaterialTheme.colorScheme.primary,
-                                contentColor = MaterialTheme.colorScheme.onPrimary,
-                                disabledContainerColor = MaterialTheme.colorScheme.tertiaryContainer,
-                                disabledContentColor = MaterialTheme.colorScheme.onTertiaryContainer,
-                            ),
-                        ) {
-                            Icon(imageVector = Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
+                        // Messages' 56dp circular action: Send with a draft, hold-to-record voice otherwise.
+                        if (draft.isNotBlank()) {
+                            FilledIconButton(
+                                onClick = onSend,
+                                modifier = Modifier.size(56.dp),
+                                colors = androidx.compose.material3.IconButtonDefaults.filledIconButtonColors(
+                                    containerColor = MaterialTheme.colorScheme.primary,
+                                    contentColor = MaterialTheme.colorScheme.onPrimary,
+                                ),
+                            ) {
+                                Icon(imageVector = Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
+                            }
+                        } else {
+                            VoiceRecordButton(
+                                recording = recording,
+                                onStart = {
+                                    if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                                        micPermission.launch(Manifest.permission.RECORD_AUDIO)
+                                        false
+                                    } else try {
+                                        playback.stop()
+                                        recorder.start().also { started ->
+                                            recording = started
+                                            cancellingRecording = false
+                                            recordingElapsed = 0L
+                                            composerHint = ""
+                                        }
+                                    } catch (failure: Exception) {
+                                        composerHint = failure.message ?: "The microphone could not be started."
+                                        false
+                                    }
+                                },
+                                onSlideOutside = { cancellingRecording = it },
+                                onFinish = { send ->
+                                    recording = false
+                                    cancellingRecording = false
+                                    if (send) {
+                                        val clip = recorder.stop()
+                                        if (clip != null) onSendVoice(clip) else composerHint = "Hold to record, release to send"
+                                    } else {
+                                        recorder.cancel()
+                                        composerHint = "Voice message discarded"
+                                    }
+                                },
+                                onTap = { composerHint = "Hold to record, release to send" },
+                            )
                         }
                     }
                 }
@@ -1372,13 +1662,37 @@ internal fun ConversationScreen(
                                 modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
                             )
                         }
-                        MessageBubble(
-                            text = message.text,
-                            isFromMe = message.own,
-                            isFirstInGroup = isFirstInGroup,
-                            isLastInGroup = isLastInGroup,
-                            onLongPress = { reactionTargetId = message.id },
-                        )
+                        val shape = bubbleShape(message.own, isFirstInGroup, isLastInGroup)
+                        // Reactions need a server event id, so local echoes only get them once sent.
+                        val onLongPress: () -> Unit = { if (message.status == DeliveryStatus.Sent) reactionTargetId = message.id }
+                        val onTap: () -> Unit = { expandedTimeId = if (expandedTimeId == message.id) null else message.id }
+                        val attachment = message.attachment
+                        if (attachment != null) {
+                            Box(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = if (isLastInGroup && message.text.isBlank()) 4.dp else 1.dp),
+                                contentAlignment = if (message.own) Alignment.CenterEnd else Alignment.CenterStart,
+                            ) {
+                                AttachmentBubble(
+                                    messageId = message.id,
+                                    attachment = attachment,
+                                    isFromMe = message.own,
+                                    shape = shape,
+                                    loadMedia = loadMedia,
+                                    playback = playback,
+                                    onLongPress = onLongPress,
+                                )
+                            }
+                        }
+                        if (attachment == null || message.text.isNotBlank()) {
+                            MessageBubble(
+                                text = message.text,
+                                isFromMe = message.own,
+                                isFirstInGroup = isFirstInGroup,
+                                isLastInGroup = isLastInGroup,
+                                onClick = onTap,
+                                onLongPress = onLongPress,
+                            )
+                        }
                         DropdownMenu(
                             expanded = reactionTargetId == message.id,
                             onDismissRequest = { reactionTargetId = null },
@@ -1414,13 +1728,19 @@ internal fun ConversationScreen(
                                 )
                             }
                         }
-                        // Messages: time under every cluster, plus delivery state for own messages.
-                        if (isLastInGroup) {
+                        // Messages: time under every cluster (or a tapped message), plus delivery state for own messages.
+                        if (isLastInGroup || expandedTimeId == message.id || message.status == DeliveryStatus.Failed) {
                             val time = DateUtils.formatDateTime(context, message.timestampMillis, DateUtils.FORMAT_SHOW_TIME)
+                            val label = when {
+                                !message.own -> time
+                                message.status == DeliveryStatus.Sending -> "Sending…"
+                                message.status == DeliveryStatus.Failed -> "$time · Not sent"
+                                else -> "$time · Sent"
+                            }
                             Text(
-                                if (message.own) "$time · Sent" else time,
+                                label,
                                 style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                color = if (message.status == DeliveryStatus.Failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.padding(start = 26.dp, end = 26.dp, top = 2.dp, bottom = 8.dp),
                             )
                         }
@@ -1443,34 +1763,44 @@ private fun dayHeaderLabel(context: android.content.Context, timestampMillis: Lo
     return "$day • $time"
 }
 
+/** Google Messages grouped corner logic: outer corners 20.dp, adjacent-to-group corners 4.dp. */
+internal fun bubbleShape(isFromMe: Boolean, isFirstInGroup: Boolean, isLastInGroup: Boolean): RoundedCornerShape = if (isFromMe) {
+    RoundedCornerShape(
+        topStart = 20.dp,
+        bottomStart = 20.dp,
+        topEnd = if (isFirstInGroup) 20.dp else 4.dp,
+        bottomEnd = if (isLastInGroup) 20.dp else 4.dp,
+    )
+} else {
+    RoundedCornerShape(
+        topStart = if (isFirstInGroup) 20.dp else 4.dp,
+        bottomStart = if (isLastInGroup) 20.dp else 4.dp,
+        topEnd = 20.dp,
+        bottomEnd = 20.dp,
+    )
+}
+
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun MessageBubble(text: String, isFromMe: Boolean, isFirstInGroup: Boolean, isLastInGroup: Boolean, onLongPress: () -> Unit = {}) {
-    // Google Messages grouped corner logic: outer corners 20.dp, adjacent-to-group corners 4.dp.
-    val shape = if (isFromMe) {
-        RoundedCornerShape(
-            topStart = 20.dp,
-            bottomStart = 20.dp,
-            topEnd = if (isFirstInGroup) 20.dp else 4.dp,
-            bottomEnd = if (isLastInGroup) 20.dp else 4.dp,
-        )
-    } else {
-        RoundedCornerShape(
-            topStart = if (isFirstInGroup) 20.dp else 4.dp,
-            bottomStart = if (isLastInGroup) 20.dp else 4.dp,
-            topEnd = 20.dp,
-            bottomEnd = 20.dp,
-        )
-    }
+fun MessageBubble(
+    text: String,
+    isFromMe: Boolean,
+    isFirstInGroup: Boolean,
+    isLastInGroup: Boolean,
+    onClick: () -> Unit,
+    onLongPress: () -> Unit,
+) {
     Box(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = if (isLastInGroup) 4.dp else 1.dp),
         contentAlignment = if (isFromMe) Alignment.CenterEnd else Alignment.CenterStart,
     ) {
         Surface(
-            shape = shape,
+            shape = bubbleShape(isFromMe, isFirstInGroup, isLastInGroup),
             // Messages uses tonal blue for sent bubbles, not a saturated primary fill.
             color = if (isFromMe) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
             contentColor = if (isFromMe) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.widthIn(max = 280.dp).combinedClickable(onClick = {}, onLongClick = onLongPress),
+            // Tap reveals the message's time/status (as in Messages); long-press opens reactions.
+            modifier = Modifier.widthIn(max = 280.dp).combinedClickable(onClick = onClick, onLongClick = onLongPress),
         ) {
             Text(text = text, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
         }
