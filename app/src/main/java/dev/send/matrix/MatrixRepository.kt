@@ -77,6 +77,10 @@ import org.matrix.rustcomponents.sdk.Session
 import org.matrix.rustcomponents.sdk.SlidingSyncVersion
 import org.matrix.rustcomponents.sdk.SlidingSyncVersionBuilder
 import org.matrix.rustcomponents.sdk.MessageType
+import org.matrix.rustcomponents.sdk.IgnoredUsersListener
+import org.matrix.rustcomponents.sdk.Membership
+import org.matrix.rustcomponents.sdk.MessageLikeEventContent
+import org.matrix.rustcomponents.sdk.TimelineEventContent
 import org.matrix.rustcomponents.sdk.QrCodeData
 import org.matrix.rustcomponents.sdk.Room
 import org.matrix.rustcomponents.sdk.SqliteStoreBuilder
@@ -120,7 +124,41 @@ data class MatrixRoom(
     val callParticipants: List<String> = emptyList(),
     /** The call's members agree on video (`activeRoomCallConsensusIntent`). */
     val callVideo: Boolean = false,
+    /** Pinned to the top of the list: the room's `m.favourite` tag. */
+    val pinned: Boolean = false,
+    /** Archived out of the main list: the room's `m.lowpriority` tag. */
+    val archived: Boolean = false,
+    /** Marked unread by the user (`m.marked_unread`), independent of [unreadCount]. */
+    val markedUnread: Boolean = false,
+    /** For a DM, the other person's Matrix ID (the room's single hero); null for groups. */
+    val dmUserId: String? = null,
 )
+
+/** A starred message as listed on the conversation's Starred screen. */
+data class StarredMessage(
+    val eventId: String,
+    val sender: String,
+    val own: Boolean,
+    /** Text or media summary ("Photo", …); null when the event can't be loaded or decrypted here. */
+    val text: String?,
+    val timestampMillis: Long?,
+)
+
+/** A tag or unread change made here, shown on the room until sync reports it (null fields are untouched). */
+private data class PendingRoomFlags(
+    val pinned: Boolean? = null,
+    val archived: Boolean? = null,
+    /** True: marked unread; false: read (flag cleared, unread count gone). */
+    val unread: Boolean? = null,
+    val sinceMillis: Long = 0L,
+) {
+    fun applyTo(room: MatrixRoom): MatrixRoom = room.copy(
+        pinned = pinned ?: room.pinned,
+        archived = archived ?: room.archived,
+        markedUnread = unread ?: room.markedUnread,
+        unreadCount = if (unread == false) 0 else room.unreadCount,
+    )
+}
 
 enum class AttachmentKind { Image, Video, Audio, Voice, File }
 
@@ -275,6 +313,20 @@ class MatrixRepository(context: Context) {
     private val roomEntries = mutableListOf<MatrixRoom>()
     private val roomEntriesLock = Mutex()
     private var roomListGeneration = 0
+    /** Tag and unread changes sent from here that sync hasn't echoed back yet (guarded by the [roomEntries] monitor). */
+    private val pendingRoomFlags = HashMap<String, PendingRoomFlags>()
+    /** Conversations being left and forgotten, hidden until the SDK list drops them (guarded by [roomEntries]). */
+    private val pendingRemovals = HashSet<String>()
+    @Volatile private var ignoredUsersHandle: TaskHandle? = null
+    private val _ignoredUsers = MutableStateFlow<Set<String>>(emptySet())
+    /** Users this account blocked (`m.ignored_user_list`); their DMs leave the conversation list. */
+    val ignoredUsers: StateFlow<Set<String>> = _ignoredUsers.asStateFlow()
+    private val _starredEvents = MutableStateFlow<Map<String, List<String>>>(emptyMap())
+    /** Starred messages per room, oldest star first, from the account data event [STARRED_EVENT_TYPE]. */
+    val starredEvents: StateFlow<Map<String, List<String>>> = _starredEvents.asStateFlow()
+    private val starredLock = Mutex()
+    /** The starred map this device last wrote and when, until sync brings it back into the store. */
+    private var starredWrite: Pair<Map<String, List<String>>, Long>? = null
     private val _roomListServiceState = MutableStateFlow(org.matrix.rustcomponents.sdk.RoomListServiceState.INITIAL)
     val roomListServiceState: StateFlow<org.matrix.rustcomponents.sdk.RoomListServiceState> = _roomListServiceState.asStateFlow()
     private val _messages = MutableStateFlow<List<MatrixMessage>>(emptyList())
@@ -550,6 +602,11 @@ class MatrixRepository(context: Context) {
         }
         notificationSettings = null
         _mutedRoomIds.value = emptySet()
+        ignoredUsersHandle?.close()
+        ignoredUsersHandle = null
+        _ignoredUsers.value = emptySet()
+        _starredEvents.value = emptyMap()
+        starredWrite = null
         syncService?.close()
         syncService = null
         syncStarted = false
@@ -561,6 +618,8 @@ class MatrixRepository(context: Context) {
         synchronized(roomEntries) {
             roomListGeneration++
             roomEntries.clear()
+            pendingRoomFlags.clear()
+            pendingRemovals.clear()
             _joinedRooms.value = emptyList()
         }
         timelineItems.clear()
@@ -623,6 +682,31 @@ class MatrixRepository(context: Context) {
             }
         }
         refreshMutedRooms()
+        startListState()
+    }
+
+    /** Follows the ignored-user list and loads starred messages for the session that just started syncing. */
+    private fun startListState() {
+        val sdk = client ?: return
+        if (ignoredUsersHandle == null) {
+            ignoredUsersHandle = sdk.subscribeToIgnoredUsers(object : IgnoredUsersListener {
+                override fun call(ignoredUserIds: List<String>) {
+                    if (client === sdk) _ignoredUsers.value = ignoredUserIds.toSet()
+                }
+            })
+        }
+        repositoryScope.launch {
+            try {
+                refreshIgnoredUsers()
+            } catch (error: Exception) {
+                android.util.Log.w(TAG, "Blocked users could not be read", error)
+            }
+            try {
+                refreshStarred()
+            } catch (error: Exception) {
+                android.util.Log.w(TAG, "Starred messages could not be read", error)
+            }
+        }
     }
 
     /** Whether this session's sync service has been started (by the app or a background worker). */
@@ -1101,7 +1185,7 @@ class MatrixRepository(context: Context) {
                                 if (generation != roomListGeneration) return@withLock
                                 roomEntries.clear()
                                 roomEntries.addAll(current)
-                                _joinedRooms.value = mergeLocallyCreatedRooms(current)
+                                publishRooms(current)
                             }
                         }
                     }
@@ -1123,12 +1207,13 @@ class MatrixRepository(context: Context) {
             null
         }
         val unread = info?.let { maxOf(it.numUnreadMessages, it.notificationCount).toLong() } ?: 0L
+        val direct = room.isDirect()
         val (snippet, timestamp) = summarize(room.latestEvent())
         val matrixRoom = MatrixRoom(
             id = room.id(),
             name = room.displayName().orEmpty().ifBlank { room.id() },
             encrypted = room.isEncrypted(),
-            direct = room.isDirect(),
+            direct = direct,
             lastMessage = snippet,
             lastTimestampMillis = timestamp,
             unreadCount = unread.coerceIn(0L, Int.MAX_VALUE.toLong()).toInt(),
@@ -1139,6 +1224,10 @@ class MatrixRepository(context: Context) {
                 is RtcCallIntentConsensus.Partial -> consensus.intent == RtcCallIntent.VIDEO
                 else -> false
             },
+            pinned = info?.isFavourite == true,
+            archived = info?.isLowPriority == true,
+            markedUnread = info?.isMarkedUnread == true,
+            dmUserId = if (direct) info?.heroes?.singleOrNull()?.userId else null,
         )
         synchronized(locallyCreatedRooms) { locallyCreatedRooms.remove(matrixRoom.id) }
         return matrixRoom
@@ -1188,7 +1277,7 @@ class MatrixRepository(context: Context) {
                     val index = roomEntries.indexOfFirst { it.id == roomId }
                     if (index < 0) return@withLock
                     roomEntries[index] = updated
-                    _joinedRooms.value = mergeLocallyCreatedRooms(roomEntries.toList())
+                    publishRooms(roomEntries.toList())
                 }
             }
         }
@@ -1200,6 +1289,196 @@ class MatrixRepository(context: Context) {
             for (room in rooms) deduped[room.id] = room
             for (local in locallyCreatedRooms.values) deduped.putIfAbsent(local.id, local)
             return deduped.values.toList()
+        }
+    }
+
+    /**
+     * Publishes the conversation list (caller holds the [roomEntries] monitor) with the local changes sync hasn't
+     * echoed back yet: tags and unread state set here, conversations being deleted. A pending change is dropped
+     * once the room shows it, or after [PENDING_ROOM_FLAGS_MS] when sync never does (a newer change elsewhere won).
+     */
+    private fun publishRooms(rooms: List<MatrixRoom>) {
+        val merged = mergeLocallyCreatedRooms(rooms)
+        pendingRemovals.retainAll(merged.mapTo(HashSet(merged.size)) { it.id })
+        val at = now()
+        pendingRoomFlags.values.removeAll { at - it.sinceMillis > PENDING_ROOM_FLAGS_MS }
+        _joinedRooms.value = merged.mapNotNull { room ->
+            if (room.id in pendingRemovals) return@mapNotNull null
+            val pending = pendingRoomFlags[room.id] ?: return@mapNotNull room
+            val shown = pending.applyTo(room)
+            if (shown == room) pendingRoomFlags.remove(room.id)
+            shown
+        }
+    }
+
+    /** Shows [change] on [roomIds] at once, runs [action] on each room, and takes the change back if one fails. */
+    private suspend fun updateRooms(
+        roomIds: List<String>,
+        change: (PendingRoomFlags) -> PendingRoomFlags,
+        action: suspend (Room) -> Unit,
+    ) = withContext(Dispatchers.IO) {
+        val sdk = requireClient()
+        synchronized(roomEntries) {
+            for (id in roomIds) pendingRoomFlags[id] = change(pendingRoomFlags[id] ?: PendingRoomFlags())
+            publishRooms(roomEntries.toList())
+        }
+        try {
+            for (id in roomIds) {
+                val room = sdk.getRoom(id) ?: error("Conversation is unavailable.")
+                room.use { action(it) }
+            }
+        } catch (error: Throwable) {
+            synchronized(roomEntries) {
+                roomIds.forEach { pendingRoomFlags.remove(it) }
+                publishRooms(roomEntries.toList())
+            }
+            throw error
+        }
+    }
+
+    /**
+     * Archives conversations (the `m.lowpriority` tag) out of the main list, or brings them back. New messages
+     * keep an archived conversation archived; its notifications follow its push rules as before. The SDK drops
+     * the `m.favourite` tag when it sets `m.lowpriority`, so archiving unpins.
+     */
+    suspend fun setArchived(roomIds: List<String>, archived: Boolean) =
+        updateRooms(roomIds, { it.copy(archived = archived, pinned = if (archived) false else it.pinned, sinceMillis = now()) }) { room ->
+            room.setIsLowPriority(archived, null)
+        }
+
+    /** Pins conversations to the top of the list (the `m.favourite` tag, which replaces `m.lowpriority`), or unpins them. */
+    suspend fun setPinned(roomIds: List<String>, pinned: Boolean) =
+        updateRooms(roomIds, { it.copy(pinned = pinned, archived = if (pinned) false else it.archived, sinceMillis = now()) }) { room ->
+            room.setIsFavourite(pinned, null)
+        }
+
+    /** Marks conversations unread (`m.marked_unread`), or read: flag cleared and a read receipt on the newest event. */
+    suspend fun setMarkedUnread(roomIds: List<String>, unread: Boolean) =
+        updateRooms(roomIds, { it.copy(unread = unread, sinceMillis = now()) }) { room ->
+            room.setUnreadFlag(unread)
+            if (!unread) room.markAsRead(ReceiptType.READ)
+        }
+
+    /** [setRoomMuted] for several conversations. */
+    suspend fun setRoomsMuted(roomIds: List<String>, muted: Boolean) {
+        for (id in roomIds) setRoomMuted(id, muted)
+    }
+
+    /** Deletes conversations from this account: leaves each room and forgets it, so it is gone from every device's list. */
+    suspend fun deleteConversations(roomIds: List<String>) = withContext(Dispatchers.IO) {
+        val sdk = requireClient()
+        synchronized(roomEntries) {
+            pendingRemovals += roomIds
+            publishRooms(roomEntries.toList())
+        }
+        try {
+            for (id in roomIds) {
+                val room = sdk.getRoom(id) ?: continue
+                room.use {
+                    if (it.membership() != Membership.LEFT && it.membership() != Membership.BANNED) it.leave()
+                    it.forget()
+                }
+                synchronized(locallyCreatedRooms) { locallyCreatedRooms.remove(id) }
+                MessageNotifier.cancel(appContext, id)
+            }
+        } catch (error: Throwable) {
+            synchronized(roomEntries) {
+                pendingRemovals -= roomIds.toSet()
+                publishRooms(roomEntries.toList())
+            }
+            throw error
+        }
+    }
+
+    /** Blocks [userId] (adds them to `m.ignored_user_list`): their messages stop reaching this account. */
+    suspend fun blockUser(userId: String) = withContext(Dispatchers.IO) {
+        val sdk = requireClient()
+        _ignoredUsers.value = _ignoredUsers.value + userId
+        try {
+            sdk.ignoreUser(userId)
+        } catch (error: Throwable) {
+            _ignoredUsers.value = _ignoredUsers.value - userId
+            throw error
+        }
+    }
+
+    suspend fun unblockUser(userId: String) = withContext(Dispatchers.IO) {
+        val sdk = requireClient()
+        _ignoredUsers.value = _ignoredUsers.value - userId
+        try {
+            sdk.unignoreUser(userId)
+        } catch (error: Throwable) {
+            _ignoredUsers.value = _ignoredUsers.value + userId
+            throw error
+        }
+    }
+
+    /** Re-reads the blocked users the client holds for this account and returns them. */
+    internal suspend fun refreshIgnoredUsers(): Set<String> = withContext(Dispatchers.IO) {
+        val sdk = requireClient()
+        val ignored = sdk.ignoredUsers().toSet()
+        if (client === sdk) _ignoredUsers.value = ignored
+        ignored
+    }
+
+    /**
+     * Re-reads the starred messages from the store (where sync keeps the account data current) and returns what
+     * the store holds. A write from this device that sync hasn't brought back yet stays shown for [STARRED_ECHO_MS].
+     */
+    suspend fun refreshStarred(): Map<String, List<String>> = withContext(Dispatchers.IO) {
+        val sdk = requireClient()
+        val stored = parseStarred(sdk.accountData(STARRED_EVENT_TYPE))
+        starredLock.withLock {
+            val written = starredWrite
+            if (written == null || written.first == stored || now() - written.second >= STARRED_ECHO_MS) {
+                starredWrite = null
+                if (client === sdk) _starredEvents.value = stored
+            }
+        }
+        stored
+    }
+
+    /** Stars or unstars [eventId] in [roomId], in account data so every session of this account sees it. */
+    suspend fun setStarred(roomId: String, eventId: String, starred: Boolean) = withContext(Dispatchers.IO) {
+        val sdk = requireClient()
+        starredLock.withLock {
+            val current = _starredEvents.value
+            val ids = current[roomId].orEmpty() - eventId
+            val next = if (starred) current + (roomId to ids + eventId) else if (ids.isEmpty()) current - roomId else current + (roomId to ids)
+            sdk.setAccountData(STARRED_EVENT_TYPE, starredJson(next))
+            starredWrite = next to now()
+            _starredEvents.value = next
+        }
+    }
+
+    /** The starred messages of [roomId], most recently starred first, from the loaded timeline or fetched by ID. */
+    suspend fun starredMessages(roomId: String): List<StarredMessage> = withContext(Dispatchers.IO) {
+        refreshStarred()
+        val ids = _starredEvents.value[roomId].orEmpty().asReversed()
+        if (ids.isEmpty()) return@withContext emptyList()
+        val ownUserId = ownUserId()
+        val loaded = _messages.value.associateBy { it.id }
+        val room = requireClient().getRoom(roomId) ?: error("Conversation is unavailable.")
+        room.use {
+            ids.map { id ->
+                loaded[id]?.let { message ->
+                    StarredMessage(id, message.senderName ?: message.sender, message.own, messagePreviewText(message), message.timestampMillis)
+                } ?: try {
+                    room.loadOrFetchEvent(id).use { event ->
+                        val content = (event.content() as? TimelineEventContent.MessageLike)?.content
+                        StarredMessage(
+                            eventId = id,
+                            sender = event.senderId(),
+                            own = event.senderId() == ownUserId,
+                            text = (content as? MessageLikeEventContent.RoomMessage)?.let { messageSummary(it.messageType) },
+                            timestampMillis = event.timestamp().toLong(),
+                        )
+                    }
+                } catch (error: Exception) {
+                    android.util.Log.w(TAG, "Starred event $id unavailable", error)
+                    StarredMessage(id, sender = "", own = false, text = null, timestampMillis = null)
+                }
+            }
         }
     }
 
@@ -1793,9 +2072,12 @@ class MatrixRepository(context: Context) {
         file
     }
 
-    /** Sends a read receipt for the newest event so the room's unread badge clears. */
+    /** Sends a read receipt for the newest event so the room's unread badge clears; opening also drops a "Mark as unread". */
     suspend fun markAsRead(timeline: Timeline, roomId: String) = withContext(Dispatchers.IO) {
         timeline.markAsRead(ReceiptType.READ)
+        client?.getRoom(roomId)?.use { room ->
+            if (room.roomInfo().isMarkedUnread) room.setUnreadFlag(false)
+        }
         refreshRoom(roomId)
     }
 
@@ -1964,6 +2246,33 @@ class MatrixRepository(context: Context) {
         /** Pusher app ID registered with the homeserver for this app's UnifiedPush endpoint. */
         const val PUSHER_APP_ID = "dev.send.matrix"
         const val VOICE_MIMETYPE = "audio/ogg"
+        /** Global account data holding this account's starred messages: `{"rooms": {roomId: [eventId, …]}}`. */
+        const val STARRED_EVENT_TYPE = "dev.send.starred"
+        private const val STARRED_ECHO_MS = 60_000L
+        private const val PENDING_ROOM_FLAGS_MS = 60_000L
+
+        private fun now(): Long = android.os.SystemClock.elapsedRealtime()
+
+        internal fun parseStarred(json: String?): Map<String, List<String>> {
+            if (json.isNullOrBlank()) return emptyMap()
+            val root = runCatching { org.json.JSONObject(json) }.getOrNull() ?: return emptyMap()
+            // Content as stored; tolerate a full event (`{"type": …, "content": …}`) as well.
+            val content = root.optJSONObject("content")?.takeIf { root.has("type") } ?: root
+            val rooms = content.optJSONObject("rooms") ?: return emptyMap()
+            return buildMap {
+                for (roomId in rooms.keys()) {
+                    val events = rooms.optJSONArray(roomId) ?: continue
+                    val ids = (0 until events.length()).mapNotNull { index -> events.optString(index).takeIf { it.startsWith("$") } }.distinct()
+                    if (ids.isNotEmpty()) put(roomId, ids)
+                }
+            }
+        }
+
+        internal fun starredJson(starred: Map<String, List<String>>): String {
+            val rooms = org.json.JSONObject()
+            for ((roomId, ids) in starred) rooms.put(roomId, org.json.JSONArray(ids))
+            return org.json.JSONObject().put("rooms", rooms).toString()
+        }
         @Volatile private var instance: MatrixRepository? = null
 
         fun get(context: Context): MatrixRepository = instance ?: synchronized(this) {

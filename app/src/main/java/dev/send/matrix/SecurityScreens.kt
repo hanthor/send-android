@@ -41,6 +41,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.Logout
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.outlined.Archive
+import androidx.compose.material.icons.outlined.Block
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Devices
@@ -128,6 +130,10 @@ internal fun AccountSheet(
     /** How notifications reach this device ("Push via ntfy", "Background sync…", "Off"); shown with [onNotifications]. */
     notificationSummary: String? = null,
     onNotifications: (() -> Unit)? = null,
+    /** Opens the Archived conversations screen (Messages: account menu → Archived). */
+    onArchived: (() -> Unit)? = null,
+    /** Opens Blocked contacts. */
+    onBlocked: (() -> Unit)? = null,
 ) {
     val colors = MaterialTheme.colorScheme
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
@@ -154,6 +160,8 @@ internal fun AccountSheet(
                     }
                 }
                 Spacer(Modifier.height(8.dp))
+                if (onArchived != null) AccountMenuRow(Icons.Outlined.Archive, "Archived", null, onArchived)
+                if (onBlocked != null) AccountMenuRow(Icons.Outlined.Block, "Blocked contacts", null, onBlocked)
                 AccountMenuRow(Icons.Outlined.Security, "Security", securitySummary, onSecurity)
                 if (onNotifications != null) {
                     AccountMenuRow(Icons.Outlined.Notifications, "Notifications", notificationSummary, onNotifications)

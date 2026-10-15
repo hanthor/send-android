@@ -135,7 +135,7 @@ class ConversationActionsUiTest {
                     onDecryptionAction = {},
                     onEdit = { message, text -> callbacks.edited = message.id to text },
                     onDelete = { callbacks.deleted = it.id },
-                    onForward = { callbacks.forwarded = it.id },
+                    onForward = { callbacks.forwarded = it.single().id },
                     onLoadUntil = { callbacks.loadUntil = it },
                     typingUsers = typingUsers,
                     loadLinkPreview = loadLinkPreview,

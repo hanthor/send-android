@@ -376,6 +376,90 @@ sleep 2
 shot notification
 adb shell cmd statusbar collapse
 
+# ---- Conversation list management (phase 5), all best-effort. ----
+screen_width=$(adb shell wm size | grep -o '[0-9]*x[0-9]*' | tail -1 | cut -dx -f1 || true)
+screen_width=${screen_width:-1080}
+# 555-9876's row; its latest message is the notification text sent just above.
+row_9876() { $ui center "Are you coming tonight?" "555-9876" "5559876" "Lunch tomorrow?"; }
+row_1234() { $ui center "Made it home. Thanks for today!" "555-1234" "5551234"; }
+
+# Mid-swipe: hold the finger part-way so the archive track shows, then go back and lift (nothing archived).
+capture_swipe_archive() {
+  relaunch
+  read -r x y < <(row_9876) || { why="555-9876 row not found"; return 1; }
+  adb shell input motionevent DOWN "$x" "$y"
+  for step in 1 2 3 4 5 6 7; do adb shell input motionevent MOVE $((x + step * screen_width / 20)) "$y"; done
+  sleep 0.7
+  shot swipe-archive || { why="screencap failed mid-swipe"; adb shell input motionevent UP "$x" "$y"; return 1; }
+  adb shell input motionevent MOVE "$x" "$y"
+  adb shell input motionevent UP "$x" "$y"
+  sleep 1
+}
+capture_swipe_archive || skip swipe-archive "$why"
+
+# Long-press a row: Messages' selection bar, its overflow, and the Delete / Block confirmations (all cancelled).
+capture_conversation_selection() {
+  relaunch
+  read -r x y < <(row_1234) || { why="555-1234 row not found"; return 1; }
+  long_press "$x" "$y"
+  sleep 1.5
+  $ui center "~archive" "~delete" "~pin" >/dev/null || { why="long-press did not start selection"; return 1; }
+  shot conversation-selection
+  if $ui tap-any "More options" "More"; then
+    sleep 1
+    shot conversation-selection-menu
+    if $ui tap-any "Block" "~block"; then
+      sleep 1.5
+      shot block-confirm
+      $ui tap-any "Cancel" || adb shell input keyevent KEYCODE_BACK
+      sleep 1
+    else
+      skip block-confirm "no Block entry in the selection overflow"
+      adb shell input keyevent KEYCODE_BACK
+    fi
+  else
+    skip conversation-selection-menu "no overflow in the selection bar"
+    skip block-confirm "no overflow in the selection bar"
+  fi
+  # Selection may have ended with the dialog; start it again for Delete.
+  if ! $ui center "~delete" >/dev/null; then long_press "$x" "$y"; sleep 1.5; fi
+  if $ui tap-any "Delete" "Move to Trash" "~delete"; then
+    sleep 1.5
+    shot delete-conversation-confirm
+    $ui tap-any "Cancel" || adb shell input keyevent KEYCODE_BACK
+  else
+    skip delete-conversation-confirm "no Delete action in the selection bar"
+  fi
+}
+capture_conversation_selection || skip conversation-selection "$why"
+
+# Swipe 555-9876 all the way (archive with its snackbar), then account menu → Archived lists it.
+capture_archive() {
+  relaunch
+  read -r x y < <(row_9876) || { why="555-9876 row not found"; return 1; }
+  adb shell input swipe "$x" "$y" $((x + screen_width * 6 / 10)) "$y" 300
+  sleep 1
+  $ui center "~archived" >/dev/null || { why="the swipe did not archive (no snackbar)"; return 1; }
+  shot archive-snackbar
+}
+capture_archive || skip archive-snackbar "$why"
+capture_archived() {
+  open_account_menu || { why="account menu unavailable"; return 1; }
+  $ui tap-any "Archived" || { why="no Archived entry in the account menu"; return 1; }
+  sleep 2
+  shot archived
+}
+capture_archived || skip archived "$why"
+# Account menu → Spam & blocked, then its Blocked numbers list when the overflow offers it.
+capture_blocked() {
+  open_account_menu || { why="account menu unavailable"; return 1; }
+  $ui tap-any "Spam & blocked" "Spam and blocked" "~blocked" || { why="no Spam & blocked entry in the account menu"; return 1; }
+  sleep 2
+  if $ui tap-any "More options" "More" && $ui tap-any "Blocked numbers" "~blocked"; then sleep 2; fi
+  shot blocked-contacts
+}
+capture_blocked || skip blocked-contacts "$why"
+
 # Swipe a bubble right: Messages' swipe-to-reply puts a reply preview above the composer.
 capture_reply_swipe() {
   open_thread 555-1234 || return 1
@@ -410,5 +494,38 @@ capture_reply_action() {
 if [ "$reply_done" = 0 ]; then
   capture_reply_action || skip reply-preview "Messages offers no reply for SMS (logcat: \"Can't reply/react reason: replies not supported for this message type/protocol\", message_protocol=SIMPLE); swiping the bubble right does nothing"
 fi
+
+# Message long-press → Star, then the thread's starred messages (⋮ → Starred, else account menu → Starred).
+capture_starred() {
+  open_thread 555-1234 || { why="could not open the 555-1234 thread"; return 1; }
+  read -r x y < <($ui center "Hey, are you free to talk?") || { why="incoming bubble not found"; return 1; }
+  long_press "$x" "$y"
+  $ui wait "Copy" "Forward" --timeout 10 || { why="long-press did not open the message actions"; return 1; }
+  $ui tap-any "Star" "Star message" "~star" || { why="no Star in the message actions"; adb shell input keyevent KEYCODE_BACK; return 1; }
+  sleep 1
+  if $ui tap-any "More" "More options" && $ui tap-any "Starred" "Starred messages" "~starred"; then
+    sleep 2
+  else
+    adb shell input keyevent KEYCODE_BACK
+    open_account_menu || { why="Starred not in the conversation overflow and no account menu"; return 1; }
+    $ui tap-any "Starred" "Starred messages" "~starred" || { why="no Starred entry in the conversation overflow or account menu"; return 1; }
+    sleep 2
+  fi
+  shot starred
+}
+capture_starred || skip starred "$why"
+
+# Long-press → Select more, then tap a second bubble: Messages' multi-select bar.
+capture_message_selection() {
+  open_thread 555-1234 || { why="could not open the 555-1234 thread"; return 1; }
+  read -r x y < <($ui center "Hey, are you free to talk?") || { why="incoming bubble not found"; return 1; }
+  long_press "$x" "$y"
+  $ui wait "Copy" "Forward" --timeout 10 || { why="long-press did not open the message actions"; return 1; }
+  $ui tap-any "Select more" "Select" "~select" || { why="no Select more in the message actions"; adb shell input keyevent KEYCODE_BACK; return 1; }
+  sleep 1
+  if read -r x2 y2 < <($ui center "Made it home. Thanks for today!"); then adb shell input tap "$x2" "$y2"; sleep 1; fi
+  shot message-selection
+}
+capture_message_selection || skip message-selection "$why"
 
 ls -la "$out"
