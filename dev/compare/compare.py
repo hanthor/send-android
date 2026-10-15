@@ -18,6 +18,14 @@ PAIRS = {
     "home": ("gm-home", "send-home-screen-device"),
     "conversation": ("gm-conversation", "send-conversation-screen-device"),
     "new-chat": ("gm-new-chat", "send-new-chat-dialog-device"),
+    # Newer features (visual audit).
+    "new-group": ("gm-new-group", "send-new-group-device"),
+    "attachments": ("gm-attachments", "send-attachments-device"),
+    "voice": ("gm-voice-recording", "send-voice-hint-device"),
+    "conversation-menu": ("gm-conversation-menu", "send-conversation-menu-device"),
+    "account": ("gm-account", "send-account-device"),
+    "settings": ("gm-settings", "send-security-device"),
+    "notification": ("gm-notification", "send-notification-device"),
 }
 
 # element -> labels matched against text / content-desc (first hit wins), or an EditText class match.
