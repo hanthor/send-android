@@ -118,7 +118,7 @@ class ZZNotificationsIntegrationTest {
         // 2. Inline reply: lands encrypted on Bob's client and joins the conversation in the notification.
         val reply = "Replied from the notification $stamp"
         reply(notification, reply)
-        waitFor("Bob to decrypt the reply", 60_000, { "bob=${bobSeen.keys}" }) { reply in bobSeen }
+        waitFor("Bob to decrypt the reply", 60_000, { "bob=${bobSeen.keys}" }) { bobSeen.containsKey(reply) }
         waitFor("the reply in the notification", 30_000, { notificationState(roomId) }) {
             conversationNotification(roomId)?.let { lastMessage(it) }?.let { it.text.toString() == reply && it.person?.key != BOB } == true
         }
@@ -230,7 +230,7 @@ class ZZNotificationsIntegrationTest {
         // Reply from the same cold session, sync still stopped.
         val coldReply = "Cold reply ${System.currentTimeMillis()}"
         reply(notification, coldReply)
-        waitFor("Bob to decrypt the cold reply", 60_000, { "bob=${bobSeen.keys}" }) { coldReply in bobSeen }
+        waitFor("Bob to decrypt the cold reply", 60_000, { "bob=${bobSeen.keys}" }) { bobSeen.containsKey(coldReply) }
     }
 
     private fun goHome() {
