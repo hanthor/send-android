@@ -2,11 +2,8 @@ package dev.send.matrix
 
 import androidx.compose.ui.test.ComposeTimeoutException
 import androidx.compose.ui.semantics.SemanticsProperties
-import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
-import androidx.compose.ui.test.click
-import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -18,9 +15,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
-import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
-import androidx.compose.ui.test.performTouchInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.Dispatchers
@@ -89,7 +84,7 @@ class ZZAccountSecurityIntegrationTest {
 
     @Test
     fun recoveryVerificationBackupRestoreAndSignOut() {
-        signInIfNeeded()
+        composeRule.signInAsAliceIfNeeded()
 
         // 1. Alice's first device sets up recovery from the account menu and is shown the key once.
         composeRule.waitUntil(timeoutMillis = 120_000) {
@@ -195,7 +190,7 @@ class ZZAccountSecurityIntegrationTest {
 
         // 6. Signing in again is a new, unverified device: banner on the list, waiting bubble in the
         //    conversation, recovery key from the bubble's action, then the message decrypts in place.
-        signInWithPassword()
+        composeRule.signInAsAlice()
         composeRule.waitUntil(timeoutMillis = 120_000) {
             repository.verificationState.value == VerificationState.UNVERIFIED &&
                 repository.recoveryState.value == RecoveryState.INCOMPLETE &&
@@ -254,36 +249,13 @@ class ZZAccountSecurityIntegrationTest {
         }
     }
 
-    private fun signInIfNeeded() {
-        composeRule.waitUntil(timeoutMillis = 60_000) {
-            composeRule.onAllNodesWithContentDescription("Search").fetchSemanticsNodes().isNotEmpty() ||
-                composeRule.onAllNodesWithText("Get started").fetchSemanticsNodes().isNotEmpty()
-        }
-        if (composeRule.onAllNodesWithContentDescription("Search").fetchSemanticsNodes().isEmpty()) signInWithPassword()
-    }
-
-    private fun signInWithPassword() {
-        composeRule.onNodeWithText("Get started").performScrollTo().performClick()
-        composeRule.onNodeWithText("Use username and password").performScrollTo().performTouchInput { click() }
-        composeRule.mainClock.advanceTimeBy(600)
-        composeRule.onAllNodes(hasSetTextAction()).assertCountEquals(3)
-        composeRule.onAllNodes(hasSetTextAction()).get(0).performTextClearance()
-        composeRule.onAllNodes(hasSetTextAction()).get(0).performTextInput(HOMESERVER)
-        composeRule.onAllNodes(hasSetTextAction()).get(1).performScrollTo().performTextInput(ALICE)
-        composeRule.onAllNodes(hasSetTextAction()).get(2).performScrollTo().performTextInput(PASSWORD)
-        composeRule.onNodeWithText("Sign in with password").performScrollTo().performClick()
-        composeRule.waitUntil(timeoutMillis = 60_000) {
-            composeRule.onAllNodesWithContentDescription("Search").fetchSemanticsNodes().isNotEmpty()
-        }
-    }
-
     private fun startSecondDevice(): Client {
         val root = context.filesDir.resolve("matrix-integration-alice-second")
         root.deleteRecursively()
         root.mkdirs()
         val client = runBlocking(Dispatchers.IO) {
             ClientBuilder()
-                .homeserverUrl(HOMESERVER)
+                .homeserverUrl(SYNAPSE_URL)
                 .slidingSyncVersionBuilder(SlidingSyncVersionBuilder.NATIVE)
                 .sqliteStore(SqliteStoreBuilder(root.resolve("store.db").absolutePath, "").key(ByteArray(32)))
                 .sessionPaths(root.resolve("cache").absolutePath, root.resolve("crypto").absolutePath)
@@ -291,7 +263,7 @@ class ZZAccountSecurityIntegrationTest {
         }
         secondClient = client
         runBlocking(Dispatchers.IO) {
-            client.login(ALICE, PASSWORD, "Send second Alice device", null)
+            client.login(ALICE, DEMO_PASSWORD, "Send second Alice device", null)
             val sync = client.syncService().finish()
             secondSync = sync
             sync.start()
@@ -359,10 +331,6 @@ class ZZAccountSecurityIntegrationTest {
     }
 
     private companion object {
-        const val HOMESERVER = "http://10.0.2.2:8008"
-        const val ALICE = "@alice:send.test"
-        const val BOB = "@bob:send.test"
-        const val PASSWORD = "local-dev-password"
         const val GROUP_NAME = "Backup check"
     }
 }
