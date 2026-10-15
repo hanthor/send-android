@@ -190,9 +190,9 @@ class ZZListManagementIntegrationTest {
         composeRule.onNodeWithContentDescription("More options").performClick()
         composeRule.onNodeWithText("Block").performClick()
         waitForUi("the block confirmation", 10_000, ::roomsState) {
-            composeRule.onAllNodesWithText("Block").fetchSemanticsNodes().size == 1 && hasNodeWithText("Unblock them any time", substring = true)
+            hasNodeWithText("Yes") && hasNodeWithText("Unblock them any time", substring = true)
         }
-        composeRule.onNodeWithText("Block").performClick()
+        composeRule.onNodeWithText("Yes").performClick()
         waitFor("Bob in Alice's ignored users", 60_000, { "ignored=${repository.ignoredUsers.value}" }) {
             BOB in runBlocking { repository.refreshIgnoredUsers() }
         }

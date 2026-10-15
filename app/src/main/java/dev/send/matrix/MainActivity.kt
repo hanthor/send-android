@@ -1809,6 +1809,8 @@ internal fun ConversationRow(
     selected: Boolean = false,
     /** Long-press (starts or extends the selection); null when the list has no selection mode. */
     onLongClick: (() -> Unit)? = null,
+    /** Being swiped: Messages lifts the row onto a tinted pill above the archive track. */
+    lifted: Boolean = false,
 ) {
     val context = LocalContext.current
     val colors = MaterialTheme.colorScheme
@@ -1818,7 +1820,13 @@ internal fun ConversationRow(
     Row(
         // Messages: pressed (and selected) rows show a rounded pill highlight inset from the screen edges.
         modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp).clip(RoundedCornerShape(28.dp))
-            .background(if (selected) colors.secondaryContainer else colors.surface)
+            .background(
+                when {
+                    selected -> colors.surfaceContainer
+                    lifted -> colors.surfaceContainerHigh
+                    else -> colors.surface
+                },
+            )
             .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .padding(horizontal = 8.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,

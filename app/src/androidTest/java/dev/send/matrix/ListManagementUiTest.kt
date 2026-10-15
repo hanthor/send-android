@@ -216,11 +216,11 @@ class ListManagementUiTest {
         composeRule.onNodeWithContentDescription("More options").performClick()
         composeRule.onNodeWithText("Mark as read").assertIsDisplayed()
         composeRule.onNodeWithText("Block").performClick()
-        composeRule.waitUntil(5_000) { composeRule.onAllNodesWithText("Block").fetchSemanticsNodes().size == 1 }
+        composeRule.waitUntil(5_000) { composeRule.onAllNodesWithText("Block").fetchSemanticsNodes().isEmpty() && hasText("Yes") }
         composeRule.onNodeWithText("Block Sam?").assertIsDisplayed()
         composeRule.onNodeWithText("Unblock them any time from Blocked contacts", substring = true).assertIsDisplayed()
         composeRule.auditShot("block-confirm")
-        composeRule.onNodeWithText("Block").performClick()
+        composeRule.onNodeWithText("Yes").performClick()
         composeRule.runOnIdle { assertEquals(listOf("@sam:example.org"), calls.blockedCalls) }
         composeRule.waitUntil(5_000) { !hasText("Sam") }
 

@@ -8,7 +8,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -19,7 +18,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -35,12 +33,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.Archive
-import androidx.compose.material.icons.outlined.Block
 import androidx.compose.material.icons.outlined.Delete
-import androidx.compose.material.icons.outlined.MarkChatRead
-import androidx.compose.material.icons.outlined.MarkChatUnread
-import androidx.compose.material.icons.outlined.Notifications
-import androidx.compose.material.icons.outlined.NotificationsOff
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.outlined.Unarchive
 import androidx.compose.material3.AlertDialog
@@ -73,7 +66,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.onSizeChanged
@@ -193,11 +185,12 @@ internal fun LazyListScope.managedConversationRows(
                 enabled = actions != null && !selecting,
                 unarchive = archivedView,
                 onSwiped = { if (actions != null) state.archive(listOf(room), archived = !archivedView, actions) },
-            ) {
+            ) { lifted ->
                 ConversationRow(
                     room = room,
                     muted = room.id in mutedRoomIds,
                     selected = room.id in state.selectedIds,
+                    lifted = lifted,
                     onClick = { if (selecting) state.toggle(room) else onOpen(room) },
                     onLongClick = if (actions != null) ({ state.toggle(room) }) else null,
                 )
@@ -216,18 +209,13 @@ internal fun PruneSelection(state: ConversationListState, rooms: List<MatrixRoom
     BackHandler(enabled = state.selecting) { state.clearSelection() }
 }
 
-/** Messages' archive swipe colours: a green track with a white archive glyph (lighter green in dark theme). */
-@Composable
-private fun archiveSwipeColors(): Pair<Color, Color> =
-    if (isSystemInDarkTheme()) Color(0xFF6DD58C) to Color(0xFF00391C) else Color(0xFF1E8E3E) to Color.White
-
 /**
- * Messages' conversation swipe: the row follows the finger either way over a green track whose archive icon
- * grows in on the uncovered side; a haptic tick marks the threshold. Released past it (or flung), the row
- * springs off-screen and [onSwiped] runs; otherwise it springs back.
+ * Messages' conversation swipe: the row lifts onto a tinted pill and follows the finger either way over a
+ * primary-coloured track whose archive glyph grows in on the uncovered side; a haptic tick marks the threshold.
+ * Released past it (or flung), the row springs off-screen and [onSwiped] runs; otherwise it springs back.
  */
 @Composable
-internal fun SwipeToArchive(enabled: Boolean, unarchive: Boolean, onSwiped: () -> Unit, content: @Composable () -> Unit) {
+internal fun SwipeToArchive(enabled: Boolean, unarchive: Boolean, onSwiped: () -> Unit, content: @Composable (lifted: Boolean) -> Unit) {
     val haptics = LocalHapticFeedback.current
     val density = LocalDensity.current
     var width by remember { mutableIntStateOf(0) }
@@ -260,17 +248,17 @@ internal fun SwipeToArchive(enabled: Boolean, unarchive: Boolean, onSwiped: () -
             ),
     ) {
         if (offset != 0f) {
-            val (track, glyph) = archiveSwipeColors()
+            val colors = MaterialTheme.colorScheme
             val progress = if (threshold > 0f) (abs(offset) / threshold).coerceIn(0f, 1f) else 0f
             Box(
-                Modifier.matchParentSize().padding(horizontal = 8.dp).clip(RoundedCornerShape(28.dp)).background(track),
+                Modifier.matchParentSize().clip(RoundedCornerShape(24.dp)).background(colors.primary),
                 contentAlignment = if (offset > 0f) Alignment.CenterStart else Alignment.CenterEnd,
             ) {
                 Icon(
                     if (unarchive) Icons.Outlined.Unarchive else Icons.Outlined.Archive,
                     contentDescription = if (unarchive) "Unarchive" else "Archive",
-                    tint = glyph,
-                    modifier = Modifier.padding(horizontal = 28.dp).graphicsLayer {
+                    tint = colors.onPrimary,
+                    modifier = Modifier.padding(horizontal = 24.dp).graphicsLayer {
                         val scale = 0.7f + 0.3f * progress
                         scaleX = scale
                         scaleY = scale
@@ -279,7 +267,7 @@ internal fun SwipeToArchive(enabled: Boolean, unarchive: Boolean, onSwiped: () -
                 )
             }
         }
-        Box(Modifier.offset { IntOffset(offset.roundToInt(), 0) }) { content() }
+        Box(Modifier.offset { IntOffset(offset.roundToInt(), 0) }) { content(offset != 0f) }
     }
 }
 
@@ -289,7 +277,8 @@ private val ARCHIVE_FLING_VELOCITY = 600.dp
 
 /**
  * Messages' contextual top bar while conversations are selected: close, the count, Pin, Archive and Delete, with
- * Mute, Mark as read/unread and (for one DM) Block under ⋮. The Archived screen offers Unarchive and no Pin.
+ * Mark as read/unread, Mute and (for one DM) Block under ⋮ as plain text items. The Archived screen offers
+ * Unarchive and no Pin.
  */
 @Composable
 internal fun ConversationSelectionBar(
@@ -313,7 +302,7 @@ internal fun ConversationSelectionBar(
             if (!archivedView) {
                 val unpin = selected.isNotEmpty() && selected.all { it.pinned }
                 IconButton(onClick = { actions.setPinned(selected, !unpin); state.clearSelection() }) {
-                    Icon(if (unpin) Icons.Outlined.PushPin else Icons.Filled.PushPin, contentDescription = if (unpin) "Unpin" else "Pin")
+                    Icon(if (unpin) Icons.Filled.PushPin else Icons.Outlined.PushPin, contentDescription = if (unpin) "Unpin" else "Pin")
                 }
             }
             IconButton(onClick = { state.archive(selected, archived = !archivedView, actions) }) {
@@ -326,23 +315,20 @@ internal fun ConversationSelectionBar(
             Box {
                 IconButton(onClick = { showMenu = true }) { Icon(Icons.Filled.MoreVert, contentDescription = "More options") }
                 DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
-                    val unmute = selected.isNotEmpty() && selected.all { it.id in mutedRoomIds }
-                    DropdownMenuItem(
-                        text = { Text(if (unmute) "Unmute" else "Mute") },
-                        leadingIcon = { Icon(if (unmute) Icons.Outlined.Notifications else Icons.Outlined.NotificationsOff, contentDescription = null) },
-                        onClick = { showMenu = false; actions.setMuted(selected, !unmute); state.clearSelection() },
-                    )
                     val markRead = selected.any { it.isUnread }
                     DropdownMenuItem(
                         text = { Text(if (markRead) "Mark as read" else "Mark as unread") },
-                        leadingIcon = { Icon(if (markRead) Icons.Outlined.MarkChatRead else Icons.Outlined.MarkChatUnread, contentDescription = null) },
                         onClick = { showMenu = false; actions.setUnread(selected, !markRead); state.clearSelection() },
+                    )
+                    val unmute = selected.isNotEmpty() && selected.all { it.id in mutedRoomIds }
+                    DropdownMenuItem(
+                        text = { Text(if (unmute) "Unmute" else "Mute") },
+                        onClick = { showMenu = false; actions.setMuted(selected, !unmute); state.clearSelection() },
                     )
                     val dm = selected.singleOrNull()?.takeIf { it.dmUserId != null }
                     if (dm != null) {
                         DropdownMenuItem(
                             text = { Text("Block") },
-                            leadingIcon = { Icon(Icons.Outlined.Block, contentDescription = null) },
                             onClick = { showMenu = false; state.confirmBlock = dm },
                         )
                     }
@@ -377,14 +363,14 @@ internal fun ConversationListDialogs(state: ConversationListState, actions: Conv
     }
     state.confirmBlock?.let { room ->
         val userId = room.dmUserId ?: return@let
+        // Messages' wording: "Block …?", what blocking does, Cancel / Yes.
         AlertDialog(
             onDismissRequest = { state.confirmBlock = null },
-            icon = { Icon(Icons.Outlined.Block, contentDescription = null) },
             title = { Text("Block ${room.name}?") },
             text = {
                 Text(
-                    "You won't get messages or calls from $userId on any of your devices, and your conversations with " +
-                        "them leave your list. They aren't told. Unblock them any time from Blocked contacts.",
+                    "You won't receive calls or messages from $userId on any of your devices, and your conversations " +
+                        "with them leave your list. Unblock them any time from Blocked contacts.",
                 )
             },
             confirmButton = {
@@ -392,7 +378,7 @@ internal fun ConversationListDialogs(state: ConversationListState, actions: Conv
                     state.confirmBlock = null
                     state.clearSelection()
                     actions.block(userId)
-                }) { Text("Block") }
+                }) { Text("Yes") }
             },
             dismissButton = { TextButton(onClick = { state.confirmBlock = null }) { Text("Cancel") } },
         )
@@ -431,8 +417,11 @@ internal fun ArchivedScreen(
         ) {
             LazyColumn(state = rememberTopAnchoredListState(), contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp)) {
                 if (rooms.isEmpty()) {
+                    // Messages centres this line on the empty sheet.
                     item(key = "empty") {
-                        EmptyListText("Archived conversations appear here. Swipe a conversation in your list to archive it.")
+                        Box(Modifier.fillParentMaxSize(), contentAlignment = Alignment.Center) {
+                            EmptyListText("Archived conversations appear here")
+                        }
                     }
                 }
                 managedConversationRows(rooms, mutedRoomIds, state, actions, archivedView = true, onOpen = onOpen)
@@ -454,6 +443,14 @@ internal fun BlockedContactsScreen(userIds: List<String>, onUnblock: (String) ->
             color = colors.surface,
         ) {
             LazyColumn(contentPadding = PaddingValues(vertical = 8.dp)) {
+                item(key = "about") {
+                    Text(
+                        "You won't receive calls or messages from blocked contacts on any of your devices.",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = colors.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp),
+                    )
+                }
                 if (userIds.isEmpty()) {
                     item(key = "empty") { EmptyListText("No blocked contacts. Block someone from a conversation's selection menu.") }
                 }
