@@ -52,7 +52,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -154,14 +154,25 @@ internal fun rememberConversationListState(): ConversationListState {
 
 /**
  * Scroll state for a conversation list that stays at the top while rows move up (a new message, a pin, a new
- * conversation) and the user is at the top, as in Messages; LazyColumn would otherwise keep its first visible row
- * in place and push the new one above the viewport.
+ * conversation) and the user left it at the top, as in Messages; LazyColumn would otherwise keep its first visible
+ * row in place and push the new one above the viewport. [topKey] is the first row's key.
+ *
+ * Where the user left the list is recorded when a scroll ends (row insertions don't scroll), and the list returns
+ * to the top after layout. Requesting the position during composition isn't safe here: the list is subcomposed
+ * inside Scaffold's measure pass, and `requestScrollToItem` forces a remeasure.
  */
 @Composable
-internal fun rememberTopAnchoredListState(): LazyListState {
+internal fun rememberTopAnchoredListState(topKey: Any?): LazyListState {
     val state = rememberLazyListState()
-    SideEffect {
-        if (state.firstVisibleItemIndex == 0 && state.firstVisibleItemScrollOffset == 0) state.requestScrollToItem(0)
+    var leftAtTop by remember { mutableStateOf(true) }
+    LaunchedEffect(state) {
+        snapshotFlow { state.isScrollInProgress }.collect { scrolling ->
+            if (!scrolling) leftAtTop = state.firstVisibleItemIndex == 0 && state.firstVisibleItemScrollOffset == 0
+        }
+    }
+    LaunchedEffect(topKey) {
+        // scrollToItem forgets the remembered first-row key, so this holds whether or not the new layout ran yet.
+        if (leftAtTop) state.scrollToItem(0)
     }
     return state
 }
@@ -415,7 +426,7 @@ internal fun ArchivedScreen(
             shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
             color = colors.surface,
         ) {
-            LazyColumn(state = rememberTopAnchoredListState(), contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp)) {
+            LazyColumn(state = rememberTopAnchoredListState(rooms.firstOrNull()?.id), contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp)) {
                 if (rooms.isEmpty()) {
                     // Messages centres this line on the empty sheet.
                     item(key = "empty") {
