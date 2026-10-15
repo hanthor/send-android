@@ -380,16 +380,19 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
     LaunchedEffect(sessionLive, requestedConversation) {
         val roomId = requestedConversation ?: return@LaunchedEffect
         if (!sessionLive) return@LaunchedEffect
-        activity.pendingConversation.value = null
-        if (roomId == activeRoomId && timeline != null) return@LaunchedEffect
         try {
-            val known = rooms.firstOrNull { it.id == roomId }
-            openConversation(roomId, known?.name, known?.direct)
-            error = ""
+            if (roomId != activeRoomId || timeline == null) {
+                val known = rooms.firstOrNull { it.id == roomId }
+                openConversation(roomId, known?.name, known?.direct)
+                error = ""
+            }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Exception) {
             error = failure.message ?: "Conversation could not be opened."
+        } finally {
+            // Cleared only once handled: clearing the key earlier would cancel this effect mid-open.
+            if (activity.pendingConversation.value == roomId) activity.pendingConversation.value = null
         }
     }
     fun signOut(serverSide: Boolean) {
