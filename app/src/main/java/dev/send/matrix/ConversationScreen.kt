@@ -70,6 +70,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -81,6 +84,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -172,6 +177,9 @@ internal fun ConversationScreen(
     val recorder = remember(voiceCapture) { voiceCapture ?: VoiceRecorder(context.applicationContext) }
     var recording by remember { mutableStateOf(false) }
     var recordingLocked by remember { mutableStateOf(false) }
+    /** The locked recording was attached to the composer (panel closed); the round button sends it. */
+    var recordingAttached by remember { mutableStateOf(false) }
+    val liveLevels = remember { mutableStateListOf<Float>() }
     var recordedClip by remember { mutableStateOf<VoiceRecording?>(null) }
     var recordingElapsed by remember { mutableLongStateOf(0L) }
     var cancellingRecording by remember { mutableStateOf(false) }
@@ -185,7 +193,8 @@ internal fun ConversationScreen(
     }
     LaunchedEffect(recording) {
         while (recording) {
-            recorder.sampleAmplitude()
+            liveLevels.add(recorder.sampleAmplitude())
+            if (liveLevels.size > LIVE_LEVELS) liveLevels.removeAt(0)
             recordingElapsed = recorder.elapsedMillis
             delay(100)
         }
@@ -288,8 +297,43 @@ internal fun ConversationScreen(
         recordedClip = null
         recording = false
         recordingLocked = false
+        recordingAttached = false
         cancellingRecording = false
         composerHint = hint
+    }
+    fun startRecording(): Boolean = try {
+        playback.stop()
+        recorder.start().also { started ->
+            recording = started
+            cancellingRecording = false
+            recordingElapsed = 0L
+            liveLevels.clear()
+            composerHint = ""
+        }
+    } catch (failure: Exception) {
+        composerHint = failure.message ?: "The microphone could not be started."
+        false
+    }
+    fun togglePlayRecording() {
+        val clip = recordedClip
+        if (playback.activeId == RECORDED_CLIP_ID) {
+            playback.stop()
+        } else if (clip != null) {
+            runCatching { playback.play(RECORDED_CLIP_ID, clip.file) }
+                .onFailure { composerHint = it.message ?: "This recording could not be played." }
+        }
+    }
+    /** Stops a locked recording, keeping the clip; false (and back to the composer) when it was too short. */
+    fun stopLockedRecording(): Boolean {
+        val clip = recorder.stop()
+        recording = false
+        if (clip != null) {
+            recordedClip = clip
+            return true
+        }
+        recordingLocked = false
+        composerHint = "Voice message too short"
+        return false
     }
 
     BackHandler {
@@ -304,33 +348,48 @@ internal fun ConversationScreen(
         }
     }
 
+    var selectedBubbles by remember { mutableStateOf<List<Rect>>(emptyList()) }
+    LaunchedEffect(selectedId) { if (selectedId == null) selectedBubbles = emptyList() }
+    if (selected != null && selectedBubbles.isNotEmpty()) {
+        MessageActionsOverlay(
+            bubbles = selectedBubbles,
+            alignEnd = selected.own,
+            actions = actionsFor(selected),
+            onDismiss = { selectedId = null },
+            onReact = { emoji ->
+                selectedId = null
+                onReact(selected.id, emoji)
+            },
+            onMoreReactions = {
+                selectedId = null
+                reactionPickerFor = selected.id
+            },
+            onReply = { startReply(selected) },
+            onForward = {
+                selectedId = null
+                onForward(selected)
+            },
+            onCopy = {
+                context.getSystemService(ClipboardManager::class.java)
+                    ?.setPrimaryClip(ClipData.newPlainText("Message", selected.text))
+                selectedId = null
+            },
+            onEdit = { startEdit(selected) },
+            onDelete = {
+                confirmDelete = selected
+                selectedId = null
+            },
+            onInfo = {
+                infoFor = selected
+                selectedId = null
+            },
+        )
+    }
+
     Scaffold(
         containerColor = colors.surfaceContainer,
         topBar = {
             when {
-                selected != null -> MessageActionBar(
-                    actions = actionsFor(selected),
-                    onClose = { selectedId = null },
-                    onReply = { startReply(selected) },
-                    onCopy = {
-                        context.getSystemService(ClipboardManager::class.java)
-                            ?.setPrimaryClip(ClipData.newPlainText("Message", selected.text))
-                        selectedId = null
-                    },
-                    onEdit = { startEdit(selected) },
-                    onDelete = {
-                        confirmDelete = selected
-                        selectedId = null
-                    },
-                    onForward = {
-                        selectedId = null
-                        onForward(selected)
-                    },
-                    onInfo = {
-                        infoFor = selected
-                        selectedId = null
-                    },
-                )
                 searching -> ConversationSearchBar(
                     query = query,
                     onQuery = { query = it },
@@ -433,6 +492,33 @@ internal fun ConversationScreen(
                         }
                         ComposerContextBar("Replying to $name", messagePreviewText(replyTarget), "Cancel reply") { replyingTo = null }
                     }
+                    if (recordingLocked && !recordingAttached) {
+                        LockedRecordingPanel(
+                            elapsedMillis = recordingElapsed,
+                            levels = liveLevels,
+                            clip = recordedClip,
+                            playback = playback,
+                            playing = playback.activeId == RECORDED_CLIP_ID,
+                            onRestart = {
+                                playback.stop()
+                                recorder.cancel()
+                                recordedClip?.file?.delete()
+                                recordedClip = null
+                                recording = false
+                                if (!startRecording()) {
+                                    recordingLocked = false
+                                }
+                            },
+                            onStop = { stopLockedRecording() },
+                            onTogglePlay = ::togglePlayRecording,
+                            onAttach = {
+                                if (recordedClip != null || stopLockedRecording()) {
+                                    playback.stop()
+                                    recordingAttached = true
+                                }
+                            },
+                        )
+                    }
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
                         // Messages composer: 56dp pill with attach, field, emoji and gallery actions.
                         Surface(
@@ -440,33 +526,27 @@ internal fun ConversationScreen(
                             shape = RoundedCornerShape(28.dp),
                             color = colors.surfaceContainerHigh,
                         ) {
-                            if (recordingLocked) {
-                                LockedRecordingBar(
-                                    elapsedMillis = recordingElapsed,
-                                    clip = recordedClip,
+                            val clip = recordedClip
+                            if (recordingLocked && recordingAttached && clip != null) {
+                                AttachedRecordingBar(
+                                    clip = clip,
                                     playing = playback.activeId == RECORDED_CLIP_ID,
                                     onDelete = { discardRecording("Voice message discarded") },
-                                    onStop = {
-                                        val clip = recorder.stop()
-                                        recording = false
-                                        if (clip != null) {
-                                            recordedClip = clip
-                                        } else {
-                                            recordingLocked = false
-                                            composerHint = "Voice message too short"
-                                        }
-                                    },
-                                    onTogglePlay = {
-                                        val clip = recordedClip
-                                        if (playback.activeId == RECORDED_CLIP_ID) {
-                                            playback.stop()
-                                        } else if (clip != null) {
-                                            runCatching { playback.play(RECORDED_CLIP_ID, clip.file) }
-                                                .onFailure { composerHint = it.message ?: "This recording could not be played." }
-                                        }
-                                    },
+                                    onTogglePlay = ::togglePlayRecording,
                                     modifier = Modifier.fillMaxWidth(),
                                 )
+                            } else if (recordingLocked) {
+                                Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    IconButton(onClick = { discardRecording("Voice message discarded") }) {
+                                        Icon(Icons.Outlined.Delete, contentDescription = "Delete recording", tint = colors.onSurfaceVariant)
+                                    }
+                                    Text(
+                                        if (clip == null) "Recording voice message" else "Voice message · ${formatDuration(clip.durationMillis)}",
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        color = colors.onSurfaceVariant,
+                                        maxLines = 1,
+                                    )
+                                }
                             } else if (recording) {
                                 RecordingIndicator(
                                     elapsedMillis = recordingElapsed,
@@ -547,6 +627,7 @@ internal fun ConversationScreen(
                                     recordedClip = null
                                     recording = false
                                     recordingLocked = false
+                                    recordingAttached = false
                                     if (clip != null) onSendVoice(clip) else composerHint = "Voice message too short"
                                 },
                                 modifier = Modifier.size(56.dp),
@@ -565,18 +646,7 @@ internal fun ConversationScreen(
                                     if (voiceCapture == null && ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
                                         micPermission.launch(Manifest.permission.RECORD_AUDIO)
                                         false
-                                    } else try {
-                                        playback.stop()
-                                        recorder.start().also { started ->
-                                            recording = started
-                                            cancellingRecording = false
-                                            recordingElapsed = 0L
-                                            composerHint = ""
-                                        }
-                                    } catch (failure: Exception) {
-                                        composerHint = failure.message ?: "The microphone could not be started."
-                                        false
-                                    }
+                                    } else startRecording()
                                 },
                                 onSlideOutside = { cancellingRecording = it },
                                 onFinish = { send ->
@@ -690,14 +760,7 @@ internal fun ConversationScreen(
                                     onOpenVisual = {
                                         if (selectedId != null) selectedId = null else viewing = message
                                     },
-                                    onReact = { emoji ->
-                                        selectedId = null
-                                        onReact(message.id, emoji)
-                                    },
-                                    onMoreReactions = {
-                                        selectedId = null
-                                        reactionPickerFor = message.id
-                                    },
+                                    reportBounds = if (selectedId == message.id) ({ selectedBubbles = it }) else null,
                                 )
                                 if (message.reactions.isNotEmpty()) {
                                     // Overlapping rounded reaction pill at the bubble's bottom corner.
@@ -791,7 +854,7 @@ internal fun ConversationScreen(
 
 /**
  * One message in the timeline: swipe-to-reply wrapper, selection highlight, the bubble for its kind (deleted,
- * undecryptable, media, text with quote/links/preview) and, while selected, the floating reaction row.
+ * undecryptable, media, text with quote/links/preview).
  */
 @Composable
 private fun MessageItem(
@@ -812,41 +875,47 @@ private fun MessageItem(
     onReply: () -> Unit,
     onQuote: (String) -> Unit,
     onOpenVisual: () -> Unit,
-    onReact: (String) -> Unit,
-    onMoreReactions: () -> Unit,
+    /** Non-null while selected: receives the on-screen bounds of the bubble's pieces. */
+    reportBounds: ((List<Rect>) -> Unit)?,
 ) {
     val colors = MaterialTheme.colorScheme
     val density = LocalDensity.current
     val actions = actionsFor(message)
+    val parts = remember { mutableStateMapOf<Int, Rect>() }
+    // While selected, report where each piece of the bubble is on screen, for the long-press overlay.
+    fun Modifier.part(key: Int): Modifier = if (reportBounds == null) this else onGloballyPositioned {
+        parts[key] = it.screenBounds()
+        reportBounds(parts.values.toList())
+    }
     val shape = bubbleShape(message.own, isFirstInGroup, isLastInGroup)
     SwipeToReply(enabled = swipeEnabled && actions.reply, onReply = onReply) {
         Box(
             Modifier
                 .fillMaxWidth()
-                .background(if (selected || highlighted) colors.primary.copy(alpha = 0.12f) else Color.Transparent),
+                .background(if (highlighted) colors.primary.copy(alpha = 0.12f) else Color.Transparent),
         ) {
             Column(Modifier.fillMaxWidth(), horizontalAlignment = if (message.own) Alignment.End else Alignment.Start) {
                 val attachment = message.attachment
                 val decryptionFailure = message.decryptionFailure
                 when {
-                    message.deleted -> Box(Modifier.combinedClickableCompat(onTap, onLongPress)) {
+                    message.deleted -> Box(Modifier.combinedClickableCompat(onTap, onLongPress).part(0)) {
                         DeletedBubble(isFromMe = message.own, shape = shape, isLastInGroup = isLastInGroup)
                     }
-                    decryptionFailure != null -> UndecryptableBubble(
+                    decryptionFailure != null -> Box(Modifier.part(0)) { UndecryptableBubble(
                         failure = decryptionFailure,
                         isFromMe = message.own,
                         shape = shape,
                         isLastInGroup = isLastInGroup,
                         actionLabel = decryptionActionLabel?.takeIf { decryptionFailure.fixableOnThisDevice },
                         onAction = onDecryptionAction,
-                    )
+                    ) }
                     else -> {
                         if (attachment != null) {
                             Box(
                                 modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = if (isLastInGroup && message.text.isBlank()) 4.dp else 1.dp),
                                 contentAlignment = if (message.own) Alignment.CenterEnd else Alignment.CenterStart,
                             ) {
-                                AttachmentBubble(
+                                Box(Modifier.part(1)) { AttachmentBubble(
                                     messageId = message.id,
                                     attachment = attachment,
                                     isFromMe = message.own,
@@ -855,7 +924,7 @@ private fun MessageItem(
                                     playback = playback,
                                     onLongPress = onLongPress,
                                     onOpenVisual = onOpenVisual.takeIf { attachment.kind == AttachmentKind.Image || attachment.kind == AttachmentKind.Video },
-                                )
+                                ) }
                             }
                         }
                         if (attachment == null || message.text.isNotBlank()) {
@@ -870,18 +939,10 @@ private fun MessageItem(
                                 onQuoteClick = onQuote,
                                 query = query,
                                 loadLinkPreview = loadLinkPreview,
+                                bubbleModifier = Modifier.part(2),
                             )
                         }
                     }
-                }
-            }
-            if (selected && actions.react) {
-                val provider = remember(message.own, density) {
-                    with(density) { BubblePopupPosition(alignEnd = message.own, marginPx = 12.dp.roundToPx(), gapPx = 4.dp.roundToPx()) }
-                }
-                // Not focusable: the contextual action bar stays usable while the row is up.
-                Popup(popupPositionProvider = provider, properties = PopupProperties(focusable = false, dismissOnClickOutside = false)) {
-                    ReactionRow(onReact = onReact, onMore = onMoreReactions)
                 }
             }
         }
@@ -919,6 +980,8 @@ fun MessageBubble(
     /** In-conversation search query to highlight. */
     query: String = "",
     loadLinkPreview: (suspend (String) -> LinkPreview?)? = null,
+    /** Applied to the bubble surface itself (not the full-width row). */
+    bubbleModifier: Modifier = Modifier,
 ) {
     val colors = MaterialTheme.colorScheme
     val content = if (isFromMe) colors.onPrimaryContainer else colors.onSurface
@@ -941,7 +1004,7 @@ fun MessageBubble(
             contentColor = content,
             border = if (query.isNotBlank() && annotated.spanStyles.isNotEmpty()) BorderStroke(1.dp, colors.tertiary) else null,
             // Tap reveals the message's time/status (as in Messages); long-press selects it for actions.
-            modifier = Modifier.widthIn(max = 280.dp).combinedClickable(onClick = onClick, onLongClick = onLongPress),
+            modifier = bubbleModifier.widthIn(max = 280.dp).combinedClickable(onClick = onClick, onLongClick = onLongPress),
         ) {
             Column(Modifier.padding(horizontal = if (replyTo != null || preview != null) 6.dp else 0.dp, vertical = if (replyTo != null || preview != null) 6.dp else 0.dp)) {
                 if (replyTo != null) {

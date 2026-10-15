@@ -335,17 +335,6 @@ internal fun SwipeToReply(enabled: Boolean, onReply: () -> Unit, content: @Compo
 
 internal val REPLY_SWIPE_THRESHOLD = 64.dp
 
-/** Places a popup (the reaction row) above its anchor, or below it when there is no room, aligned to the bubble's side. */
-internal class BubblePopupPosition(private val alignEnd: Boolean, private val marginPx: Int, private val gapPx: Int) : PopupPositionProvider {
-    override fun calculatePosition(anchorBounds: IntRect, windowSize: IntSize, layoutDirection: LayoutDirection, popupContentSize: IntSize): IntOffset {
-        val maxX = (windowSize.width - popupContentSize.width).coerceAtLeast(0)
-        val x = if (alignEnd) anchorBounds.right - marginPx - popupContentSize.width else anchorBounds.left + marginPx
-        val above = anchorBounds.top - popupContentSize.height - gapPx
-        val y = if (above >= 0) above else (anchorBounds.bottom + gapPx).coerceAtMost((windowSize.height - popupContentSize.height).coerceAtLeast(0))
-        return IntOffset(x.coerceIn(0, maxX), y)
-    }
-}
-
 /**
  * Who has read up to [messages][index]: receipts on that event or any later one (the SDK keeps each person's
  * receipt on the newest event they read), plus anyone who sent a later message.

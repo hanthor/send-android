@@ -155,20 +155,28 @@ class ConversationActionsUiTest {
         val callbacks = show(chat, draft = draft)
 
         longPress("Yes! Dinner at 7 works for me")
-        listOf("Close", "Reply", "Copy", "Edit", "Forward", "Delete", "Info", "More reactions").forEach {
-            composeRule.onNodeWithContentDescription(it).assertIsDisplayed()
+        listOf("Reply", "Forward", "Copy", "Edit", "Delete", "Info").forEach {
+            composeRule.onNodeWithText(it).assertIsDisplayed()
         }
+        composeRule.onNodeWithContentDescription("More reactions").assertIsDisplayed()
         composeRule.onNodeWithText("👍").assertIsDisplayed()
         composeRule.auditShot("message-actions")
 
         // Quick reaction from the row on top.
         composeRule.onNodeWithText("❤️").performClick()
         composeRule.runOnIdle { assertEquals("\$m1" to "❤️", callbacks.reacted) }
-        composeRule.onAllNodesWithContentDescription("Copy").assertCountEquals(0)
+        composeRule.onAllNodesWithText("Copy").assertCountEquals(0)
+
+        // Back dismisses the overlay without acting.
+        longPress("Yes! Dinner at 7 works for me")
+        UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()).pressBack()
+        composeRule.waitForIdle()
+        composeRule.onAllNodesWithText("Copy").assertCountEquals(0)
+        composeRule.onNodeWithText("Yes! Dinner at 7 works for me").assertIsDisplayed()
 
         // Copy puts the text on the clipboard.
         longPress("Yes! Dinner at 7 works for me")
-        composeRule.onNodeWithContentDescription("Copy").performClick()
+        composeRule.onNodeWithText("Copy").performClick()
         composeRule.runOnIdle {
             val clip = context.getSystemService(ClipboardManager::class.java).primaryClip
             assertEquals("Yes! Dinner at 7 works for me", clip?.getItemAt(0)?.text?.toString())
@@ -176,21 +184,21 @@ class ConversationActionsUiTest {
 
         // Info: Messages-style details.
         longPress("Yes! Dinner at 7 works for me")
-        composeRule.onNodeWithContentDescription("Info").performClick()
+        composeRule.onNodeWithText("Info").performClick()
         composeRule.onNodeWithText("Message details").assertIsDisplayed()
         composeRule.onNodeWithText("Text message").assertIsDisplayed()
         composeRule.onNodeWithText("OK").performClick()
 
         // Forward hands the message to the picker.
         longPress("Great, I'll book the table")
-        composeRule.onAllNodesWithContentDescription("Edit").assertCountEquals(0)
-        composeRule.onAllNodesWithContentDescription("Delete").assertCountEquals(0)
-        composeRule.onNodeWithContentDescription("Forward").performClick()
+        composeRule.onAllNodesWithText("Edit").assertCountEquals(0)
+        composeRule.onAllNodesWithText("Delete").assertCountEquals(0)
+        composeRule.onNodeWithText("Forward").performClick()
         composeRule.runOnIdle { assertEquals("\$a2", callbacks.forwarded) }
 
         // Delete asks first, then deletes for everyone.
         longPress("See you there")
-        composeRule.onNodeWithContentDescription("Delete").performClick()
+        composeRule.onNodeWithText("Delete").performClick()
         composeRule.onNodeWithText("Delete message?").assertIsDisplayed()
         composeRule.onNodeWithText("This message will be deleted for everyone in this conversation.").assertIsDisplayed()
         composeRule.auditShot("delete-confirm")
@@ -200,7 +208,7 @@ class ConversationActionsUiTest {
         // Edit: the composer takes the original text; sending saves the edit and restores the old draft.
         draft.value = "unsent draft"
         longPress("Yes! Dinner at 7 works for me")
-        composeRule.onNodeWithContentDescription("Edit").performClick()
+        composeRule.onNodeWithText("Edit").performClick()
         composeRule.onNodeWithText("Editing message").assertIsDisplayed()
         composeRule.runOnIdle { assertEquals("Yes! Dinner at 7 works for me", draft.value) }
         composeRule.onNode(hasSetTextAction()).performTextReplacement("Yes! Dinner at 7:30 works for me")
@@ -234,7 +242,7 @@ class ConversationActionsUiTest {
 
         // The Reply action does the same (here on an own message, nearest the composer), and the strip can be cancelled.
         longPress("See you there")
-        composeRule.onNodeWithContentDescription("Reply").performClick()
+        composeRule.onNodeWithText("Reply").performClick()
         composeRule.onNodeWithText("Replying to yourself").assertIsDisplayed()
         composeRule.onNodeWithContentDescription("Cancel reply").performClick()
         composeRule.onAllNodesWithText("Replying to yourself").assertCountEquals(0)
@@ -412,13 +420,27 @@ class ConversationActionsUiTest {
         }
         composeRule.mainClock.advanceTimeBy(1_000)
         composeRule.onNodeWithContentDescription("Stop recording").assertIsDisplayed()
+        composeRule.onNodeWithText("Restart").assertIsDisplayed()
+        composeRule.onNodeWithText("Attach").assertIsDisplayed()
         composeRule.onNodeWithContentDescription("Delete recording").assertIsDisplayed()
         composeRule.onNodeWithContentDescription("Send voice message").assertIsDisplayed()
         composeRule.runOnIdle { assertTrue(capture.recording) }
         composeRule.auditShot("voice-locked")
+        // Restart throws the take away and records again.
+        composeRule.onNodeWithText("Restart").performClick()
+        composeRule.mainClock.advanceTimeBy(500)
+        composeRule.runOnIdle {
+            assertTrue(capture.recording)
+            assertEquals(2, capture.starts)
+        }
         composeRule.onNodeWithContentDescription("Stop recording").performClick()
         composeRule.mainClock.advanceTimeBy(500)
         composeRule.onNodeWithContentDescription("Play recording").assertIsDisplayed()
+        // Attach closes the panel and leaves the clip in the composer for the send button.
+        composeRule.onNodeWithText("Attach").performClick()
+        composeRule.mainClock.advanceTimeBy(500)
+        composeRule.onAllNodesWithText("Restart").assertCountEquals(0)
+        composeRule.onNodeWithText("Voice message · ", substring = true).assertIsDisplayed()
         composeRule.onNodeWithContentDescription("Send voice message").performClick()
         composeRule.mainClock.advanceTimeBy(500)
         composeRule.runOnIdle { assertNotNull(callbacks.voice) }
@@ -450,10 +472,12 @@ class ConversationActionsUiTest {
     /** Stands in for the microphone (the CI emulator has no audio input); the clip is a placeholder file. */
     private class FakeVoiceCapture(private val clip: File) : VoiceCapture {
         var recording = false
+        var starts = 0
         private var startedAt = 0L
         override val elapsedMillis: Long get() = if (recording) System.currentTimeMillis() - startedAt else 0L
         override fun start(): Boolean {
             recording = true
+            starts++
             startedAt = System.currentTimeMillis() - 4_000L
             return true
         }
