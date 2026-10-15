@@ -164,6 +164,8 @@ import com.journeyapps.barcodescanner.ScanOptions
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
 import org.matrix.rustcomponents.sdk.RecoveryState
 import org.matrix.rustcomponents.sdk.Room
@@ -441,7 +443,8 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
         if (conversationOnScreen == null) return@LaunchedEffect
         if (latestMessageId == null) return@LaunchedEffect
         try {
-            repository.markAsRead(current, activeRoomId)
+            // Leaving right after opening must not cancel the receipt mid-request, or the unread badge stays.
+            withContext(NonCancellable) { repository.markAsRead(current, activeRoomId) }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Exception) {

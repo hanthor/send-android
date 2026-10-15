@@ -253,9 +253,11 @@ class DetailsSettingsUiTest {
         composeRule.onNode(hasText("Message") and hasAnyAncestor(hasTestTag(PERSON_SHEET_TAG))).performClick()
         composeRule.waitUntil(10_000) { "message:@sam:example.org" in fake.calls }
 
+        // The sheet closes first; then Leave group.
+        composeRule.waitUntil(10_000) { composeRule.onAllNodesWithTag(PERSON_SHEET_TAG).fetchSemanticsNodes().isEmpty() }
         scrollDetailsTo("Leave group")
-        composeRule.onNodeWithText("Leave group").performClick()
-        composeRule.onNodeWithText("Leave this group?").assertIsDisplayed()
+        composeRule.onNode(hasText("Leave group") and hasClickAction()).performClick()
+        waitForText("Leave this group?")
         composeRule.onNodeWithText("Leave").performClick()
         composeRule.runOnIdle { assertTrue(fake.calls.toString(), "delete" in fake.calls) }
     }

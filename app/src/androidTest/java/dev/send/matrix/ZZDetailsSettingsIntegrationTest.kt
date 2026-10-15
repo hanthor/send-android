@@ -3,6 +3,7 @@ package dev.send.matrix
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.ComposeTimeoutException
 import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -201,8 +202,16 @@ class ZZDetailsSettingsIntegrationTest {
     /** Opens a details row's one-field dialog, enters [value], confirms, and waits for the dialog to close (saved). */
     private fun editDetailsText(row: String, inputTag: String, value: String, confirm: String) {
         scrollDetailsTo(row)
-        composeRule.onNodeWithText(row).performClick()
-        waitForUi("the $row dialog", 10_000, ::state) { composeRule.onAllNodes(hasTestTag(inputTag)).fetchSemanticsNodes().isNotEmpty() }
+        // Tap the row itself (its clickable merged node); a tap that lands while the list is still settling is retried.
+        var opened = false
+        for (attempt in 1..3) {
+            composeRule.onNode(hasText(row) and hasClickAction()).performClick()
+            opened = runCatching {
+                composeRule.waitUntil(5_000) { composeRule.onAllNodes(hasTestTag(inputTag)).fetchSemanticsNodes().isNotEmpty() }
+            }.isSuccess
+            if (opened) break
+        }
+        if (!opened) throw AssertionError("The $row dialog didn't open after 3 taps; ${state()}")
         composeRule.onNodeWithTag(inputTag).performTextReplacement(value)
         composeRule.onNodeWithText(confirm).performClick()
         waitForUi("the $row dialog to close", 60_000, ::state) { composeRule.onAllNodes(hasTestTag(inputTag)).fetchSemanticsNodes().isEmpty() }
@@ -214,7 +223,7 @@ class ZZDetailsSettingsIntegrationTest {
 
     private fun setNotificationLevel(label: String) {
         scrollDetailsTo("Notifications")
-        composeRule.onNodeWithText("Notifications").performClick()
+        composeRule.onNode(hasText("Notifications") and hasClickAction()).performClick()
         waitForUi("the notification levels", 10_000, ::state) { hasNodeWithText("Only when someone mentions you") }
         // The dialog's option (its window comes after the details row showing the current level).
         composeRule.onAllNodesWithText(label).let { it[it.fetchSemanticsNodes().size - 1] }.performClick()
