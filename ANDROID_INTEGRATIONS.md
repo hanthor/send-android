@@ -13,7 +13,7 @@ Android guidance: https://developer.android.com/develop/ui/views/notifications/c
 ## P1 — calls and driving
 
 - **Android Auto:** implement notification-powered messaging first, with MessagingStyle plus read/reply actions; spoken replies arrive through RemoteInput. Add templated Android Auto conversation browsing only after notification flows are robust. Declare Auto capabilities accurately. No SMS role or SMS permissions: Matrix is not SMS/RCS.
-- **MatrixRTC audio calls:** Send now uses Element Call Android `v0.1.0-rc.7` over the authenticated Rust SDK session, with its native RTC core, microphone-gated call start, mute/audio routing, upstream ongoing-call foreground service/notification, and host picture-in-picture wiring (`supportsPictureInPicture` + `ElementCallPictureInPicture.attach/onUserLeaveHint`). The release's public controller has no host-facing incoming-invitation or accept/decline API; inbound call UI requires a real invitation-delivery integration before it can be claimed complete. Add AndroidX Core-Telecom/CallStyle only when the MatrixRTC lifecycle integration supports it. Microphone permission is requested only after an audio call is initiated.
+- **MatrixRTC calls — implemented (phase 3):** Element Call Android `v0.1.0-rc.7` over the authenticated Rust SDK session (native RTC core, mute/audio routing, its ongoing-call foreground service and notification, host picture-in-picture). Incoming rings are a full-screen `CallStyle` notification on a "Calls" channel with a ringing screen that shows over the lock screen (`USE_FULL_SCREEN_INTENT`, checked with `canUseFullScreenIntent` and linked from Account → Notifications when it's off), Answer/Decline (`Room.declineCall`), and stop on decline/answer elsewhere or expiry. Outgoing voice and video calls ring the other person through Element Call and end with "Call declined" when they decline. Calls show in the timeline, the list and a join banner. Microphone and camera are requested only when a call needs them. AndroidX Core-Telecom isn't used: Element Call owns call audio (audio-device controller, audio focus, microphone/camera foreground service), which a self-managed Telecom call would also claim. See `IMPLEMENTATION_STATUS.md`.
 
 Android Auto: https://developer.android.com/training/cars/communication/notification-messaging
 CallStyle: https://developer.android.com/develop/ui/compose/notifications/call-style
@@ -55,6 +55,6 @@ Android 17 features: https://developer.android.com/about/versions/17/features
 
 1. Reliable session/crypto restoration and conversation action handling. *(Done.)*
 2. MessagingStyle, shortcuts, inline reply/read, deep links, notification privacy controls. *(Done in phase 2; CI run [38728600110](https://github.com/hanthor/send-android/actions/runs/38728600110).)*
-3. Native call lifecycle and CallStyle, then Auto call/messaging compatibility.
+3. Native call lifecycle and CallStyle *(done in phase 3, without Core-Telecom; CI run [38739979359](https://github.com/hanthor/send-android/actions/runs/38739979359))*, then Auto call/messaging compatibility.
 4. Direct share, widgets, optional bubbles, dictation/read-aloud.
 5. On-device AI, App Actions, API 37 contact picker/Handoff; capability-gate and review privacy implications individually.

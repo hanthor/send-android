@@ -121,6 +121,7 @@ class CallUiTest {
             SendTheme { IncomingCallScreen("Bob", roomName = null, video = false, onAnswer = { answered++ }, onDecline = { declined++ }) }
         }
         composeRule.onNodeWithText("Incoming voice call").assertIsDisplayed()
+        composeRule.auditShot("incoming-call")
         composeRule.onNodeWithText("Bob").assertIsDisplayed()
         composeRule.onNodeWithContentDescription("Decline").performClick()
         composeRule.onNodeWithContentDescription("Answer").performClick()

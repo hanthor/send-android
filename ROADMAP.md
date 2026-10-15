@@ -13,7 +13,7 @@ Baseline: Google Messages `20260924` compared on the same emulator
 | Conversation list | ~40% | Search, snippet, relative time, unread badge, groups, mute (⋮ menu + muted icon) | Archive, pin, swipe actions, multi-select, block/spam, leave |
 | Motion | ~45% | Screen open/close transitions, M3 spring tokens, expand/collapse springs | FAB collapse on scroll, list item animations, predictive back, shared-element avatar, bubble entry, swipe gestures |
 | System integration | ~45% | MessagingStyle notifications, UnifiedPush pusher + background-sync fallback, inline reply, mark read, long-lived conversation shortcuts, notification deep links | Share target, bubbles, widgets, Android Auto, FCM |
-| Calling | ~20% | Outgoing 1:1 audio via Element Call, mute/routing, PiP, ongoing-call notification | Incoming ring, accept/decline, video, CallStyle/Telecom, call events in timeline, group calls |
+| Calling | ~65% | Outgoing/incoming 1:1 and group calls via Element Call, full-screen CallStyle ring with answer/decline, decline both ways, voice/video buttons, call rows in the timeline, join banner + list icon, mute/routing, PiP | Core-Telecom, missed-call notification, media verified in CI, group call notices, Element Call out of rc |
 | Account & E2EE safety | ~85% | Password/QR/SSO login, well-known discovery, session restore, Keystore-wrapped store, sign-out with store wipe, cross-signing bootstrap, recovery/key backup setup and restore, SAS emoji verification, unverified-session banner, "Waiting for this message…" bubbles | Change/reset recovery key, reset identity when no verified device or key is left, session list (other devices) |
 
 Overall: **looks ~85–90% like Messages, behaves ~45% like it.**
@@ -39,14 +39,16 @@ Verified by Android CI run [38728600110](https://github.com/hanthor/send-android
 - [x] Phase 3 hook: `m.rtc.notification` events reach `IncomingCalls.onIncomingCall` (no UI yet).
 - Not end to end in CI: delivery through a real UnifiedPush distributor (no distributor app on the emulator, and Synapse in Docker can't reach a gateway on it); CI checks the endpoint→pusher mapping in Synapse and the pushed-event path separately. Real process death (CI simulates it in-process), Doze/frozen-app timing of the 15-minute background sync, and the system Conversations section/permission dialog are left to device testing.
 
-### 3. Calling (Messages-style)
-- Incoming: `RtcNotificationType` ring events (via phase 2) → full-screen `CallStyle` notification + AndroidX Core-Telecom; accept joins the room's MatrixRTC session through Element Call, decline uses `Room.declineCall`; `CallDeclineListener` stops ringing on other devices.
-- Video calls (camera permission on demand), switch audio/video in call.
-- Call events rendered in the timeline ("Missed call", "Call · 4:12"); call button in Messages header becomes audio/video menu.
-- Group calls in group rooms (`activeRoomCallParticipants` for "join" banners).
-- CI: add LiveKit + lk-jwt-service to `dev/matrix/compose.yaml` so a Bob SDK client can place/answer real calls.
-- Track Element Call out of release-candidate; re-pin when stable.
-- *Acceptance:* Bob rings Alice in CI, Alice's device shows the call UI, accept connects media; decline reaches Bob.
+### 3. Calling (Messages-style) — done (media left to device testing)
+Verified by Android CI run [38739979359](https://github.com/hanthor/send-android/actions/runs/38739979359) (`ZZRtcCallsIntegrationTest`, `CallUiTest`).
+- [x] CI MatrixRTC backend: LiveKit + lk-jwt-service in `dev/matrix/compose.yaml`, Synapse MSC4143 transport discovery and MSC4140 delayed events, `check-rtc.sh` walks the token chain; Alice's client discovers the LiveKit transport.
+- [x] Incoming: `RtcNotificationType.RING` (via phase 2) → full-screen `CallStyle` notification on a "Calls" channel (ringtone, insistent, expiry timeout) + Messages-style ringing screen over the lock screen; answer joins the room's MatrixRTC session through Element Call (no re-ring of the caller), decline sends `Room.declineCall`; `CallDeclineListener` / call membership stop ringing on other devices.
+- [x] Outgoing: Element Call rings the other side of a DM; "Calling…" while it rings; the other side's decline ends the call with "Call declined".
+- [x] Video calls (camera permission on demand by Element Call); header has Video call and Voice call buttons.
+- [x] Call events in the timeline ("Missed voice call", "Voice call · 2:31", "Call declined", "… in progress" with Join, Call back).
+- [x] Group calls: call icon in the list, "Voice call in progress · N people" banner with Join; new groups let every member join calls.
+- [x] *Acceptance:* Bob rings Alice in CI, Alice's device shows the CallStyle ring, decline reaches Bob, answer puts Alice's membership in Bob's session, Alice's call rings Bob and his decline ends it.
+- Not in CI: media (Alice's call stays in `ConnectingMedia` against Bob's SDK-only membership; nobody publishes media, and the RTC core's logs are off), lock-screen/full-screen display (CI's screen is on and unlocked, so the ring is a heads-up), ringtone/vibration. AndroidX Core-Telecom isn't used: Element Call owns call audio (its own audio-device controller, focus and microphone/camera foreground service), which a self-managed Telecom call would also claim. Track Element Call out of release-candidate; re-pin when stable.
 
 ### 4. Conversation behaviour parity
 - Swipe-to-reply + reply previews, edit, delete (redact), copy, forward.
