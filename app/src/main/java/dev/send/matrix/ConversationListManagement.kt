@@ -24,6 +24,8 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -57,6 +59,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -155,6 +158,20 @@ internal class ConversationListState(private val scope: CoroutineScope) {
 internal fun rememberConversationListState(): ConversationListState {
     val scope = rememberCoroutineScope()
     return remember(scope) { ConversationListState(scope) }
+}
+
+/**
+ * Scroll state for a conversation list that stays at the top while rows move up (a new message, a pin, a new
+ * conversation) and the user is at the top, as in Messages; LazyColumn would otherwise keep its first visible row
+ * in place and push the new one above the viewport.
+ */
+@Composable
+internal fun rememberTopAnchoredListState(): LazyListState {
+    val state = rememberLazyListState()
+    SideEffect {
+        if (state.firstVisibleItemIndex == 0 && state.firstVisibleItemScrollOffset == 0) state.requestScrollToItem(0)
+    }
+    return state
 }
 
 /**
@@ -412,7 +429,7 @@ internal fun ArchivedScreen(
             shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
             color = colors.surface,
         ) {
-            LazyColumn(contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp)) {
+            LazyColumn(state = rememberTopAnchoredListState(), contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp)) {
                 if (rooms.isEmpty()) {
                     item(key = "empty") {
                         EmptyListText("Archived conversations appear here. Swipe a conversation in your list to archive it.")
