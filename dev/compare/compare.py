@@ -21,8 +21,16 @@ PAIRS = {
     # Newer features (visual audit).
     "new-group": ("gm-new-group", "send-new-group-device"),
     "attachments": ("gm-attachments", "send-attachments-device"),
+    "gallery": ("gm-gallery", "send-gallery-device"),
     "voice": ("gm-voice-recording", "send-voice-hint-device"),
+    "voice-locked": ("gm-voice-locked", "send-voice-locked-device"),
     "conversation-menu": ("gm-conversation-menu", "send-conversation-menu-device"),
+    "conversation-search": ("gm-conversation-search", "send-conversation-search-device"),
+    "message-actions": ("gm-message-actions", "send-message-actions-device"),
+    "reply-preview": ("gm-reply-preview", "send-reply-preview-device"),
+    "emoji-picker": ("gm-emoji-picker", "send-emoji-picker-device"),
+    "media-viewer": ("gm-media-viewer", "send-media-viewer-device"),
+    "typing": ("gm-typing", "send-typing-device"),
     "account": ("gm-account", "send-account-device"),
     "settings": ("gm-settings", "send-security-device"),
     "notification": ("gm-notification", "send-notification-device"),
@@ -33,9 +41,22 @@ ELEMENTS = {
     "search bar": ["search conversations", "search", "search messages"],
     "start-chat FAB": ["start chat", "new chat"],
     "message field": ["@edittext"],
-    "send / mic button": ["send", "send sms", "send message", "voice message", "record voice message"],
+    "send / mic button": ["send", "send sms", "send message", "voice message", "record voice message",
+                          "show record a voice message screen"],
+    "attach button": ["attach", "show attach content screen"],
+    "gallery button": ["gallery", "show attach media screen"],
+    "emoji button": ["emoji", "show attach emoji and stickers screen"],
     "back button": ["back", "navigate up"],
     "call button": ["call", "voice call"],
+    "overflow menu": ["more options", "more"],
+    # Message selection actions (Send's content descriptions first, then Messages' wording).
+    "reply action": ["reply"],
+    "copy action": ["copy", "copy text"],
+    "edit action": ["edit"],
+    "delete action": ["delete"],
+    "forward action": ["forward", "share"],
+    "info action": ["info", "details", "view details"],
+    "close selection": ["close", "exit selection", "done"],
 }
 
 
@@ -134,6 +155,9 @@ def main() -> int:
         lines += [f"## {screen}", ""]
         if not (ref_png.exists() and our_png.exists()):
             lines += [f"_Missing capture: {ref_png.name if not ref_png.exists() else our_png.name}_", ""]
+            skipped = ref_dir / f"{ref_stem}.skipped.txt"
+            if not ref_png.exists() and skipped.exists():
+                lines += [f"_Messages: {skipped.read_text().strip()}_", ""]
             continue
         composite(ref_png, our_png, out_dir / f"{screen}.png")
         lines += [f"![{screen}]({screen}.png)", ""]
