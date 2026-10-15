@@ -118,6 +118,9 @@ def main() -> int:
     dpi = int(sys.argv[4])
     out_dir.mkdir(parents=True, exist_ok=True)
     lines = ["# Google Messages vs Send", "", f"Same emulator, {dpi} dpi. Sizes in dp (`w×h @ x,y`).", ""]
+    version = ref_dir / "gm-version.txt"
+    if version.exists():
+        lines += [f"Messages build: `{version.read_text().strip()}`", ""]
     for screen, (ref_stem, our_stem) in PAIRS.items():
         ref_png, our_png = ref_dir / f"{ref_stem}.png", send_dir / f"{our_stem}.png"
         lines += [f"## {screen}", ""]
