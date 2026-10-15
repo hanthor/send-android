@@ -29,6 +29,23 @@ LiveKit service, so it cannot verify calls.
   emulator's full resolution, then uploads them with the APK and test reports.
 - CI cannot resolve `matrix.reilly.asia`; production SSO is not tested.
 
+## Google Messages comparison
+
+`.github/workflows/messages-comparison.yml` runs Send's screenshot tests and a
+scripted Google Messages session on the same `pixel_6` Google APIs emulator,
+then uploads the `Messages-Comparison` artifact: side-by-side composites,
+`report.md` (dp-measured element bounds from uiautomator dumps, dominant
+palettes, transition timing from screen recordings), and the raw captures.
+It runs on `main` pushes touching `app/src/main/**` or `dev/compare/**`, or on
+demand via *Run workflow*.
+
+- `dev/compare/capture-messages.sh` drives Messages: seeds SMS through the
+  emulator modem, dismisses first-run prompts, captures screens.
+- `dev/compare/compare.py` builds the report.
+- The Messages APK comes from APKPure for research only. CI aborts unless it is
+  signed by Google's pinned certificate, and it is never uploaded. Decompiled
+  Google code must never be committed here (AGPL).
+
 Builds and automated tests remain in GitHub Actions. Debug APKs are available
 from the `Send-debug-APK` artifact on a successful workflow run.
 
