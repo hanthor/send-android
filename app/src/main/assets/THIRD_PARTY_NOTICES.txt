@@ -44,7 +44,12 @@ Source: https://github.com/tink-crypto/tink-java
 Artifact: com.google.crypto.tink:tink (version selected by the connector)
 License: Apache License 2.0 (http://www.apache.org/licenses/LICENSE-2.0).
 
-AndroidX libraries (Compose, Material 3, Activity, Browser, Core, WorkManager, Test)
+AndroidX libraries (Compose, Material 3, Activity, Browser, Core, WorkManager, Emoji2 emoji picker data, Test)
 Copyright The Android Open Source Project.
 Source: https://github.com/androidx/androidx
+License: Apache License 2.0 (http://www.apache.org/licenses/LICENSE-2.0).
+
+Guava: Google Core Libraries for Java (pulled in by the AndroidX emoji picker)
+Copyright The Guava Authors.
+Source: https://github.com/google/guava
 License: Apache License 2.0 (http://www.apache.org/licenses/LICENSE-2.0).

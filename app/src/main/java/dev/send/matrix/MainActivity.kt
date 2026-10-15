@@ -422,17 +422,11 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
     val activeDraft = drafts[activeRoomId].orEmpty()
     LaunchedEffect(room, conversationOnScreen, activeDraft) {
         val current = room ?: return@LaunchedEffect
-        try {
-            val typing = conversationOnScreen != null && activeDraft.isNotBlank()
-            repository.setTyping(current, typing)
-            if (typing) {
-                delay(TYPING_IDLE_MILLIS)
-                repository.setTyping(current, false)
-            }
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (failure: Exception) {
-            android.util.Log.w("SendApp", "Typing notice could not be sent", failure)
+        val typing = conversationOnScreen != null && activeDraft.isNotBlank()
+        repository.setTyping(current, typing)
+        if (typing) {
+            delay(TYPING_IDLE_MILLIS)
+            repository.setTyping(current, false)
         }
     }
     var forwarding by remember { mutableStateOf<MatrixMessage?>(null) }
@@ -648,7 +642,7 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
                 onDraft = { value -> drafts = drafts + (activeRoomId to value) },
                 messages = messages,
                 onBack = {
-                    room?.let { left -> scope.launch { runCatching { repository.setTyping(left, false) } } }
+                    room?.let { left -> repository.setTyping(left, false) }
                     room = null; timeline = null; activeRoomId = ""; roomTitle = ""; activeRoomIsDirect = false; error = ""
                 },
                 onSend = { replyTo ->
