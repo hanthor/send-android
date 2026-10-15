@@ -1686,7 +1686,7 @@ class MatrixRepository(context: Context) {
 
     /** MatrixRTC transports the homeserver advertises (MSC4143 endpoint, else well-known `rtc_foci`). */
     suspend fun rtcTransports(): List<RtcTransport> = withContext(Dispatchers.IO) {
-        requireClient().discoverRtcTransports()
+        requireClient().discoverRtcTransports().orEmpty()
     }
 
     /** Declines the ring [notificationEventId] in [roomId] (`m.rtc.decline`), restoring the session when cold. */

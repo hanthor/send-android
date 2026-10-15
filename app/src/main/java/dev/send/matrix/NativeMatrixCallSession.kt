@@ -233,7 +233,9 @@ private class SdkDiscoveryTransport(
     override suspend fun getUrl(url: String): Result<String> {
         if (!url.endsWith(RTC_TRANSPORTS_PATH)) return delegate.getUrl(url)
         return try {
-            Result.success(rtcTransportsJson(client.discoverRtcTransports()))
+            // Null: neither the endpoint nor the well-known had transports; Element Call then tries its own lookup.
+            client.discoverRtcTransports()?.let { Result.success(rtcTransportsJson(it)) }
+                ?: Result.failure(IllegalStateException("The homeserver advertises no MatrixRTC transports"))
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Exception) {
