@@ -30,19 +30,26 @@ class NotificationsUiTest {
     val composeRule = createComposeRule()
 
     @Test
-    fun accountSheetShowsHowNotificationsArrive() {
+    fun settingsShowHowNotificationsArrive() {
         var opened = false
         composeRule.setContent {
             SendTheme {
-                AccountSheet(
-                    userId = "@alice:example.org",
-                    securitySummary = securitySummary(VerificationState.VERIFIED, RecoveryState.ENABLED),
-                    onSecurity = {},
-                    onAbout = {},
-                    onSignOut = {},
-                    onDismiss = {},
+                SettingsScreen(
                     notificationSummary = "Background sync every 15 minutes",
                     onNotifications = { opened = true },
+                    sounds = true,
+                    onSounds = {},
+                    theme = ThemeChoice.System,
+                    onTheme = {},
+                    linkPreviews = true,
+                    onLinkPreviews = {},
+                    securitySummary = securitySummary(VerificationState.VERIFIED, RecoveryState.ENABLED),
+                    onSecurity = {},
+                    onDevices = {},
+                    onBlocked = {},
+                    onArchived = {},
+                    onAbout = {},
+                    onBack = {},
                 )
             }
         }

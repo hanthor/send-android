@@ -463,7 +463,7 @@ internal fun BlockedContactsScreen(userIds: List<String>, onUnblock: (String) ->
                     )
                 }
                 if (userIds.isEmpty()) {
-                    item(key = "empty") { EmptyListText("No blocked contacts. Block someone from a conversation's selection menu.") }
+                    item(key = "empty") { EmptyListText("No blocked contacts. Block someone from a conversation's details or selection menu.") }
                 }
                 items(userIds, key = { it }) { userId ->
                     Row(
@@ -568,7 +568,7 @@ internal fun StarredMessagesScreen(
 
 /** Back arrow and title, as on Messages' secondary list screens. */
 @Composable
-private fun ListScreenTopBar(title: String, onBack: () -> Unit) {
+internal fun ListScreenTopBar(title: String, onBack: () -> Unit) {
     Row(
         modifier = Modifier.fillMaxWidth().statusBarsPadding().height(64.dp).padding(horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -579,7 +579,7 @@ private fun ListScreenTopBar(title: String, onBack: () -> Unit) {
 }
 
 @Composable
-private fun EmptyListText(text: String) {
+internal fun EmptyListText(text: String) {
     Text(
         text,
         color = MaterialTheme.colorScheme.onSurfaceVariant,

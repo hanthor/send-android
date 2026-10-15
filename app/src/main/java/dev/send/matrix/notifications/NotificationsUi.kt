@@ -132,6 +132,16 @@ internal fun NotificationsDialog(onDismiss: () -> Unit) {
                     ) { Text("Turn on notifications") }
                 }
                 Text(delivery, style = MaterialTheme.typography.bodyMedium)
+                if (allowed) {
+                    // Android's per-app page: the Messages / Calls channels' sounds, pop-up and lock-screen settings.
+                    TextButton(
+                        onClick = {
+                            context.startActivity(
+                                Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName),
+                            )
+                        },
+                    ) { Text("Sounds, pop-ups and lock screen") }
+                }
                 if (allowed && !fullScreenCalls) {
                     // Android 14+ special access: without it a ring is only a heads-up notification.
                     Text(

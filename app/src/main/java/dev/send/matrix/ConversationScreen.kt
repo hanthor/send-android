@@ -40,6 +40,9 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.draw.clip
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
@@ -158,6 +161,14 @@ internal fun ConversationScreen(
     onToggleStar: ((eventId: String, starred: Boolean) -> Unit)? = null,
     /** Loads this conversation's starred messages for ⋮ → Starred; null hides the entry. */
     loadStarred: (suspend () -> List<StarredMessage>)? = null,
+    /** The conversation's avatar (`mxc://`) for the header and details. */
+    avatarUrl: String? = null,
+    /** Conversation details (⋮ → Details, or tapping the header); null hides them. */
+    details: ConversationDetailsActions? = null,
+    /** Changes when the room changes on the server, so open details reload. */
+    detailsRefreshKey: Any? = null,
+    /** Play Messages' sent/received sounds while this conversation is open (Settings). */
+    sounds: Boolean = false,
 ) {
     val context = LocalContext.current
     val colors = MaterialTheme.colorScheme
@@ -185,6 +196,9 @@ internal fun ConversationScreen(
     var multiSelected by remember { mutableStateOf<List<String>>(emptyList()) }
     var confirmDeleteMany by remember { mutableStateOf<List<MatrixMessage>?>(null) }
     var showStarred by remember { mutableStateOf(false) }
+    var showDetails by remember { mutableStateOf(false) }
+    var showMediaGrid by remember { mutableStateOf(false) }
+    PlayConversationSounds(messages, sounds)
     val listState = rememberLazyListState()
     val composerFocus = remember { FocusRequester() }
 
@@ -464,16 +478,25 @@ internal fun ConversationScreen(
                         IconButton(onClick = onBack) {
                             Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                         }
-                        Avatar(name = title, size = 40.dp)
-                        Spacer(modifier = Modifier.width(14.dp))
-                        Text(
-                            title,
-                            style = MaterialTheme.typography.titleLarge,
-                            color = colors.onSurface,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f),
-                        )
+                        // Messages: tapping the contact's avatar or name opens the conversation's details.
+                        Row(
+                            modifier = Modifier.weight(1f).height(56.dp).clip(RoundedCornerShape(28.dp))
+                                .clickable(enabled = details != null, onClickLabel = "Details") {
+                                    showEmojiPanel = false
+                                    showDetails = true
+                                },
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Avatar(name = title, size = 40.dp, url = avatarUrl)
+                            Spacer(modifier = Modifier.width(14.dp))
+                            Text(
+                                title,
+                                style = MaterialTheme.typography.titleLarge,
+                                color = colors.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
                         // Messages: video and voice call buttons; both start a MatrixRTC call through Element Call.
                         IconButton(onClick = { onCall(true) }) {
                             Icon(imageVector = Icons.Outlined.Videocam, contentDescription = "Video call")
@@ -493,6 +516,17 @@ internal fun ConversationScreen(
                                     Icon(Icons.Filled.Lock, contentDescription = null, tint = colors.onSurfaceVariant, modifier = Modifier.size(20.dp))
                                     Spacer(Modifier.width(12.dp))
                                     Text("End-to-end encrypted", style = MaterialTheme.typography.bodyLarge, color = colors.onSurfaceVariant)
+                                }
+                                if (details != null) {
+                                    DropdownMenuItem(
+                                        text = { Text("Details") },
+                                        leadingIcon = { Icon(Icons.Outlined.Info, contentDescription = null) },
+                                        onClick = {
+                                            showMenu = false
+                                            showEmojiPanel = false
+                                            showDetails = true
+                                        },
+                                    )
                                 }
                                 DropdownMenuItem(
                                     text = { Text("Search") },
@@ -917,6 +951,55 @@ internal fun ConversationScreen(
             onDismiss = { confirmDeleteMany = null },
         )
     }
+    if (details != null) {
+        val media = remember(messages) { messages.asReversed().filter { it.attachment != null && !it.deleted } }
+        // Photos and videos open in the viewer; files and audio in the app that handles them.
+        fun openMedia(message: MatrixMessage) {
+            val attachment = message.attachment ?: return
+            if (attachment.kind == AttachmentKind.Image || attachment.kind == AttachmentKind.Video) {
+                viewing = message
+            } else scope.launch {
+                try {
+                    openMediaExternally(context, loadMedia(attachment.sourceJson, attachment.filename), attachment.mimetype ?: "application/octet-stream")
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
+                } catch (failure: Exception) {
+                    android.widget.Toast.makeText(context, failure.message ?: "This file couldn't be opened.", android.widget.Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+        AnimatedVisibility(visible = showDetails, enter = SendMotion.openEnter, exit = SendMotion.closeExit) {
+            ConversationDetailsScreen(
+                title = title,
+                isDirect = isDirect,
+                avatarUrl = avatarUrl,
+                actions = details,
+                refreshKey = detailsRefreshKey,
+                muted = muted,
+                onToggleMute = onToggleMute,
+                media = media,
+                loadMedia = loadMedia,
+                onCall = { video -> showDetails = false; onCall(video) },
+                onSearch = {
+                    showDetails = false
+                    searching = true
+                },
+                onStarred = if (loadStarred != null) ({ showStarred = true }) else null,
+                onMedia = { showMediaGrid = true },
+                onOpenMedia = { message -> openMedia(message) },
+                onBack = { showDetails = false },
+            )
+        }
+        AnimatedVisibility(visible = showMediaGrid, enter = SendMotion.openEnter, exit = SendMotion.closeExit) {
+            MediaGridScreen(
+                media = media,
+                loadMedia = loadMedia,
+                onOpen = { message -> openMedia(message) },
+                onLoadOlder = onOlder,
+                onBack = { showMediaGrid = false },
+            )
+        }
+    }
     if (loadStarred != null) {
         AnimatedVisibility(visible = showStarred, enter = SendMotion.openEnter, exit = SendMotion.closeExit) {
             StarredMessagesScreen(
@@ -926,6 +1009,7 @@ internal fun ConversationScreen(
                 load = loadStarred,
                 onOpen = { eventId ->
                     showStarred = false
+                    showDetails = false
                     jumpTo(eventId)
                 },
                 onUnstar = { eventId -> onToggleStar?.invoke(eventId, false) },

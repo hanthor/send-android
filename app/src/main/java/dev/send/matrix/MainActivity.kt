@@ -131,6 +131,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -163,6 +164,8 @@ import com.journeyapps.barcodescanner.ScanOptions
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
 import org.matrix.rustcomponents.sdk.RecoveryState
 import org.matrix.rustcomponents.sdk.Room
@@ -219,9 +222,22 @@ private val GoogleDarkColors = darkColorScheme(
     surfaceContainerHighest = Color(0xFF33353A),
 )
 
+/** Whether Send draws dark: Settings → Choose theme, or the system's night mode for "System default". */
 @Composable
-internal fun SendTheme(content: @Composable () -> Unit) {
-    MaterialTheme(colorScheme = if (isSystemInDarkTheme()) GoogleDarkColors else GoogleLightColors, content = content)
+internal fun sendDarkTheme(theme: ThemeChoice? = null): Boolean {
+    val context = LocalContext.current
+    val saved by remember(context) { SendSettings.get(context) }.theme.collectAsState()
+    return when (theme ?: saved) {
+        ThemeChoice.Light -> false
+        ThemeChoice.Dark -> true
+        ThemeChoice.System -> isSystemInDarkTheme()
+    }
+}
+
+/** Send's colour scheme; [theme] overrides the saved choice (fixtures), null follows Settings. */
+@Composable
+internal fun SendTheme(theme: ThemeChoice? = null, content: @Composable () -> Unit) {
+    MaterialTheme(colorScheme = if (sendDarkTheme(theme)) GoogleDarkColors else GoogleLightColors, content = content)
 }
 
 internal fun avatarPalette(name: String): Pair<Color, Color> {
@@ -244,6 +260,12 @@ class MainActivity : ComponentActivity() {
         if (savedInstanceState == null && !acceptCall(intent)) acceptConversation(intent)
         enableEdgeToEdge()
         setContent {
+            // Status/navigation bar icons follow Send's theme, which can differ from the system's.
+            val dark = sendDarkTheme()
+            LaunchedEffect(dark) {
+                val style = androidx.activity.SystemBarStyle.auto(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT) { dark }
+                enableEdgeToEdge(statusBarStyle = style, navigationBarStyle = style)
+            }
             SendTheme { SendApp(repository, this@MainActivity) }
         }
     }
@@ -362,6 +384,14 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
     val starredEvents by repository.starredEvents.collectAsState()
     var showArchived by rememberSaveable { mutableStateOf(false) }
     var showBlocked by rememberSaveable { mutableStateOf(false) }
+    var showSettings by rememberSaveable { mutableStateOf(false) }
+    var showProfile by rememberSaveable { mutableStateOf(false) }
+    var showDevices by rememberSaveable { mutableStateOf(false) }
+    val settings = remember { SendSettings.get(activity) }
+    val theme by settings.theme.collectAsState()
+    val sounds by settings.sounds.collectAsState()
+    val linkPreviews by settings.linkPreviews.collectAsState()
+    val ownProfile by repository.ownProfile.collectAsState()
     val pushStatus by PushRegistration.status.collectAsState()
     val lifecycleState by LocalLifecycleOwner.current.lifecycle.currentStateFlow.collectAsState()
     val notificationsOn = remember(lifecycleState) { notificationsAllowed(activity) }
@@ -413,7 +443,8 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
         if (conversationOnScreen == null) return@LaunchedEffect
         if (latestMessageId == null) return@LaunchedEffect
         try {
-            repository.markAsRead(current, activeRoomId)
+            // Leaving right after opening must not cancel the receipt mid-request, or the unread badge stays.
+            withContext(NonCancellable) { repository.markAsRead(current, activeRoomId) }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: Exception) {
@@ -527,6 +558,47 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
             block = { userId -> listAction("$userId could not be blocked.") { repository.blockUser(userId) } },
         )
     }
+    /** Leaves the open conversation for the list. */
+    fun closeConversation() {
+        room?.let { left -> repository.setTyping(left, false) }
+        room = null; timeline = null; activeRoomId = ""; roomTitle = ""; activeRoomIsDirect = false; error = ""
+    }
+    // Conversation details act on the open room; archive, delete and blocking the DM's person return to the list.
+    val detailsActions = remember(activeRoomId) {
+        val roomId = activeRoomId
+        if (roomId.isBlank()) null else ConversationDetailsActions(
+            load = { repository.roomDetails(roomId) },
+            setNotifications = { level -> repository.setRoomNotifications(roomId, level) },
+            invite = { userId -> repository.inviteToRoom(roomId, userId) },
+            rename = { name -> repository.renameRoom(roomId, name) },
+            setTopic = { topic -> repository.setRoomTopic(roomId, topic) },
+            setAvatar = { uri -> repository.setRoomAvatar(roomId, uri) },
+            archive = {
+                listAction("Conversation could not be archived.") { repository.setArchived(listOf(roomId), true) }
+                closeConversation()
+            },
+            delete = {
+                listAction("Conversation could not be deleted.") { repository.deleteConversations(listOf(roomId)) }
+                closeConversation()
+            },
+            block = { userId ->
+                listAction("$userId could not be blocked.") { repository.blockUser(userId) }
+                if (rooms.firstOrNull { it.id == roomId }?.dmUserId == userId) closeConversation()
+            },
+            message = { userId ->
+                scope.launch {
+                    error = ""
+                    try {
+                        openConversation(repository.directRoomWith(userId), null, true)
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (failure: Exception) {
+                        error = failure.message ?: "Conversation could not be opened."
+                    }
+                }
+            },
+        )
+    }
     fun signOut(serverSide: Boolean) {
         signingOut = true
         signOutError = ""
@@ -537,6 +609,9 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
                 showSignOut = false
                 showNotifications = false
                 showSecurity = false
+                showSettings = false
+                showProfile = false
+                showDevices = false
                 room = null
                 timeline = null
                 activeRoomId = ""
@@ -620,6 +695,8 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
     }
 
     val sendCallStyle = rememberSendCallStyle()
+    val avatarLoader: AvatarLoader? = remember(sessionLive) { if (sessionLive) repository::avatarBitmap else null }
+    androidx.compose.runtime.CompositionLocalProvider(LocalAvatarLoader provides avatarLoader) {
     Box(Modifier.fillMaxSize()) {
     ElementCallOverlay(
         controller = callSession?.controller,
@@ -696,15 +773,13 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
                 }
             )
             3 -> ConversationScreen(
-                title = roomTitle,
+                // The list entry follows renames (here or by others); the title from opening covers new rooms.
+                title = rooms.firstOrNull { it.id == activeRoomId }?.name ?: roomTitle,
                 isDirect = activeRoomIsDirect,
                 draft = drafts[activeRoomId].orEmpty(),
                 onDraft = { value -> drafts = drafts + (activeRoomId to value) },
                 messages = messages,
-                onBack = {
-                    room?.let { left -> repository.setTyping(left, false) }
-                    room = null; timeline = null; activeRoomId = ""; roomTitle = ""; activeRoomIsDirect = false; error = ""
-                },
+                onBack = { closeConversation() },
                 onSend = { replyTo ->
                     val currentRoom = room
                     val currentTimeline = timeline
@@ -756,7 +831,7 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
                     }
                 },
                 typingUsers = typingUsers,
-                loadLinkPreview = repository::linkPreview,
+                loadLinkPreview = if (linkPreviews) repository::linkPreview else null,
                 onOlder = {
                     val current = timeline
                     if (current != null) scope.launch {
@@ -831,6 +906,10 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
                     }
                 },
                 loadStarred = { repository.starredMessages(activeRoomId) },
+                avatarUrl = rooms.firstOrNull { it.id == activeRoomId }?.avatarUrl,
+                details = detailsActions,
+                detailsRefreshKey = rooms.firstOrNull { it.id == activeRoomId },
+                sounds = sounds,
             )
             else -> HomeScreen(
                 rooms = rooms,
@@ -900,6 +979,44 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
                     onBack = { forwarding = null },
                 )
             }
+            // Account menu → Settings (and its Devices page) and the account card's Profile; like Archived they
+            // step aside while a conversation opened from them is on screen.
+            AnimatedVisibility(visible = showSettings && timeline == null, enter = SendMotion.openEnter, exit = SendMotion.closeExit) {
+                SettingsScreen(
+                    notificationSummary = notificationSummary(activity, notificationsOn, pushStatus),
+                    onNotifications = { showNotifications = true },
+                    sounds = sounds,
+                    onSounds = settings::setSounds,
+                    theme = theme,
+                    onTheme = settings::setTheme,
+                    linkPreviews = linkPreviews,
+                    onLinkPreviews = settings::setLinkPreviews,
+                    securitySummary = securitySummary(verificationState, recoveryState),
+                    onSecurity = { showSecurity = true },
+                    onDevices = { showDevices = true },
+                    onBlocked = { showBlocked = true },
+                    onArchived = { showArchived = true },
+                    onAbout = { showAbout = true },
+                    onBack = { showSettings = false },
+                )
+            }
+            AnimatedVisibility(visible = showDevices && timeline == null, enter = SendMotion.openEnter, exit = SendMotion.closeExit) {
+                DevicesScreen(
+                    load = repository::devices,
+                    signOut = { deviceId, password, session -> repository.signOutDevice(deviceId, password, session) },
+                    onBack = { showDevices = false },
+                )
+            }
+            AnimatedVisibility(visible = showProfile && timeline == null, enter = SendMotion.openEnter, exit = SendMotion.closeExit) {
+                ProfileScreen(
+                    userId = account?.userId.orEmpty(),
+                    profile = ownProfile,
+                    setName = { name -> repository.setDisplayName(name) },
+                    setAvatar = { uri -> repository.setProfileAvatar(uri) },
+                    removeAvatar = { repository.removeProfileAvatar() },
+                    onBack = { showProfile = false },
+                )
+            }
             // Account menu → Archived; hidden (not closed) while a conversation opened from it is on screen.
             AnimatedVisibility(visible = showArchived && timeline == null, enter = SendMotion.openEnter, exit = SendMotion.closeExit) {
                 ArchivedScreen(
@@ -955,11 +1072,11 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
             if (showAccount) {
                 AccountSheet(
                     userId = account?.userId.orEmpty(),
+                    profile = ownProfile,
+                    onProfile = { showAccount = false; showProfile = true },
                     securitySummary = securitySummary(verificationState, recoveryState),
                     onSecurity = { showAccount = false; showSecurity = true },
-                    notificationSummary = notificationSummary(activity, notificationsOn, pushStatus),
-                    onNotifications = { showAccount = false; showNotifications = true },
-                    onAbout = { showAccount = false; showAbout = true },
+                    onSettings = { showAccount = false; showSettings = true },
                     onArchived = { showAccount = false; showArchived = true },
                     onBlocked = { showAccount = false; showBlocked = true },
                     onSignOut = { showAccount = false; signOutError = ""; showSignOut = true },
@@ -1002,6 +1119,7 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
         hostState = callNotices,
         modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 88.dp),
     )
+    }
     }
 }
 
@@ -1840,7 +1958,7 @@ internal fun ConversationRow(
                     Icon(Icons.Filled.Check, contentDescription = null, tint = colors.onPrimary)
                 }
             } else {
-                Avatar(name = room.name, size = 52.dp)
+                Avatar(name = room.name, size = 52.dp, url = room.avatarUrl)
             }
         }
         Spacer(modifier = Modifier.width(16.dp))
@@ -1942,14 +2060,48 @@ internal fun conversationTimestamp(context: android.content.Context, timestampMi
     return DateUtils.formatDateTime(context, timestampMillis, DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_ABBREV_MONTH or yearFlag)
 }
 
+/** Loads an avatar (`mxc://` URL) as a bitmap about [sizePx] square; SendApp provides the live session's loader. */
+internal typealias AvatarLoader = suspend (url: String, sizePx: Int) -> android.graphics.Bitmap?
+
+internal val LocalAvatarLoader = androidx.compose.runtime.staticCompositionLocalOf<AvatarLoader?> { null }
+
+/** Decoded avatars by URL and size, so lists don't flash initials while scrolling. */
+private val AvatarBitmaps = android.util.LruCache<String, androidx.compose.ui.graphics.ImageBitmap>(96)
+
 @Composable
-internal fun Avatar(name: String, size: androidx.compose.ui.unit.Dp) {
+internal fun Avatar(name: String, size: androidx.compose.ui.unit.Dp, url: String? = null) {
+    val loader = LocalAvatarLoader.current
+    val sizePx = with(LocalDensity.current) { size.roundToPx() }
+    val key = url?.let { "$it@$sizePx" }
+    var image by remember(key) { mutableStateOf(key?.let { AvatarBitmaps.get(it) }) }
+    LaunchedEffect(key, loader) {
+        if (key == null || url == null || loader == null || image != null) return@LaunchedEffect
+        try {
+            image = loader(url, sizePx)?.asImageBitmap()?.also { AvatarBitmaps.put(key, it) }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            android.util.Log.i("Avatar", "Avatar $url unavailable: ${failure.message}")
+        }
+    }
+    val bitmap = image
+    if (bitmap != null) {
+        androidx.compose.foundation.Image(
+            bitmap = bitmap,
+            contentDescription = null,
+            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+            modifier = Modifier.size(size).clip(CircleShape),
+        )
+        return
+    }
     // Messages: saturated solid circle, white initial (person glyph when there is no name).
     val (bg, fg) = avatarPalette(name)
     Box(modifier = Modifier.size(size).background(bg, CircleShape), contentAlignment = Alignment.Center) {
         val initial = name.firstOrNull { it.isLetterOrDigit() }?.uppercase()
         if (initial != null) {
-            Text(text = initial, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Medium, color = fg)
+            // Large avatars (details, profile) scale the initial with the circle.
+            val style = if (size > 64.dp) MaterialTheme.typography.titleLarge.copy(fontSize = (size.value * 0.42f).sp) else MaterialTheme.typography.titleLarge
+            Text(text = initial, style = style, fontWeight = FontWeight.Medium, color = fg)
         } else {
             Icon(imageVector = Icons.Filled.Person, contentDescription = null, tint = fg, modifier = Modifier.size(size * 0.6f))
         }

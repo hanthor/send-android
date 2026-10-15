@@ -49,7 +49,8 @@ if [ -n "$changed" ]; then
   if [ -z "$ready" ]; then "${compose[@]}" logs synapse; exit 1; fi
 fi
 
-for user in alice bob; do
+# Carol only ever gets invited (conversation details → Add people).
+for user in alice bob carol; do
   "${compose[@]}" exec -T synapse register_new_matrix_user -c /data/homeserver.yaml \
     -u "$user" -p "$password" --no-admin http://localhost:8008
 done

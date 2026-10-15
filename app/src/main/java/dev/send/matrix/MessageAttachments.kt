@@ -240,10 +240,13 @@ internal fun AttachmentBubble(
     }
 }
 
+/** A photo/video's decoded preview: [bitmap] once loaded, [failed] when there is none to show. */
+internal class MediaPreview(val bitmap: ImageBitmap?, val failed: Boolean)
+
+/** Loads (and caches) the thumbnail of a photo or video; videos are previewed through their thumbnail only. */
 @Composable
-private fun VisualMedia(attachment: MatrixAttachment, shape: Shape, loadMedia: MediaLoader, busy: Boolean, modifier: Modifier) {
+internal fun rememberMediaPreview(attachment: MatrixAttachment, loadMedia: MediaLoader): MediaPreview {
     val isVideo = attachment.kind == AttachmentKind.Video
-    // Videos are previewed through their thumbnail only; images fall back to the full file.
     val previewSource = attachment.thumbnailSourceJson ?: attachment.sourceJson.takeIf { !isVideo }
     var preview by remember(previewSource) { mutableStateOf<ImageBitmap?>(previewSource?.let { MediaBitmapCache.get(it) }?.asImageBitmap()) }
     var failed by remember(previewSource) { mutableStateOf(previewSource == null) }
@@ -261,6 +264,64 @@ private fun VisualMedia(attachment: MatrixAttachment, shape: Shape, loadMedia: M
             failed = true
         }
     }
+    return MediaPreview(preview, failed)
+}
+
+/**
+ * Square tile for conversation details' Media & files: the photo/video thumbnail cropped (play badge on videos), or
+ * the file's icon and name for anything else.
+ */
+@Composable
+internal fun MediaTile(attachment: MatrixAttachment, loadMedia: MediaLoader, modifier: Modifier = Modifier) {
+    val colors = MaterialTheme.colorScheme
+    val visual = attachment.kind == AttachmentKind.Image || attachment.kind == AttachmentKind.Video
+    Box(
+        modifier.clip(RoundedCornerShape(12.dp)).background(colors.surfaceContainerHighest)
+            .semantics { contentDescription = if (visual) (if (attachment.kind == AttachmentKind.Video) "Video" else "Photo") else attachment.filename },
+        contentAlignment = Alignment.Center,
+    ) {
+        if (visual) {
+            val preview = rememberMediaPreview(attachment, loadMedia)
+            val bitmap = preview.bitmap
+            when {
+                bitmap != null -> Image(bitmap = bitmap, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                preview.failed -> Icon(Icons.Outlined.ImageIcon, contentDescription = null, tint = colors.onSurfaceVariant)
+                else -> CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+            }
+            if (attachment.kind == AttachmentKind.Video) {
+                Icon(
+                    Icons.Filled.PlayArrow,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(32.dp).background(Color.Black.copy(alpha = 0.55f), CircleShape).padding(4.dp),
+                )
+            }
+        } else {
+            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(8.dp)) {
+                Icon(
+                    if (attachment.kind == AttachmentKind.Voice || attachment.kind == AttachmentKind.Audio) Icons.Filled.GraphicEq else Icons.AutoMirrored.Outlined.InsertDriveFile,
+                    contentDescription = null,
+                    tint = colors.onSurfaceVariant,
+                )
+                Text(
+                    if (attachment.kind == AttachmentKind.Voice) "Voice message" else attachment.filename,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = colors.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun VisualMedia(attachment: MatrixAttachment, shape: Shape, loadMedia: MediaLoader, busy: Boolean, modifier: Modifier) {
+    val isVideo = attachment.kind == AttachmentKind.Video
+    val loaded = rememberMediaPreview(attachment, loadMedia)
+    val preview = loaded.bitmap
+    val failed = loaded.failed
     val aspect = if (attachment.width != null && attachment.height != null && attachment.width > 0 && attachment.height > 0) {
         (attachment.width.toFloat() / attachment.height).coerceIn(0.6f, 1.8f)
     } else 4f / 3f
