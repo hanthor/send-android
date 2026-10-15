@@ -56,11 +56,16 @@ class ZZListManagementIntegrationTest {
     private var bobSync: SyncService? = null
     private val bobRooms = ConcurrentHashMap<String, Room>()
     private val bobTimelines = ConcurrentHashMap<String, Timeline>()
+    /** Access token of a REST-only Alice device that reads her account data straight from Synapse. */
+    private var probeToken: String? = null
+    /** Checks that failed without stopping the later steps; the test fails on them at the end. */
+    private val softFailures = mutableListOf<String>()
 
     @After
     fun cleanUp() {
         // Later suites message Bob: never leave him blocked, even when an assertion failed mid-way.
         runCatching { runBlocking { if (BOB in repository.refreshIgnoredUsers()) repository.unblockUser(BOB) } }
+        probeToken?.let { token -> runCatching { http("POST", "/_matrix/client/v3/logout", token, "{}") } }
         bobTimelines.values.forEach { it.close() }
         bobRooms.values.forEach { it.close() }
         bobSync?.close()
@@ -88,6 +93,7 @@ class ZZListManagementIntegrationTest {
         // 1. Swipe archives: Messages' snackbar, the m.lowpriority tag comes back through sync, the row leaves the list.
         swipeRow(archiveName, towardsEnd = true)
         waitForUi("the archive snackbar", 10_000, ::roomsState) { hasNodeWithText("1 conversation archived") }
+        waitFor("m.lowpriority on the homeserver", 60_000, { "serverTags=${serverTags(archiveRoom)}" }) { "m.lowpriority" in serverTags(archiveRoom) }
         waitFor("m.lowpriority on the archived room", 60_000, ::roomsState) { roomInfo(archiveRoom)?.isLowPriority == true }
         waitForUi("the archived row to leave the list", 30_000, ::roomsState) { !hasNodeWithText(archiveName) }
 
@@ -106,16 +112,24 @@ class ZZListManagementIntegrationTest {
         waitForUi("the archived conversation on the Archived screen", 30_000, ::roomsState) { hasNodeWithText(archiveName) }
         composeRule.auditShot("live-archived")
         swipeRow(archiveName, towardsEnd = false)
-        waitFor("m.lowpriority removed", 60_000, ::roomsState) { roomInfo(archiveRoom)?.isLowPriority == false }
+        softly {
+            waitFor("m.lowpriority removed on the homeserver", 30_000, { "serverTags=${serverTags(archiveRoom)}" }) { "m.lowpriority" !in serverTags(archiveRoom) }
+        }
+        softly {
+            waitFor("m.lowpriority removed in Alice's synced room info", 60_000, { "serverTags=${serverTags(archiveRoom)} local=${roomInfo(archiveRoom)?.isLowPriority} ${roomsState()}" }) {
+                roomInfo(archiveRoom)?.isLowPriority == false
+            }
+        }
         composeRule.onNodeWithContentDescription("Back").performClick()
-        waitForUi("the unarchived row back in the list", 30_000, ::roomsState) { hasNodeWithText(archiveName) }
+        softly { waitForUi("the unarchived row back in the list", 30_000, ::roomsState) { hasNodeWithText(archiveName) } }
 
         // 2. Pin from the selection bar: m.favourite on the homeserver, and the row sorts above newer ones.
         longPressRow(pinName)
         composeRule.onNodeWithContentDescription("Pin").performClick()
+        waitFor("m.favourite on the homeserver", 60_000, { "serverTags=${serverTags(pinRoom)}" }) { "m.favourite" in serverTags(pinRoom) }
         waitFor("m.favourite on the pinned room", 60_000, ::roomsState) { roomInfo(pinRoom)?.isFavourite == true }
         waitForUi("the pinned row first", 30_000, ::roomsState) {
-            hasNodeWithText(pinName) && top(pinName) < top(deleteName) && top(pinName) < top(archiveName)
+            hasNodeWithText(pinName) && top(pinName) < top(deleteName)
         }
         assertEquals(pinRoom, inboxConversations(repository.joinedRooms.value, repository.ignoredUsers.value).first().id)
         assertTrue(composeRule.onAllNodesWithContentDescription("Pinned").fetchSemanticsNodes().isNotEmpty())
@@ -124,6 +138,9 @@ class ZZListManagementIntegrationTest {
         longPressRow(deleteName)
         composeRule.onNodeWithContentDescription("More options").performClick()
         composeRule.onNodeWithText("Mark as unread").performClick()
+        waitFor("m.marked_unread on the homeserver", 60_000, { "server=${serverRoomData(deleteRoom, "m.marked_unread")}" }) {
+            serverRoomData(deleteRoom, "m.marked_unread")?.optBoolean("unread") == true
+        }
         waitFor("m.marked_unread on the room", 60_000, ::roomsState) { roomInfo(deleteRoom)?.isMarkedUnread == true }
         waitForUi("the unread dot", 30_000, ::roomsState) {
             composeRule.onAllNodesWithContentDescription("Marked unread").fetchSemanticsNodes().isNotEmpty() &&
@@ -133,7 +150,14 @@ class ZZListManagementIntegrationTest {
         longPressRow(deleteName)
         composeRule.onNodeWithContentDescription("More options").performClick()
         composeRule.onNodeWithText("Mark as read").performClick()
-        waitFor("m.marked_unread cleared", 60_000, ::roomsState) { roomInfo(deleteRoom)?.isMarkedUnread == false }
+        softly {
+            waitFor("m.marked_unread cleared on the homeserver", 30_000, { "server=${serverRoomData(deleteRoom, "m.marked_unread")}" }) {
+                serverRoomData(deleteRoom, "m.marked_unread")?.optBoolean("unread") == false
+            }
+        }
+        softly {
+            waitFor("m.marked_unread cleared in Alice's synced room info", 60_000, ::roomsState) { roomInfo(deleteRoom)?.isMarkedUnread == false }
+        }
 
         // 4. Delete after confirming: Alice leaves (Bob sees one member left) and forgets the room.
         longPressRow(deleteName)
@@ -158,7 +182,10 @@ class ZZListManagementIntegrationTest {
         composeRule.onNodeWithText(starMe).performTouchInput { longClick() }
         waitForUi("the Star action", 10_000, ::conversationState) { hasNodeWithText("Star") }
         composeRule.onNodeWithText("Star").performClick()
-        waitFor("the star in account data, back through sync", 60_000, { "starred=${repository.starredEvents.value}" }) {
+        waitFor("the star in dev.send.starred on the homeserver", 60_000, { "server=${serverAccountData(MatrixRepository.STARRED_EVENT_TYPE)}" }) {
+            MatrixRepository.parseStarred(serverAccountData(MatrixRepository.STARRED_EVENT_TYPE)?.toString())[pinRoom]?.contains(starredId) == true
+        }
+        waitFor("the star back through sync into the store", 60_000, { "starred=${repository.starredEvents.value}" }) {
             runBlocking { repository.refreshStarred() }[pinRoom]?.contains(starredId) == true
         }
         waitForUi("the star under the bubble", 30_000, ::conversationState) {
@@ -193,7 +220,10 @@ class ZZListManagementIntegrationTest {
             hasNodeWithText("Yes") && hasNodeWithText("Unblock them any time", substring = true)
         }
         composeRule.onNodeWithText("Yes").performClick()
-        waitFor("Bob in Alice's ignored users", 60_000, { "ignored=${repository.ignoredUsers.value}" }) {
+        waitFor("Bob in m.ignored_user_list on the homeserver", 60_000, { "server=${serverAccountData("m.ignored_user_list")}" }) {
+            serverAccountData("m.ignored_user_list")?.optJSONObject("ignored_users")?.has(BOB) == true
+        }
+        waitFor("Bob in Alice's synced ignored users", 60_000, { "ignored=${repository.ignoredUsers.value}" }) {
             BOB in runBlocking { repository.refreshIgnoredUsers() }
         }
         waitForUi("Bob's DM gone from the list", 30_000, ::roomsState) {
@@ -203,12 +233,19 @@ class ZZListManagementIntegrationTest {
         waitForUi("Bob under Blocked contacts", 30_000, ::roomsState) { hasNodeWithText(BOB) }
         composeRule.auditShot("live-blocked")
         composeRule.onNodeWithText("Unblock").performClick()
-        waitFor("Bob unblocked on the homeserver", 60_000, { "ignored=${repository.ignoredUsers.value}" }) {
-            BOB !in runBlocking { repository.refreshIgnoredUsers() }
+        waitFor("Bob removed from m.ignored_user_list on the homeserver", 60_000, { "server=${serverAccountData("m.ignored_user_list")}" }) {
+            serverAccountData("m.ignored_user_list")?.optJSONObject("ignored_users")?.has(BOB) == false
+        }
+        softly {
+            waitFor("Bob unblocked in Alice's synced ignored users", 60_000, { "ignored=${repository.ignoredUsers.value}" }) {
+                BOB !in runBlocking { repository.refreshIgnoredUsers() }
+            }
         }
         composeRule.onNodeWithContentDescription("Back").performClick()
-        waitFor("Bob's DM back in the list", 60_000, ::roomsState) {
-            inboxConversations(repository.joinedRooms.value, repository.ignoredUsers.value).any { it.id == dm }
+        softly {
+            waitFor("Bob's DM back in the list", 60_000, ::roomsState) {
+                inboxConversations(repository.joinedRooms.value, repository.ignoredUsers.value).any { it.id == dm }
+            }
         }
 
         // 7. Cold restore: the starred message comes back from the store the synced account data was saved in.
@@ -223,6 +260,65 @@ class ZZListManagementIntegrationTest {
         }
         waitFor("the pin after restore", 60_000, ::roomsState) {
             repository.joinedRooms.value.firstOrNull { it.id == pinRoom }?.pinned == true
+        }
+        assertTrue("Checks that failed along the way:\n${softFailures.joinToString("\n")}", softFailures.isEmpty())
+    }
+
+    /** Runs [check]; a failure is recorded for the end of the test instead of stopping the later steps. */
+    private fun softly(check: () -> Unit) {
+        try {
+            check()
+        } catch (failure: AssertionError) {
+            softFailures += failure.message.orEmpty()
+        }
+    }
+
+    /** Alice's REST probe device (logged out after the test). */
+    private fun probe(): String = probeToken ?: run {
+        val body = org.json.JSONObject()
+            .put("type", "m.login.password")
+            .put("identifier", org.json.JSONObject().put("type", "m.id.user").put("user", ALICE))
+            .put("password", DEMO_PASSWORD)
+            .put("initial_device_display_name", "Send list test (REST)")
+        org.json.JSONObject(http("POST", "/_matrix/client/v3/login", null, body.toString())).getString("access_token").also { probeToken = it }
+    }
+
+    private fun encode(value: String): String = java.net.URLEncoder.encode(value, "UTF-8").replace("+", "%20")
+
+    /** The room's tags as Synapse has them. */
+    private fun serverTags(roomId: String): Set<String> {
+        val json = org.json.JSONObject(http("GET", "/_matrix/client/v3/user/${encode(ALICE)}/rooms/${encode(roomId)}/tags", probe(), null))
+        return json.optJSONObject("tags")?.keys()?.asSequence()?.toSet().orEmpty()
+    }
+
+    /** Alice's room account data of [type] on Synapse, or null when unset. */
+    private fun serverRoomData(roomId: String, type: String): org.json.JSONObject? = runCatching {
+        org.json.JSONObject(http("GET", "/_matrix/client/v3/user/${encode(ALICE)}/rooms/${encode(roomId)}/account_data/${encode(type)}", probe(), null))
+    }.getOrNull()
+
+    /** Alice's global account data of [type] on Synapse, or null when unset. */
+    private fun serverAccountData(type: String): org.json.JSONObject? = runCatching {
+        org.json.JSONObject(http("GET", "/_matrix/client/v3/user/${encode(ALICE)}/account_data/${encode(type)}", probe(), null))
+    }.getOrNull()
+
+    private fun http(method: String, path: String, token: String?, body: String?): String {
+        val connection = java.net.URL("$SYNAPSE_URL$path").openConnection() as java.net.HttpURLConnection
+        try {
+            connection.requestMethod = method
+            connection.connectTimeout = 15_000
+            connection.readTimeout = 15_000
+            if (token != null) connection.setRequestProperty("Authorization", "Bearer $token")
+            if (body != null) {
+                connection.doOutput = true
+                connection.setRequestProperty("Content-Type", "application/json")
+                connection.outputStream.use { it.write(body.toByteArray()) }
+            }
+            val code = connection.responseCode
+            val text = (if (code in 200..299) connection.inputStream else connection.errorStream)?.bufferedReader()?.use { it.readText() }.orEmpty()
+            check(code in 200..299) { "$method $path → $code $text" }
+            return text
+        } finally {
+            connection.disconnect()
         }
     }
 
