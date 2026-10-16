@@ -69,6 +69,21 @@ their shortcut exists (after a message notification, or after sending there).
   scale, 48dp targets and labels, and captures the `dark-*` screens. Recompute
   the table when a colour token changes.
 
+## Store listing
+
+- `fastlane/metadata/android/en-US/` is the F-Droid / Google Play listing. Changelogs are
+  `changelogs/<versionCode>.txt`.
+- The launcher icon's source is `docs/brand/send-icon.svg` (108-unit adaptive canvas, 66-unit safe zone);
+  `res/drawable/ic_launcher_{background,foreground,monochrome}.xml` repeat its paths, so change both together.
+  Render the store images from the SVGs:
+  `rsvg-convert -w 512 -h 512 docs/brand/send-icon.svg -o fastlane/metadata/android/en-US/images/icon.png` and
+  `rsvg-convert -w 1024 -h 500 docs/brand/send-feature-graphic.svg -o fastlane/metadata/android/en-US/images/featureGraphic.png`.
+- Phone screenshots come from `StoreScreenshotsTest`, which asks for a 1080x2400 / 420 dpi display with a
+  demo-mode status bar (the CI emulator delivers 1080x1920 captures). Copy `send-store-<n>-<name>-device.png`
+  from a green run's `Send-UI-Screenshots` artifact to `images/phoneScreenshots/<n>.png`, and
+  `StoreTabletScreenshotsTest`'s `send-store-tablet-<n>-<name>-device.png` (1920x1200 at 240 dpi) to
+  `images/tenInchScreenshots/<n>.png`.
+
 ## Google Messages comparison
 
 `.github/workflows/messages-comparison.yml` runs Send's screenshot tests and a
