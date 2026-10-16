@@ -1988,7 +1988,7 @@ internal fun ConversationRow(
                     else -> colors.surface
                 },
             )
-            .then(if (open) Modifier.semantics { this.selected = true } else Modifier)
+            .semantics { this.selected = open }
             .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .padding(horizontal = 8.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
