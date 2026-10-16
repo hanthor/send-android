@@ -98,9 +98,10 @@ android {
 androidComponents {
     onVariants { variant ->
         if (variant.buildType != "debug") {
-            // Release (and the minified test copy of it): drop 32-bit x86, which no minSdk 34 device needs and for
-            // which matrix-rtc-android ships no core (calls could never work there); applies to APKs and the AAB.
-            variant.packaging.jniLibs.excludes.add("lib/x86/**")
+            // Release (and the minified test copy of it): ship arm64-v8a, armeabi-v7a and x86_64 only. 32-bit x86 has
+            // no matrix-rtc-android core (calls could never work) and no minSdk 34 device needs it; JNA also brings
+            // libjnidispatch.so for armeabi, mips and mips64, which Android no longer runs. Applies to APKs and AAB.
+            variant.packaging.jniLibs.excludes.addAll("lib/x86/**", "lib/armeabi/**", "lib/mips/**", "lib/mips64/**")
             // Compress the native libraries inside the APKs (the Rust SDK and RTC cores are ~100 MB per ABI
             // uncompressed); the device extracts them on install. APKs Play generates from the AAB keep AGP's default
             // (uncompressed, page-aligned), since useLegacyPackagingFromBundle stays unset.

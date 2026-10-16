@@ -121,8 +121,9 @@ jobs:
             # Native libraries: compressed (Defl), right ABI only, no 32-bit x86.
             libs="$(unzip -v "$apk" 'lib/*')"
             echo "$libs"
-            if grep -qE ' lib/x86/| Stored .* lib/' <<< "$libs"; then
-              echo "::error::$apk has x86 or uncompressed native libraries."
+            if grep -qE ' Stored .* lib/' <<< "$libs" ||
+              awk 'index($NF, "lib/") == 1 && $NF !~ /^lib\/(arm64-v8a|armeabi-v7a|x86_64)\// { bad = 1 } END { exit !bad }' <<< "$libs"; then
+              echo "::error::$apk has uncompressed native libraries or an ABI other than arm64-v8a/armeabi-v7a/x86_64."
               exit 1
             fi
             if [ "$abi" != universal ] &&
