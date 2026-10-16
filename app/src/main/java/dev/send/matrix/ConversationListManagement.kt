@@ -67,11 +67,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -191,7 +189,7 @@ internal fun LazyListScope.managedConversationRows(
 ) {
     items(rooms, key = { it.id }) { room ->
         val selecting = state.selecting
-        Box(Modifier.animateItem()) {
+        Box(sendItemPlacement()) {
             SwipeToArchive(
                 enabled = actions != null && !selecting,
                 unarchive = archivedView,
@@ -227,19 +225,16 @@ internal fun PruneSelection(state: ConversationListState, rooms: List<MatrixRoom
  */
 @Composable
 internal fun SwipeToArchive(enabled: Boolean, unarchive: Boolean, onSwiped: () -> Unit, content: @Composable (lifted: Boolean) -> Unit) {
-    val haptics = LocalHapticFeedback.current
+    val swipeThreshold = rememberSwipeThreshold()
     val density = LocalDensity.current
     var width by remember { mutableIntStateOf(0) }
     var offset by remember { mutableFloatStateOf(0f) }
-    var armed by remember { mutableStateOf(false) }
     val swiped by rememberUpdatedState(onSwiped)
     val threshold = width * ARCHIVE_SWIPE_FRACTION
     val flingVelocity = with(density) { ARCHIVE_FLING_VELOCITY.toPx() }
     val dragState = rememberDraggableState { delta ->
         offset = (offset + delta).coerceIn(-width.toFloat(), width.toFloat())
-        val nowArmed = width > 0 && abs(offset) >= threshold
-        if (nowArmed && !armed) haptics.performHapticFeedback(HapticFeedbackType.GestureThresholdActivate)
-        armed = nowArmed
+        swipeThreshold.update(width > 0 && abs(offset) >= threshold)
     }
     Box(
         Modifier
@@ -251,9 +246,8 @@ internal fun SwipeToArchive(enabled: Boolean, unarchive: Boolean, onSwiped: () -
                 enabled = enabled,
                 onDragStopped = { velocity ->
                     val flung = abs(velocity) > flingVelocity && sign(velocity) == sign(offset) && abs(offset) > threshold / 3f
-                    val target = if (armed || flung) sign(offset) * width else 0f
-                    armed = false
-                    animate(offset, target, initialVelocity = velocity, animationSpec = SendMotion.spatialDefault()) { value, _ -> offset = value }
+                    val target = if (swipeThreshold.release() || flung) sign(offset) * width else 0f
+                    animate(offset, target, initialVelocity = velocity, animationSpec = SendMotion.swipeSettle()) { value, _ -> offset = value }
                     if (target != 0f) swiped()
                 },
             ),
@@ -407,10 +401,11 @@ internal fun ArchivedScreen(
 ) {
     val colors = MaterialTheme.colorScheme
     val state = rememberConversationListState()
-    BackHandler(onBack = onBack)
+    val leaving = rememberPredictiveBack(onBack = onBack)
     PruneSelection(state, rooms)
     val selected = state.selectedIds.mapNotNull { id -> rooms.firstOrNull { it.id == id } }
     Scaffold(
+        modifier = Modifier.predictiveBack(leaving),
         containerColor = colors.surfaceContainer,
         snackbarHost = { SnackbarHost(state.snackbar) },
         topBar = {
@@ -446,8 +441,12 @@ internal fun ArchivedScreen(
 @Composable
 internal fun BlockedContactsScreen(userIds: List<String>, onUnblock: (String) -> Unit, onBack: () -> Unit) {
     val colors = MaterialTheme.colorScheme
-    BackHandler(onBack = onBack)
-    Scaffold(containerColor = colors.surfaceContainer, topBar = { ListScreenTopBar("Blocked contacts", onBack) }) { padding ->
+    val leaving = rememberPredictiveBack(onBack = onBack)
+    Scaffold(
+        modifier = Modifier.predictiveBack(leaving),
+        containerColor = colors.surfaceContainer,
+        topBar = { ListScreenTopBar("Blocked contacts", onBack) },
+    ) { padding ->
         Surface(
             modifier = Modifier.fillMaxSize().padding(padding),
             shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
@@ -467,7 +466,7 @@ internal fun BlockedContactsScreen(userIds: List<String>, onUnblock: (String) ->
                 }
                 items(userIds, key = { it }) { userId ->
                     Row(
-                        Modifier.fillMaxWidth().animateItem().padding(horizontal = 16.dp, vertical = 10.dp),
+                        sendItemPlacement().fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         val name = userId.removePrefix("@").substringBefore(':')
@@ -502,11 +501,15 @@ internal fun StarredMessagesScreen(
 ) {
     val colors = MaterialTheme.colorScheme
     val context = LocalContext.current
-    BackHandler(onBack = onBack)
+    val leaving = rememberPredictiveBack(onBack = onBack)
     val loaded by produceState<Result<List<StarredMessage>>?>(null, starredIds) {
         value = runCatching { load() }
     }
-    Scaffold(containerColor = colors.surfaceContainer, topBar = { ListScreenTopBar("Starred", onBack) }) { padding ->
+    Scaffold(
+        modifier = Modifier.predictiveBack(leaving),
+        containerColor = colors.surfaceContainer,
+        topBar = { ListScreenTopBar("Starred", onBack) },
+    ) { padding ->
         Surface(
             modifier = Modifier.fillMaxSize().padding(padding),
             shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
@@ -529,7 +532,7 @@ internal fun StarredMessagesScreen(
                             else -> starred.sender.ifBlank { title }
                         }
                         Row(
-                            Modifier.fillMaxWidth().animateItem().padding(horizontal = 8.dp).clip(RoundedCornerShape(28.dp))
+                            sendItemPlacement().fillMaxWidth().padding(horizontal = 8.dp).clip(RoundedCornerShape(28.dp))
                                 .clickable { onOpen(starred.eventId) }.padding(start = 8.dp, top = 10.dp, bottom = 10.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {

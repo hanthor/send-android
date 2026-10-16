@@ -34,7 +34,6 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
@@ -169,6 +168,8 @@ internal fun ConversationScreen(
     detailsRefreshKey: Any? = null,
     /** Play Messages' sent/received sounds while this conversation is open (Settings). */
     sounds: Boolean = false,
+    /** The room ID when opened from the list: the header's avatar and name continue the row's (shared elements). */
+    sharedKey: String? = null,
 ) {
     val context = LocalContext.current
     val colors = MaterialTheme.colorScheme
@@ -199,7 +200,6 @@ internal fun ConversationScreen(
     var showDetails by remember { mutableStateOf(false) }
     var showMediaGrid by remember { mutableStateOf(false) }
     PlayConversationSounds(messages, sounds)
-    val listState = rememberLazyListState()
     val composerFocus = remember { FocusRequester() }
 
     val playback = rememberVoicePlayback()
@@ -252,6 +252,9 @@ internal fun ConversationScreen(
     // Newest first, as the list is laid out bottom-up; the typing bubble sits below the newest message.
     val reversed = messages.asReversed()
     val typingShown = typingUsers.isNotEmpty()
+    // At the newest message (the list's start) a new bubble or typing dots scroll into view as they arrive.
+    val listState = rememberTopAnchoredListState(if (typingShown) "typing" else reversed.firstOrNull()?.key)
+    val bubbleEntries = rememberBubbleEntries()
     fun listIndexOf(id: String): Int? {
         val index = reversed.indexOfFirst { it.id == id }
         return if (index < 0) null else index + if (typingShown) 1 else 0
@@ -372,7 +375,10 @@ internal fun ConversationScreen(
         return false
     }
 
-    BackHandler {
+    // Composer, selection and search states close first; with none left back leaves with predictive back.
+    val nestedBack = selectedId != null || multiSelected.isNotEmpty() || showEmojiPanel || searching || recordingLocked ||
+        editing != null || replyingTo != null
+    BackHandler(enabled = nestedBack) {
         when {
             selectedId != null -> selectedId = null
             multiSelected.isNotEmpty() -> multiSelected = emptyList()
@@ -381,9 +387,9 @@ internal fun ConversationScreen(
             recordingLocked -> discardRecording("Voice message discarded")
             editing != null -> cancelEdit()
             replyingTo != null -> replyingTo = null
-            else -> onBack()
         }
     }
+    val leaving = rememberPredictiveBack(enabled = !nestedBack, onBack = onBack)
 
     var selectedBubbles by remember { mutableStateOf<List<Rect>>(emptyList()) }
     LaunchedEffect(selectedId) { if (selectedId == null) selectedBubbles = emptyList() }
@@ -436,6 +442,7 @@ internal fun ConversationScreen(
     val backdropBlur by animateDpAsState(if (selected != null) 6.dp else 0.dp, SendMotion.effectsDefault(), label = "backdropBlur")
     val backdrop = if (backdropBlur > 0.dp) Modifier.blur(backdropBlur) else Modifier
     Scaffold(
+        modifier = Modifier.predictiveBack(leaving),
         containerColor = colors.surfaceContainer,
         topBar = { Box(backdrop) {
             when {
@@ -487,7 +494,8 @@ internal fun ConversationScreen(
                                 },
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Avatar(name = title, size = 40.dp, url = avatarUrl)
+                            val avatarModifier = if (sharedKey != null) Modifier.sendSharedElement(sharedAvatarKey(sharedKey)) else Modifier
+                            Box(avatarModifier) { Avatar(name = title, size = 40.dp, url = avatarUrl) }
                             Spacer(modifier = Modifier.width(14.dp))
                             Text(
                                 title,
@@ -495,6 +503,7 @@ internal fun ConversationScreen(
                                 color = colors.onSurface,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
+                                modifier = if (sharedKey != null) Modifier.sendSharedBounds(sharedTitleKey(sharedKey)) else Modifier,
                             )
                         }
                         // Messages: video and voice call buttons; both start a MatrixRTC call through Element Call.
@@ -789,9 +798,9 @@ internal fun ConversationScreen(
                     reverseLayout = true,
                 ) {
                     if (typingShown) {
-                        item(key = "typing") { Box(backdrop) { TypingBubble(typingUsers) } }
+                        item(key = "typing") { Box(sendItemPlacement().then(backdrop)) { TypingBubble(typingUsers) } }
                     }
-                    items(reversed.size, key = { reversed[it].id }) { index ->
+                    items(reversed.size, key = { reversed[it].key }) { index ->
                         val message = reversed[index]
                         // Grouping is computed in chronological order: neighbours are the adjacent
                         // items in the non-reversed list, i.e. reversed neighbours flipped.
@@ -805,8 +814,10 @@ internal fun ConversationScreen(
                         val prevDayKey = messages.getOrNull(chronoIndex - 1)?.let {
                             android.text.format.DateFormat.format("yyyyMMdd", it.timestampMillis).toString()
                         }
+                        // New bubbles enter themselves (bubbleEntry); older ones slide up to make room.
                         Column(
-                            modifier = Modifier.fillMaxWidth().then(if (selectedId == message.id) Modifier else backdrop),
+                            modifier = sendItemPlacement(fadeIn = false).fillMaxWidth().bubbleEntry(bubbleEntries, message)
+                                .then(if (selectedId == message.id) Modifier else backdrop),
                             horizontalAlignment = if (message.call != null) Alignment.CenterHorizontally else if (message.own) Alignment.End else Alignment.Start,
                         ) {
                             if (prevDayKey != dayKey) {

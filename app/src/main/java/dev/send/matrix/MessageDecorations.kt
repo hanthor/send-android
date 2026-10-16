@@ -41,11 +41,9 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -54,11 +52,9 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -277,12 +273,11 @@ internal fun LinkPreviewCard(preview: LinkPreview, isFromMe: Boolean, modifier: 
 @Composable
 internal fun SwipeToReply(enabled: Boolean, onReply: () -> Unit, content: @Composable () -> Unit) {
     val density = LocalDensity.current
-    val haptics = LocalHapticFeedback.current
+    val threshold = rememberSwipeThreshold()
     val scope = rememberCoroutineScope()
     val offset = remember { Animatable(0f) }
     val thresholdPx = with(density) { REPLY_SWIPE_THRESHOLD.toPx() }
     val maxPx = with(density) { 104.dp.toPx() }
-    var armed by remember { mutableStateOf(false) }
     val reply by androidx.compose.runtime.rememberUpdatedState(onReply)
     Box(
         modifier = Modifier.fillMaxWidth().pointerInput(enabled) {
@@ -291,13 +286,12 @@ internal fun SwipeToReply(enabled: Boolean, onReply: () -> Unit, content: @Compo
             detectHorizontalDragGestures(
                 onDragStart = { dragged = 0f },
                 onDragEnd = {
-                    if (armed) reply()
-                    armed = false
-                    scope.launch { offset.animateTo(0f, SendMotion.spatialDefault()) }
+                    if (threshold.release()) reply()
+                    scope.launch { offset.animateTo(0f, SendMotion.swipeSettle()) }
                 },
                 onDragCancel = {
-                    armed = false
-                    scope.launch { offset.animateTo(0f, SendMotion.spatialDefault()) }
+                    threshold.release()
+                    scope.launch { offset.animateTo(0f, SendMotion.swipeSettle()) }
                 },
             ) { change, dragAmount ->
                 dragged = (dragged + dragAmount).coerceAtLeast(0f)
@@ -305,9 +299,7 @@ internal fun SwipeToReply(enabled: Boolean, onReply: () -> Unit, content: @Compo
                 val shown = if (dragged <= thresholdPx) dragged else thresholdPx + (dragged - thresholdPx) / 3f
                 change.consume()
                 scope.launch { offset.snapTo(shown.coerceAtMost(maxPx)) }
-                val nowArmed = dragged >= thresholdPx
-                if (nowArmed && !armed) haptics.performHapticFeedback(HapticFeedbackType.GestureThresholdActivate)
-                armed = nowArmed
+                threshold.update(dragged >= thresholdPx)
             }
         },
     ) {

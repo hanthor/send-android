@@ -1,7 +1,6 @@
 package dev.send.matrix
 
 import android.net.Uri
-import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -181,11 +180,12 @@ internal fun ConversationDetailsScreen(
     val avatarPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) change("The group photo couldn't be changed.", "Group photo updated") { actions.setAvatar(uri) }
     }
-    BackHandler(onBack = onBack)
+    val leaving = rememberPredictiveBack(onBack = onBack)
     val shown = details
     val name = shown?.name ?: title
     val direct = shown?.direct ?: isDirect
     Scaffold(
+        modifier = Modifier.predictiveBack(leaving),
         containerColor = colors.surfaceContainer,
         // Messages: back arrow only; the large header names the conversation.
         topBar = { ListScreenTopBar("", onBack) },
@@ -607,8 +607,12 @@ internal fun MediaGridScreen(
     onBack: () -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
-    BackHandler(onBack = onBack)
-    Scaffold(containerColor = colors.surfaceContainer, topBar = { ListScreenTopBar("Media & files", onBack) }) { padding ->
+    val leaving = rememberPredictiveBack(onBack = onBack)
+    Scaffold(
+        modifier = Modifier.predictiveBack(leaving),
+        containerColor = colors.surfaceContainer,
+        topBar = { ListScreenTopBar("Media & files", onBack) },
+    ) { padding ->
         Surface(
             modifier = Modifier.fillMaxSize().padding(padding),
             shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),

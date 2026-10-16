@@ -28,7 +28,8 @@ internal fun ComposeTestRule.auditShot(name: String) {
     writeAuditDownload("send-$name-device.xml", "text/xml") { out -> device.dumpWindowHierarchy(out) }
 }
 
-private fun writeAuditDownload(fileName: String, mimeType: String, write: (java.io.OutputStream) -> Unit) {
+/** Writes a file to the device's Download/Send folder, which CI pulls after the instrumentation run. */
+internal fun writeAuditDownload(fileName: String, mimeType: String, write: (java.io.OutputStream) -> Unit) {
     val context = InstrumentationRegistry.getInstrumentation().targetContext
     val values = android.content.ContentValues().apply {
         put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, fileName)

@@ -96,7 +96,6 @@ import androidx.compose.material3.InputChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -703,18 +702,19 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
         style = sendCallStyle,
     ) { overlayModifier ->
     Surface(Modifier.fillMaxSize().then(overlayModifier), color = MaterialTheme.colorScheme.surface, contentColor = MaterialTheme.colorScheme.onSurface) {
-        // Messages' fragment-style open/close transitions between top-level screens.
+        // Messages' fragment-style open/close transitions between top-level screens; the conversation's avatar and
+        // name travel between its list row and its header.
         val screen = when {
             loading -> 0
             !signedIn -> 1
             room != null && timeline != null -> 3
             else -> 2
         }
-        AnimatedContent(
-            targetState = screen,
-            transitionSpec = { if (targetState > initialState) SendMotion.open else SendMotion.close },
-            label = "SendScreen",
-        ) { target ->
+        // Closing clears the active room at once; the leaving conversation keeps its room's name, avatar and shared
+        // element keys through the close transition.
+        val shownRoomId = remember { mutableStateOf(activeRoomId) }.apply { if (activeRoomId.isNotBlank()) value = activeRoomId }.value
+        val shownTitle = remember { mutableStateOf(roomTitle) }.apply { if (roomTitle.isNotBlank()) value = roomTitle }.value
+        SendScreenHost(screen) { target ->
         when (target) {
             0 -> Column(
                 Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing),
@@ -774,7 +774,7 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
             )
             3 -> ConversationScreen(
                 // The list entry follows renames (here or by others); the title from opening covers new rooms.
-                title = rooms.firstOrNull { it.id == activeRoomId }?.name ?: roomTitle,
+                title = rooms.firstOrNull { it.id == shownRoomId }?.name ?: shownTitle,
                 isDirect = activeRoomIsDirect,
                 draft = drafts[activeRoomId].orEmpty(),
                 onDraft = { value -> drafts = drafts + (activeRoomId to value) },
@@ -906,10 +906,11 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
                     }
                 },
                 loadStarred = { repository.starredMessages(activeRoomId) },
-                avatarUrl = rooms.firstOrNull { it.id == activeRoomId }?.avatarUrl,
+                avatarUrl = rooms.firstOrNull { it.id == shownRoomId }?.avatarUrl,
                 details = detailsActions,
                 detailsRefreshKey = rooms.firstOrNull { it.id == activeRoomId },
                 sounds = sounds,
+                sharedKey = shownRoomId,
             )
             else -> HomeScreen(
                 rooms = rooms,
@@ -1605,6 +1606,8 @@ internal fun HomeScreen(
     val visibleRooms = if (query.isBlank()) inboxRooms else inboxRooms.filter { it.name.contains(query, ignoreCase = true) }
     val colors = MaterialTheme.colorScheme
     val listState = rememberConversationListState()
+    val rows = rememberTopAnchoredListState(visibleRooms.firstOrNull()?.id)
+    val fabExpanded = rememberFabExpanded(rows)
     PruneSelection(listState, visibleRooms)
     val selectedRooms = listState.selectedIds.mapNotNull { id -> visibleRooms.firstOrNull { it.id == id } }
     BackHandler(enabled = searching && !listState.selecting) { searching = false; query = "" }
@@ -1655,13 +1658,15 @@ internal fun HomeScreen(
             }
         } },
         floatingActionButton = {
-            ExtendedFloatingActionButton(
+            // Messages: "Start chat" collapses to its icon while scrolling down and expands scrolling up or at the top.
+            CollapsingExtendedFab(
+                expanded = fabExpanded,
                 onClick = { showingNewChat = true },
                 containerColor = colors.primaryContainer,
                 contentColor = colors.onPrimaryContainer,
                 shape = RoundedCornerShape(16.dp),
                 icon = { Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = null) },
-                text = { Text("Start chat", style = MaterialTheme.typography.titleMedium) },
+                text = { Text("Start chat", style = MaterialTheme.typography.titleMedium, maxLines = 1) },
             )
         },
     ) { innerPadding ->
@@ -1672,7 +1677,7 @@ internal fun HomeScreen(
             color = colors.surface,
         ) {
         LazyColumn(
-            state = rememberTopAnchoredListState(visibleRooms.firstOrNull()?.id),
+            state = rows,
             modifier = Modifier.fillMaxSize(),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(top = 8.dp, bottom = 96.dp),
         ) {
@@ -1958,21 +1963,23 @@ internal fun ConversationRow(
                     Icon(Icons.Filled.Check, contentDescription = null, tint = colors.onPrimary)
                 }
             } else {
-                Avatar(name = room.name, size = 52.dp, url = room.avatarUrl)
+                Box(Modifier.sendSharedElement(sharedAvatarKey(room.id))) { Avatar(name = room.name, size = 52.dp, url = room.avatarUrl) }
             }
         }
         Spacer(modifier = Modifier.width(16.dp))
         Column(modifier = Modifier.weight(1f)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = room.name,
-                    style = MaterialTheme.typography.titleMedium.copy(fontSize = 18.sp),
-                    fontWeight = if (unread) FontWeight.Bold else null,
-                    color = colors.onSurface,
-                    maxLines = 1,
-                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
+                Box(Modifier.weight(1f)) {
+                    Text(
+                        text = room.name,
+                        style = MaterialTheme.typography.titleMedium.copy(fontSize = 18.sp),
+                        fontWeight = if (unread) FontWeight.Bold else null,
+                        color = colors.onSurface,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        modifier = Modifier.sendSharedBounds(sharedTitleKey(room.id)),
+                    )
+                }
                 if (room.pinned) {
                     Icon(
                         imageVector = Icons.Filled.PushPin,
