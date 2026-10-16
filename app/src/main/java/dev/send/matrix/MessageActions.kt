@@ -56,6 +56,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -125,7 +126,8 @@ internal fun ReactionRow(onReact: (String) -> Unit, onMore: () -> Unit, modifier
         ) {
             QuickReactions.forEach { emoji ->
                 Box(
-                    modifier = Modifier.weight(1f).height(48.dp).clip(CircleShape).clickable { onReact(emoji) },
+                    modifier = Modifier.weight(1f).heightIn(min = 48.dp).clip(CircleShape)
+                        .clickable(onClickLabel = "React", role = androidx.compose.ui.semantics.Role.Button) { onReact(emoji) },
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(emoji, fontSize = 26.sp)
@@ -338,7 +340,7 @@ internal fun MessageSelectionBar(
     onDelete: (() -> Unit)?,
 ) {
     Surface(color = MaterialTheme.colorScheme.surfaceContainer, modifier = Modifier.statusBarsPadding()) {
-        Row(Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onClose) { Icon(Icons.Filled.Close, contentDescription = "Close") }
             Text(count.toString(), style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(start = 8.dp).weight(1f))
             if (onCopy != null) IconButton(onClick = onCopy) { Icon(Icons.Outlined.ContentCopy, contentDescription = "Copy") }
@@ -408,10 +410,13 @@ internal fun ComposerContextBar(title: String, text: String, cancelDescription: 
         color = colors.surfaceContainerHigh,
         modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
     ) {
-        Row(Modifier.padding(start = 6.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.width(4.dp).height(40.dp).background(colors.primary, RoundedCornerShape(2.dp)))
+        Row(
+            Modifier.height(IntrinsicSize.Min).padding(start = 6.dp, top = 6.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(Modifier.width(4.dp).heightIn(min = 40.dp).fillMaxHeight().background(colors.primary, RoundedCornerShape(2.dp)))
             Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
-                Text(title, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, color = colors.primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(title, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, color = colors.primary, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Text(text, style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
             IconButton(onClick = onCancel) { Icon(Icons.Filled.Close, contentDescription = cancelDescription) }
@@ -446,7 +451,7 @@ internal fun ConversationSearchBar(
     LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
     Surface(color = MaterialTheme.colorScheme.surfaceContainer, modifier = Modifier.statusBarsPadding()) {
         Row(
-            modifier = Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 4.dp),
+            modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = onClose) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Close search") }
@@ -493,7 +498,7 @@ internal fun ForwardScreen(
         containerColor = colors.surfaceContainer,
         topBar = {
             Row(
-                modifier = Modifier.fillMaxWidth().statusBarsPadding().height(64.dp).padding(horizontal = 4.dp),
+            modifier = Modifier.fillMaxWidth().statusBarsPadding().heightIn(min = 64.dp).padding(horizontal = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }

@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
@@ -135,18 +136,21 @@ internal fun ReplyQuoteBlock(quote: ReplyQuote, isFromMe: Boolean, onClick: () -
         modifier = modifier
             .clip(RoundedCornerShape(12.dp))
             .background(content.copy(alpha = 0.08f))
-            .combinedClickable(onClickLabel = "Go to original message", onClick = onClick, onLongClick = onLongClick)
+            .combinedClickable(onClickLabel = "Go to original message", onClick = onClick, onLongClickLabel = "Select message", onLongClick = onLongClick)
             .semantics { contentDescription = "Reply to $sender" }
-            .heightIn(min = 40.dp),
+            .heightIn(min = 48.dp)
+            .height(androidx.compose.foundation.layout.IntrinsicSize.Min),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(Modifier.width(4.dp).height(40.dp).background(if (isFromMe) colors.primary else colors.tertiary))
+        // The accent bar spans the quote however tall large fonts make it.
+        Box(Modifier.width(4.dp).fillMaxHeight().background(if (isFromMe) colors.primary else colors.tertiary))
         Column(Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
             Text(sender, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, color = content, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(
                 quote.text ?: if (quote.sender == null) "Loading…" else "Message unavailable",
                 style = MaterialTheme.typography.bodyMedium,
-                color = content.copy(alpha = 0.8f),
+                // 85% keeps the snippet ≥4.5:1 on the dark own bubble (80% measured 4.48:1).
+                color = content.copy(alpha = 0.85f),
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
