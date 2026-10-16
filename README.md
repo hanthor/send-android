@@ -81,6 +81,11 @@ Builds and automated tests run in GitHub Actions (see
 - [DEVELOPMENT.md](DEVELOPMENT.md) — disposable local Synapse backend and UI workflow.
 - [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) — implemented paths and known limits.
 - [ANDROID_INTEGRATIONS.md](ANDROID_INTEGRATIONS.md) — staged native-platform backlog.
+- [PRIVACY.md](PRIVACY.md) — privacy policy: what leaves the device and where it goes, what stays on it, and
+  why each permission is needed. The app shows the same text under About & licenses → Privacy policy.
+- [fastlane/metadata/android/en-US](fastlane/metadata/android/en-US) — store listing for F-Droid and Google
+  Play (fastlane layout): title, short and full description, phone screenshots from CI, and per-release
+  changelogs named `changelogs/<versionCode>.txt`.
 
 ## License
 

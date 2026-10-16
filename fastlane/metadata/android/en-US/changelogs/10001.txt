@@ -1,0 +1,6 @@
+First release candidate of Send, an end-to-end encrypted Matrix messenger.
+• Encrypted chats and groups: replies, edits, reactions, media, voice messages, link previews, search
+• Pin, archive, mute and block
+• Voice and video calls with Element Call
+• Push notifications through UnifiedPush
+• Recovery key, key backup and device verification
