@@ -6,7 +6,6 @@ import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.provider.OpenableColumns
-import android.content.pm.ApplicationInfo
 import android.util.Base64
 import java.net.URI
 import java.security.KeyStore
@@ -2278,8 +2277,10 @@ class MatrixRepository(context: Context) {
 
     private fun normalizeHomeserverUrl(value: String): String {
         val url = URI(value.trim())
+        // Plain-HTTP local Synapse (DEVELOPMENT.md): only debug and the test-only `minified` build set this flag,
+        // alongside their cleartext network security config. Release builds never accept it.
         val localDebugHomeserver =
-            (appContext.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0 &&
+            appContext.resources.getBoolean(R.bool.allow_local_dev_homeserver) &&
             url.scheme == "http" &&
             url.port == 8008 &&
             when (url.host?.lowercase()) {

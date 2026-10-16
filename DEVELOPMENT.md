@@ -83,3 +83,66 @@ demand via *Run workflow*.
 Builds and automated tests remain in GitHub Actions. Debug APKs are available
 from the `Send-debug-APK` artifact on a successful workflow run.
 
+## Releases
+
+`.github/workflows/release.yml` runs on every pushed `v*` tag (and on demand via
+*Run workflow*, which builds and tests but publishes nothing).
+
+**Versions.** The tag is the version: `vMAJOR.MINOR.PATCH` or
+`vMAJOR.MINOR.PATCH-rc.N`. Gradle reads it from `-PsendVersion=` (the workflow
+passes the tag) or else from `git describe --tags --match 'v*' --abbrev=0`;
+without any tag the build is `0.0.0-dev` / versionCode 1. versionCode is
+`MAJOR*1_000_000 + MINOR*10_000 + PATCH*100 + N` for `-rc.N` and `+ 99` for the
+final release, so `v0.1.0-rc.1` is 10001 and `v0.1.0` is 10099 (MINOR and PATCH
+stay below 100, N between 1 and 98). Release notes for a version code go in
+`fastlane/metadata/android/en-US/changelogs/<versionCode>.txt`; the workflow adds
+that file to the GitHub Release when it exists.
+
+**Cutting a release.** From an up-to-date `main` whose `Android CI` run is green:
+
+```sh
+git tag v0.1.0-rc.1 origin/main
+git push origin v0.1.0-rc.1
+```
+
+The workflow then builds `:app:assembleRelease :app:bundleRelease` with R8
+(`app/proguard-rules.pro`), checks the APK with `apksigner verify --print-certs`
+and the AAB with `jarsigner -verify`, checks that the APK carries the tag's
+version and no cleartext/local-Synapse allowance, and in parallel runs the whole
+instrumentation suite against the disposable Synapse on the `minified` build type
+(release R8 rules plus `app/proguard-minified-test.pro`, which only keeps what the
+separate test APK links against; debug-signed, with the debug cleartext config).
+Only when both pass does it create the GitHub Release (a prerelease for `-rc.N`)
+with the APK, the AAB, the R8 `mapping.txt` (keep it: it is the only way to read
+crash stack traces from that build) and `SHA256SUMS.txt`. To redo a tag, delete
+the GitHub Release and the tag (`git push --delete origin v0.1.0-rc.1`), then
+push it again.
+
+To run the suite on the R8 build yourself in CI, pass
+`-PsendTestBuildType=minified` and use `:app:connectedMinifiedAndroidTest`;
+without the property tests run on `debug` as usual.
+
+**Signing.** Gradle signs the release build only when `SEND_KEYSTORE_FILE`
+(path), `SEND_KEYSTORE_PASSWORD`, `SEND_KEY_ALIAS` and `SEND_KEY_PASSWORD` are
+set in the environment; otherwise it stays unsigned. No key is ever committed.
+For official builds the owner adds four repository secrets (*Settings → Secrets
+and variables → Actions*):
+
+| Secret | Value |
+| --- | --- |
+| `SEND_KEYSTORE_BASE64` | the keystore file, base64 on one line: `base64 -w0 send-release.jks` (macOS: `base64 -i send-release.jks`) |
+| `SEND_KEYSTORE_PASSWORD` | the keystore password |
+| `SEND_KEY_ALIAS` | the key's alias |
+| `SEND_KEY_PASSWORD` | the key's password (the same as the store password for PKCS12) |
+
+A key can be created once, offline, with
+`keytool -genkeypair -keystore send-release.jks -storetype PKCS12 -alias send -keyalg RSA -keysize 4096 -validity 10000`.
+Back it up somewhere safe: every future update must be signed with it (or with
+the Play upload key, if Play App Signing is used).
+
+Setting only some of the four secrets fails the workflow. With none of them set,
+the workflow generates a throwaway key for that run (certificate CN
+`Send CI throwaway – NOT FOR DISTRIBUTION`), names the files
+`Send-<version>-UNOFFICIAL-ci-signed.*` and puts a warning at the top of the
+release notes. Such builds can't be updated by any other build (each run's key
+is different and discarded) and must not be distributed.
