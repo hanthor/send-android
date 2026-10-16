@@ -53,10 +53,11 @@ client (`ZZRtcCallsIntegrationTest`).
 - `docs/SCREENSHOT_WALKTHROUGH.md` documents the automated emulator walkthrough.
   CI captures fixture sign-in visuals and live Synapse conversations at the
   emulator's full resolution, then uploads them with the APK and test reports.
-- `LargeScreenUiTest` resizes the emulator's display with `wm size` / `wm density` (reset after each test) to
-  capture the list-detail layout at tablet size (`send-tablet-list-detail-device.png`), fold/unfold with a draft
-  open (`send-fold-unfolded-device.png`, `send-fold-folded-device.png`) and a landscape phone; it runs in the
-  debug-only `LargeScreenFixtureActivity`, which like `MainActivity` keeps running through size changes.
+- `LargeScreenUiTest` resizes the emulator's display with `wm size` / `wm density` (reset after each test; the CI
+  emulator caps each side at 1920px, so sizes are chosen by dp) to capture the list-detail layout at tablet size
+  (`send-tablet-list-detail-device.png`), fold/unfold with a draft open (`send-fold-unfolded-device.png`,
+  `send-fold-folded-device.png`) and a landscape phone; it runs in the debug-only `LargeScreenFixtureActivity`,
+  which like `MainActivity` keeps running through size changes.
 - CI cannot resolve `matrix.reilly.asia`; production SSO is not tested.
 
 ## Google Messages comparison

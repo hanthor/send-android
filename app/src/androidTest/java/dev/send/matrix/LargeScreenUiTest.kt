@@ -67,14 +67,21 @@ class LargeScreenUiTest {
         }
     }
 
-    /** Resizes the emulator's display to [width]×[height] px at [density] dpi and waits for the window to follow. */
+    /**
+     * Resizes the emulator's display to [width]×[height] px at [density] dpi and waits for the window to follow and
+     * the compositor to show it (screenshots read the display, not the composition).
+     */
     private fun display(width: Int, height: Int, density: Int) {
         device.executeShellCommand("wm density $density")
         device.executeShellCommand("wm size ${width}x$height")
+        val widthDp = width * 160 / density
         composeRule.waitUntil(DISPLAY_TIMEOUT_MS) {
             val configuration = composeRule.activity.resources.configuration
-            configuration.densityDpi == density && (configuration.screenWidthDp > configuration.screenHeightDp) == (width > height)
+            configuration.densityDpi == density && kotlin.math.abs(configuration.screenWidthDp - widthDp) <= 48
         }
+        composeRule.waitForIdle()
+        device.waitForIdle()
+        Thread.sleep(SETTLE_MS)
         composeRule.waitForIdle()
     }
 
@@ -94,7 +101,8 @@ class LargeScreenUiTest {
 
     @Test
     fun tabletShowsListBesideConversation() {
-        display(2560, 1600, 320)
+        // 1280×800dp (the emulator's display tops out at 1920px a side, so sizes stay within it).
+        display(1920, 1200, 240)
         composeRule.setContent { SendTheme(ThemeChoice.Light) { LargeScreenFixture(rooms, chat) } }
         waitForPanes(true)
         // Nothing open: the list beside a quiet placeholder.
@@ -127,7 +135,7 @@ class LargeScreenUiTest {
 
     @Test
     fun foldAndUnfoldKeepConversationDraftAndScroll() {
-        // Pixel Fold-like sizes at one density: folded 411dp wide, unfolded 841dp.
+        // Pixel Fold-like sizes at one density: folded 411×857dp, unfolded 841×701dp.
         display(PHONE_WIDTH, PHONE_HEIGHT, FOLD_DENSITY)
         composeRule.setContent { SendTheme(ThemeChoice.Light) { LargeScreenFixture(rooms, chat) } }
         waitForPanes(false)
@@ -167,7 +175,7 @@ class LargeScreenUiTest {
 
     @Test
     fun landscapePhoneKeepsOnePane() {
-        // 914×411dp: wide enough, but too short to share with a keyboard, so one pane at a time as on the phone.
+        // 857×411dp: wide enough, but too short to share with a keyboard, so one pane at a time as on the phone.
         display(PHONE_HEIGHT, PHONE_WIDTH, FOLD_DENSITY)
         composeRule.setContent { SendTheme(ThemeChoice.Light) { LargeScreenFixture(rooms, chat) } }
         waitForPanes(false)
@@ -179,11 +187,12 @@ class LargeScreenUiTest {
 
     private companion object {
         const val DISPLAY_TIMEOUT_MS = 15_000L
-        const val PHONE_WIDTH = 1080
-        const val PHONE_HEIGHT = 2400
-        const val UNFOLDED_WIDTH = 2208
-        const val UNFOLDED_HEIGHT = 1840
-        const val FOLD_DENSITY = 420
+        const val SETTLE_MS = 1_500L
+        const val PHONE_WIDTH = 864
+        const val PHONE_HEIGHT = 1800
+        const val UNFOLDED_WIDTH = 1766
+        const val UNFOLDED_HEIGHT = 1472
+        const val FOLD_DENSITY = 336
     }
 }
 
