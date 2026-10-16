@@ -3,7 +3,7 @@ package dev.send.matrix
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.ComposeTimeoutException
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
@@ -418,7 +418,7 @@ class ZZListManagementIntegrationTest {
             bobSync = sync
             sync.start()
             for (roomId in roomIds) {
-                val room = client.joinRoomById(roomId)
+                val room = client.joinWhenSynced(roomId)
                 bobRooms[roomId] = room
                 bobTimelines[roomId] = room.timeline()
             }

@@ -7,7 +7,7 @@ import android.content.Intent
 import android.os.Bundle
 import android.service.notification.StatusBarNotification
 import androidx.compose.ui.test.ComposeTimeoutException
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
@@ -328,7 +328,7 @@ class ZZNotificationsIntegrationTest {
             val sync = client.syncService().finish()
             bobSync = sync
             sync.start()
-            val room = client.joinRoomById(roomId)
+            val room = client.joinWhenSynced(roomId)
             val timeline = room.timeline()
             bobTimeline = timeline
             bobTimelineHandle = timeline.addListener(object : TimelineListener {
