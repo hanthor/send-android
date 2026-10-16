@@ -416,7 +416,7 @@ internal fun ComposerContextBar(title: String, text: String, cancelDescription: 
         ) {
             Box(Modifier.width(4.dp).heightIn(min = 40.dp).fillMaxHeight().background(colors.primary, RoundedCornerShape(2.dp)))
             Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
-                Text(title, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, color = colors.primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(title, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, color = colors.primary, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Text(text, style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
             IconButton(onClick = onCancel) { Icon(Icons.Filled.Close, contentDescription = cancelDescription) }

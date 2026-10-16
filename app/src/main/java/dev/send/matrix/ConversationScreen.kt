@@ -498,14 +498,18 @@ internal fun ConversationScreen(
                                 },
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            val avatarModifier = if (sharedKey != null) Modifier.sendSharedElement(sharedAvatarKey(sharedKey)) else Modifier
-                            Box(avatarModifier) { Avatar(name = title, size = 40.dp, url = avatarUrl) }
-                            Spacer(modifier = Modifier.width(14.dp))
+                            // At large font sizes the avatar gives its room to the name, which may also take two lines.
+                            val largeText = LocalDensity.current.fontScale >= 1.5f
+                            if (!largeText) {
+                                val avatarModifier = if (sharedKey != null) Modifier.sendSharedElement(sharedAvatarKey(sharedKey)) else Modifier
+                                Box(avatarModifier) { Avatar(name = title, size = 40.dp, url = avatarUrl) }
+                                Spacer(modifier = Modifier.width(14.dp))
+                            } else Spacer(modifier = Modifier.width(8.dp))
                             Text(
                                 title,
                                 style = MaterialTheme.typography.titleLarge,
                                 color = colors.onSurface,
-                                maxLines = 1,
+                                maxLines = if (largeText) 2 else 1,
                                 overflow = TextOverflow.Ellipsis,
                                 modifier = if (sharedKey != null) Modifier.sendSharedBounds(sharedTitleKey(sharedKey)) else Modifier,
                             )
