@@ -36,6 +36,9 @@ fun requiredSigningEnv(name: String): String =
 android {
     namespace = "dev.send.matrix"
     compileSdk = 37
+    // The NDK only provides llvm-strip here (Send has no native code of its own): with it AGP strips debug symbols
+    // from the bundled .so files. CI installs this exact version (android.yml, release.yml).
+    ndkVersion = "29.0.14206865"
 
     defaultConfig {
         applicationId = "dev.send.matrix"
@@ -72,11 +75,36 @@ android {
             matchingFallbacks += listOf("release")
         }
     }
+    // Per-ABI APKs for sideloading from GitHub Releases, plus a universal one; release.yml passes -PsendAbiSplits=true.
+    // Off by default so debug keeps its single app-debug.apk. All split APKs share the tag's versionCode (they are not
+    // published to a store side by side); the AAB ignores this block and Play splits it per device.
+    splits {
+        abi {
+            isEnable = providers.gradleProperty("sendAbiSplits").map { it.toBoolean() }.getOrElse(false)
+            reset()
+            include("arm64-v8a", "armeabi-v7a", "x86_64")
+            isUniversalApk = true
+        }
+    }
     testBuildType = providers.gradleProperty("sendTestBuildType").getOrElse("debug")
     buildFeatures { compose = true }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+    }
+}
+
+androidComponents {
+    onVariants { variant ->
+        if (variant.buildType != "debug") {
+            // Release (and the minified test copy of it): drop 32-bit x86, which no minSdk 34 device needs and for
+            // which matrix-rtc-android ships no core (calls could never work there); applies to APKs and the AAB.
+            variant.packaging.jniLibs.excludes.add("lib/x86/**")
+            // Compress the native libraries inside the APKs (the Rust SDK and RTC cores are ~100 MB per ABI
+            // uncompressed); the device extracts them on install. APKs Play generates from the AAB keep AGP's default
+            // (uncompressed, page-aligned), since useLegacyPackagingFromBundle stays unset.
+            variant.packaging.jniLibs.useLegacyPackaging.set(true)
+        }
     }
 }
 
