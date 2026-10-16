@@ -1,10 +1,10 @@
 package dev.send.matrix
 
-import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.junit4.AndroidComposeTestRule
+import androidx.compose.ui.test.junit4.ComposeTestRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
@@ -24,7 +24,7 @@ internal const val DEMO_PASSWORD = "local-dev-password"
 internal typealias SendComposeRule<A> = AndroidComposeTestRule<ActivityScenarioRule<A>, A>
 
 /** Signs Alice in through the password form unless a session is already showing the conversation list. */
-internal fun <A : ComponentActivity> SendComposeRule<A>.signInAsAliceIfNeeded() {
+internal fun ComposeTestRule.signInAsAliceIfNeeded() {
     waitUntil(timeoutMillis = 60_000) {
         onAllNodesWithContentDescription("Search").fetchSemanticsNodes().isNotEmpty() ||
             onAllNodesWithText("Get started").fetchSemanticsNodes().isNotEmpty()
@@ -33,7 +33,7 @@ internal fun <A : ComponentActivity> SendComposeRule<A>.signInAsAliceIfNeeded() 
 }
 
 /** Signs Alice in from the sign-in hero with the password form and waits for the conversation list. */
-internal fun <A : ComponentActivity> SendComposeRule<A>.signInAsAlice() {
+internal fun ComposeTestRule.signInAsAlice() {
     onNodeWithText("Get started").performScrollTo().performClick()
     onNodeWithText("Use username and password").performScrollTo().performTouchInput { click() }
     mainClock.advanceTimeBy(600)
