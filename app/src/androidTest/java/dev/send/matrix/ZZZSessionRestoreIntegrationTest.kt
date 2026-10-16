@@ -72,9 +72,11 @@ class ZZZSessionRestoreIntegrationTest {
         runBlocking { repository.close() }
         assertNull(repository.account.value)
         assertTrue(repository.joinedRooms.value.isEmpty())
-        // The store on disk is encrypted with the Keystore-wrapped key: the SDK's SQLite stores encrypt values
-        // (the file header stays SQLite's), so no user ID, room name or message text is readable in them.
-        assertStoreHasNoPlaintext(listOf(userId, GROUP_NAME, message))
+        // The store on disk is encrypted with the Keystore-wrapped key. The SDK's SQLite stores encrypt values
+        // (the file header stays SQLite's), so no room name or message text is readable in any of them, nor the
+        // user ID outside the crypto store (which keeps the account's own ID readable; logged for the record).
+        assertStoreHasNoPlaintext(listOf(GROUP_NAME, message), anywhere = true)
+        assertStoreHasNoPlaintext(listOf(userId), anywhere = false)
 
         // Cold start through MainActivity: same session (not a new login), sync resumes, rooms come back.
         composeRule.activityRule.scenario.recreate()
@@ -120,7 +122,7 @@ class ZZZSessionRestoreIntegrationTest {
         assertTrue(context.getSharedPreferences("matrix_session_locator", Context.MODE_PRIVATE).all.isEmpty())
     }
 
-    private fun assertStoreHasNoPlaintext(needles: List<String>) {
+    private fun assertStoreHasNoPlaintext(needles: List<String>, anywhere: Boolean) {
         val files = context.filesDir.resolve(MatrixRepository.STORE_DIR).walkTopDown().filter { it.isFile }.toList()
         assertTrue(
             "No SDK store files in ${MatrixRepository.STORE_DATA_DIR}: ${files.map { it.path }}",
@@ -128,7 +130,14 @@ class ZZZSessionRestoreIntegrationTest {
         )
         val found = files.flatMap { file ->
             val bytes = file.readBytes()
-            needles.filter { needle -> bytes.indexOf(needle.toByteArray()) >= 0 }.map { "${file.name}: $it" }
+            needles.mapNotNull { needle ->
+                val at = bytes.indexOf(needle.toByteArray())
+                if (at < 0) return@mapNotNull null
+                val around = String(bytes.copyOfRange(maxOf(0, at - 48), minOf(bytes.size, at + needle.length + 48)), Charsets.ISO_8859_1)
+                    .map { if (it in ' '..'~') it else '.' }.joinToString("")
+                android.util.Log.i("StoreCheck", "${file.name}: '$needle' readable in \"$around\"")
+                "${file.name}: $needle".takeIf { anywhere || !file.name.startsWith("matrix-sdk-crypto.sqlite3") }
+            }
         }
         assertTrue("Plaintext in the store: $found", found.isEmpty())
     }
