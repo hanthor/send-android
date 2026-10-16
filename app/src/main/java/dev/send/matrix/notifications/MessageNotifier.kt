@@ -26,6 +26,7 @@ import androidx.core.content.pm.ShortcutManagerCompat
 import androidx.core.graphics.drawable.IconCompat
 import dev.send.matrix.MainActivity
 import dev.send.matrix.R
+import dev.send.matrix.ShareTarget
 import dev.send.matrix.avatarPalette
 
 /**
@@ -176,6 +177,14 @@ internal object MessageNotifier {
             .setData(roomUri(roomId))
             .putExtra(EXTRA_ROOM_ID, roomId)
 
+    /**
+     * Pushes (or refreshes and ranks up) [roomId]'s long-lived conversation shortcut when the user sends there, so
+     * recent conversations show in the system share sheet; [dmUserId] gives a DM its person like a notification does.
+     */
+    fun publishConversationShortcut(context: Context, roomId: String, roomName: String, dmUserId: String?) {
+        publishShortcut(context, roomId, roomName, dmUserId?.let { person(it, roomName) })
+    }
+
     private fun publishShortcut(context: Context, roomId: String, roomName: String, person: Person?) {
         val shortcut = ShortcutInfoCompat.Builder(context, roomId)
             .setShortLabel(roomName)
@@ -184,7 +193,8 @@ internal object MessageNotifier {
             .setIntent(conversationIntent(context, roomId))
             .setLongLived(true)
             .setLocusId(LocusIdCompat(roomId))
-            .setCategories(setOf(ShortcutInfo.SHORTCUT_CATEGORY_CONVERSATION))
+            // Conversation shortcut, and a direct-share target (res/xml/shortcuts.xml) for the same room.
+            .setCategories(setOf(ShortcutInfo.SHORTCUT_CATEGORY_CONVERSATION, ShareTarget.CATEGORY_SHARE_TARGET))
             .setIsConversation()
             .apply { if (person != null) setPerson(person) }
             .build()
