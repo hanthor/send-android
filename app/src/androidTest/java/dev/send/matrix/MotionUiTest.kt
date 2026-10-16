@@ -47,7 +47,8 @@ class MotionUiTest {
 
     @Test
     fun fabCollapsesScrollingDownAndExpandsScrollingUpOrAtTop() {
-        composeRule.setContent { SendTheme { MotionFixture(motionRooms(40), motionChat(4)) } }
+        // Long enough that no scroll below is clamped at the end of the list.
+        composeRule.setContent { SendTheme { MotionFixture(motionRooms(120), motionChat(4)) } }
         composeRule.waitForIdle()
         val collapsed = with(density) { 56.dp.toPx() }
         val expanded = fabWidth()
@@ -65,20 +66,23 @@ class MotionUiTest {
         assertEquals("Collapsed to the 56dp icon FAB", collapsed, fabWidth(), 1.5f)
 
         // Further down it stays collapsed; scrolling back up (not yet at the top) expands it.
-        list.performScrollToIndex(30)
-        composeRule.mainClock.advanceTimeBy(600)
-        assertEquals(collapsed, fabWidth(), 1.5f)
-        list.performScrollToIndex(25)
-        composeRule.mainClock.advanceTimeBy(600)
+        scrollTo(30)
+        assertEquals("Stays collapsed scrolling further down", collapsed, fabWidth(), 1.5f)
+        scrollTo(25)
         assertEquals("Expanded scrolling up", expanded, fabWidth(), 1.5f)
-
-        list.performScrollToIndex(35)
-        composeRule.mainClock.advanceTimeBy(600)
-        assertEquals(collapsed, fabWidth(), 1.5f)
-        list.performScrollToIndex(0)
-        composeRule.mainClock.advanceTimeBy(600)
+        scrollTo(35)
+        assertEquals("Collapsed scrolling down again", collapsed, fabWidth(), 1.5f)
+        scrollTo(0)
         assertEquals("Expanded at the top", expanded, fabWidth(), 1.5f)
         composeRule.mainClock.autoAdvance = true
+    }
+
+    /** Scrolls the conversation list (paused clock) so row [index] is first, then lets the FAB settle. */
+    private fun scrollTo(index: Int) {
+        composeRule.onNode(hasScrollToIndexAction()).performScrollToIndex(index)
+        composeRule.mainClock.advanceTimeBy(600)
+        val name = if (index == 0) "Maya" else "Contact ${index + 1}"
+        assertTrue("Row $name is on screen after scrolling to $index", hasText(name))
     }
 
     @OptIn(ExperimentalSharedTransitionApi::class)

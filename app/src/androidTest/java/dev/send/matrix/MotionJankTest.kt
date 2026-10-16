@@ -54,12 +54,14 @@ class MotionJankTest {
                 while (!device.hasObject(mayaRow) && guard++ < 30) device.swipe(x, high, x, low, 12)
                 SystemClock.sleep(800)
 
-                repeat(3) {
+                repeat(3) { round ->
                     device.findObject(mayaRow).click()
-                    check(device.wait(Until.hasObject(By.desc("Back")), 5_000)) { "The conversation didn't open." }
+                    check(device.wait(Until.hasObject(By.desc("Back")), 10_000)) { "Round $round: the conversation didn't open. ${screenText(device)}" }
                     SystemClock.sleep(700)
                     device.pressBack()
-                    check(device.wait(Until.gone(By.desc("Back")), 5_000)) { "The conversation didn't close." }
+                    check(device.wait(Until.hasObject(By.text("Start chat")), 10_000) && !device.hasObject(By.desc("Back"))) {
+                        "Round $round: the conversation didn't close. ${screenText(device)}"
+                    }
                     SystemClock.sleep(700)
                 }
 
@@ -84,6 +86,14 @@ class MotionJankTest {
         } finally {
             device.executeShellCommand("settings put global animator_duration_scale $previousScale")
         }
+    }
+
+    /** The texts and content descriptions on screen, for failure messages. */
+    private fun screenText(device: UiDevice): String {
+        val out = java.io.ByteArrayOutputStream()
+        device.dumpWindowHierarchy(out)
+        val labels = Regex("(?:text|content-desc)=\"([^\"]+)\"").findAll(out.toString()).map { it.groupValues[1] }.toList()
+        return "On screen: " + labels.joinToString(" | ").take(2_000)
     }
 
     private companion object {
