@@ -552,6 +552,12 @@ class MatrixRepository(context: Context) {
     suspend fun restore(): Boolean = withContext(Dispatchers.IO) {
         restoreLock.withLock {
             if (client != null) return@withLock true
+            if (hasUnencryptedLegacyStore()) {
+                // The key can't open a store written without it: start over with a new sign-in.
+                android.util.Log.w(TAG, "Discarding an unencrypted store from an older build")
+                wipeLocalSession()
+                return@withLock false
+            }
             val session = savedSession() ?: return@withLock false
             val sdk = createClient(session.homeserverUrl)
             try {
@@ -675,10 +681,14 @@ class MatrixRepository(context: Context) {
 
     /** A new sign-in is a new device: a store left without saved credentials can't be reused, so remove it first. */
     private fun discardUnrestorableStore() {
-        if (client == null && savedSession() == null && appContext.filesDir.resolve(STORE_DIR).exists()) {
+        if (client == null && (savedSession() == null || hasUnencryptedLegacyStore()) && appContext.filesDir.resolve(STORE_DIR).exists()) {
             wipeLocalSession()
         }
     }
+
+    /** Builds before the store key applied wrote unencrypted SQLite stores to `cache` and `crypto-store`. */
+    private fun hasUnencryptedLegacyStore(): Boolean =
+        appContext.filesDir.resolve(STORE_DIR).resolve(LEGACY_UNENCRYPTED_STORE_DIR).exists()
 
     private fun replaceAuthenticatedClient(sdk: Client) {
         closeSessionResources()
@@ -2284,13 +2294,14 @@ class MatrixRepository(context: Context) {
 
     private suspend fun createClient(homeserver: String): Client {
         val root = appContext.filesDir.resolve(STORE_DIR).apply { mkdirs() }
-        val store = root.resolve("sdk-store.db").absolutePath
-        val crypto = root.resolve("crypto-store").absolutePath
+        // State and crypto stores in `data`, event and media caches in `store-cache`, all encrypted with the store key.
+        // No `sessionPaths` here: it replaces the store configuration with an unencrypted one.
+        val store = SqliteStoreBuilder(root.resolve(STORE_DATA_DIR).absolutePath, root.resolve(STORE_CACHE_DIR).absolutePath)
+            .key(storeKey())
         return ClientBuilder()
             .homeserverUrl(homeserver)
             .slidingSyncVersionBuilder(SlidingSyncVersionBuilder.NATIVE)
-            .sqliteStore(SqliteStoreBuilder(store, "").key(storeKey()))
-            .sessionPaths(root.resolve("cache").absolutePath, crypto)
+            .sqliteStore(store)
             // Bootstraps this account's cross-signing identity on its first login, which recovery
             // (secret storage) and session verification build on.
             .autoEnableCrossSigning(true)
@@ -2646,7 +2657,10 @@ class MatrixRepository(context: Context) {
         private const val KEY_SESSION = "sdk_session"
         private const val TAG = "MatrixRepository"
         private const val THUMBNAIL_PX = 800
-        private const val STORE_DIR = "matrix"
+        internal const val STORE_DIR = "matrix"
+        internal const val STORE_DATA_DIR = "data"
+        private const val STORE_CACHE_DIR = "store-cache"
+        internal const val LEGACY_UNENCRYPTED_STORE_DIR = "crypto-store"
         private const val STORE_KEY_ALIAS = "send.matrix.store-key"
         private const val BACKUP_UPLOAD_TIMEOUT_MS = 30_000L
         private const val REPLY_SEND_TIMEOUT_MS = 30_000L
