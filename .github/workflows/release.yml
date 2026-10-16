@@ -16,6 +16,8 @@ concurrency:
 
 env:
   BUILD_TOOLS: '37.0.0'
+  # Keep in sync with android.ndkVersion in app/build.gradle.kts.
+  NDK_VERSION: '29.0.14206865'
 
 defaults:
   run:
@@ -40,8 +42,8 @@ jobs:
           java-version: '17'
       - uses: android-actions/setup-android@v4
       - uses: gradle/actions/setup-gradle@v4
-      - name: Install Android API 37 SDK
-        run: sdkmanager 'platforms;android-37.2' "build-tools;$BUILD_TOOLS"
+      - name: Install Android API 37 SDK and the NDK (llvm-strip for the bundled .so files)
+        run: sdkmanager 'platforms;android-37.2' "build-tools;$BUILD_TOOLS" "ndk;$NDK_VERSION"
       - name: Prepare signing key
         id: signing
         env:
@@ -83,35 +85,63 @@ jobs:
             echo "::warning::No release signing secrets are set; signing with a throwaway CI key. These builds are UNOFFICIAL and NOT FOR DISTRIBUTION."
           fi
           echo "SEND_KEYSTORE_FILE=$keystore" >> "$GITHUB_ENV"
-      - name: Build release APK and AAB (R8)
+      - name: Build release APKs and AAB (R8)
         run: |
           version_arg=()
           if [ "$GITHUB_REF_TYPE" = tag ]; then version_arg=("-PsendVersion=$GITHUB_REF_NAME"); fi
-          ./gradlew --no-daemon "-Dorg.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1g" "${version_arg[@]}" \
-            :app:assembleRelease :app:bundleRelease
+          gradle_args=(--no-daemon "-Dorg.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1g" "${version_arg[@]}")
+          ./gradlew "${gradle_args[@]}" -PsendAbiSplits=true :app:assembleRelease
+          cp app/build/outputs/mapping/release/mapping.txt "$RUNNER_TEMP/mapping-apks.txt"
+          # AGP refuses to build an app bundle while ABI splits are on (issuetracker 402800800), so the AAB comes from
+          # a second invocation. Same code and rules, so R8 must produce the same mapping; one mapping.txt is shipped.
+          ./gradlew "${gradle_args[@]}" :app:bundleRelease
+          if ! cmp -s "$RUNNER_TEMP/mapping-apks.txt" app/build/outputs/mapping/release/mapping.txt; then
+            echo "::error::The APK and AAB builds produced different R8 mappings."
+            exit 1
+          fi
       - name: Remove signing key
         if: always()
         run: rm -f "$RUNNER_TEMP/send-release.keystore"
-      - name: Verify signatures, version and network policy
+      - name: Verify signatures, version, packaging and network policy
         run: |
           bt="$ANDROID_HOME/build-tools/$BUILD_TOOLS"
-          apk=app/build/outputs/apk/release/app-release.apk
+          out=app/build/outputs/apk/release
           aab=app/build/outputs/bundle/release/app-release.aab
-          "$bt/apksigner" verify --verbose --print-certs "$apk" | tee "$RUNNER_TEMP/apksigner.txt"
+          for abi in arm64-v8a armeabi-v7a x86_64 universal; do
+            apk="$out/app-$abi-release.apk"
+            echo "::group::$abi APK"
+            "$bt/apksigner" verify --verbose --print-certs "$apk" | tee "$RUNNER_TEMP/apksigner-$abi.txt"
+            # Every APK carries the tag's versionName/versionCode (one versionCode for all of them).
+            package_line="$("$bt/aapt2" dump badging "$apk" | sed -n 1p)"
+            echo "$package_line"
+            if [ "$GITHUB_REF_TYPE" = tag ]; then
+              grep -q "versionName='${GITHUB_REF_NAME#v}'" <<< "$package_line"
+            fi
+            # Native libraries: compressed (Defl), right ABI only, no 32-bit x86.
+            libs="$(unzip -v "$apk" 'lib/*')"
+            echo "$libs"
+            if grep -qE ' Stored .* lib/' <<< "$libs" ||
+              awk 'index($NF, "lib/") == 1 && $NF !~ /^lib\/(arm64-v8a|armeabi-v7a|x86_64)\// { bad = 1 } END { exit !bad }' <<< "$libs"; then
+              echo "::error::$apk has uncompressed native libraries or an ABI other than arm64-v8a/armeabi-v7a/x86_64."
+              exit 1
+            fi
+            if [ "$abi" != universal ] &&
+              awk -v dir="lib/$abi/" 'index($NF, "lib/") == 1 && index($NF, dir) != 1 { bad = 1 } END { exit !bad }' <<< "$libs"; then
+              echo "::error::$apk carries native libraries of another ABI."
+              exit 1
+            fi
+            echo "::endgroup::"
+          done
+          cp "$RUNNER_TEMP/apksigner-universal.txt" "$RUNNER_TEMP/apksigner.txt"
           # jarsigner also lists every entry as "signed in JarFile but not in JarInputStream" (bundletool's AAB
           # layout, harmless); keep only the verdict and the warnings about the (self-signed) chain.
           jarsigner -verify -certs "$aab" > "$RUNNER_TEMP/jarsigner.txt"
           grep -v -e 'is signed in JarFile' -e '^- Entry' "$RUNNER_TEMP/jarsigner.txt"
           grep -q '^jar verified\.' "$RUNNER_TEMP/jarsigner.txt"
           keytool -printcert -jarfile "$aab"
-          # Version contract: the tag's versionName/versionCode made it into the APK.
-          badging="$("$bt/aapt2" dump badging "$apk")"
-          package_line="$(sed -n 1p <<< "$badging")"
-          echo "$package_line"
-          if [ "$GITHUB_REF_TYPE" = tag ]; then
-            grep -q "versionName='${GITHUB_REF_NAME#v}'" <<< "$package_line"
-          fi
+          unzip -v "$aab" 'base/lib/*'
           # The release build must not allow cleartext HTTP or the local-Synapse shortcut (debug/minified only).
+          apk="$out/app-universal-release.apk"
           resources="$("$bt/aapt2" dump resources "$apk")"
           nsc="$(awk '/xml\/network_security_config/ { found = 1; next } found && /\(file\)/ && !done { print $3; done = 1 }' <<< "$resources")"
           test -n "$nsc"
@@ -129,15 +159,17 @@ jobs:
           OFFICIAL: ${{ steps.signing.outputs.official }}
         run: |
           bt="$ANDROID_HOME/build-tools/$BUILD_TOOLS"
-          apk=app/build/outputs/apk/release/app-release.apk
-          package_line="$("$bt/aapt2" dump badging "$apk" | sed -n 1p)"
+          out=app/build/outputs/apk/release
+          package_line="$("$bt/aapt2" dump badging "$out/app-universal-release.apk" | sed -n 1p)"
           version="$(sed -E "s/.*versionName='([^']*)'.*/\1/" <<< "$package_line")"
           code="$(sed -E "s/.*versionCode='([^']*)'.*/\1/" <<< "$package_line")"
           suffix=""
           if [ "$OFFICIAL" != true ]; then suffix="-UNOFFICIAL-ci-signed"; fi
           base="Send-$version$suffix"
           mkdir -p dist notes
-          cp "$apk" "dist/$base.apk"
+          for abi in arm64-v8a armeabi-v7a x86_64 universal; do
+            cp "$out/app-$abi-release.apk" "dist/$base-$abi.apk"
+          done
           cp app/build/outputs/bundle/release/app-release.aab "dist/$base.aab"
           cp app/build/outputs/mapping/release/mapping.txt "dist/$base-mapping.txt"
           (cd dist && sha256sum -- * > SHA256SUMS.txt)
@@ -163,14 +195,22 @@ jobs:
               cat "$changelog"
               echo
             fi
+            echo '## Which file?'
+            echo
+            echo "- \`$base-arm64-v8a.apk\`: almost every phone and tablet from the last years (64-bit ARM)."
+            echo "- \`$base-armeabi-v7a.apk\`: older 32-bit ARM devices."
+            echo "- \`$base-x86_64.apk\`: emulators and x86 Chromebooks."
+            echo "- \`$base-universal.apk\`: all three in one, if unsure (larger download)."
+            echo "- \`$base.aab\`: the app bundle for app stores; \`$base-mapping.txt\` turns R8-obfuscated crash stack"
+            echo "  traces back into readable ones (\`retrace\`)."
+            echo
+            echo 'All APKs have the same version code; install one, not several.'
+            echo
             echo '## Files'
             echo
             echo '| File | SHA-256 |'
             echo '| --- | --- |'
             while read -r sum file; do echo "| \`$file\` | \`$sum\` |"; done < dist/SHA256SUMS.txt
-            echo
-            echo "The APK is universal (arm64-v8a, armeabi-v7a, x86, x86_64); the AAB is for app stores. The mapping file"
-            echo "turns R8-obfuscated crash stack traces back into readable ones (\`retrace\`)."
             echo
             echo "Signing certificate: \`$dn\`, SHA-256 \`$cert\`."
             echo
@@ -200,8 +240,8 @@ jobs:
           java-version: '17'
       - uses: android-actions/setup-android@v4
       - uses: gradle/actions/setup-gradle@v4
-      - name: Install Android API 37 SDK
-        run: sdkmanager 'platforms;android-37.2' "build-tools;$BUILD_TOOLS"
+      - name: Install Android API 37 SDK and the NDK
+        run: sdkmanager 'platforms;android-37.2' "build-tools;$BUILD_TOOLS" "ndk;$NDK_VERSION"
       - name: Start disposable local Synapse and MatrixRTC backend
         run: |
           # Same backend as android.yml: the emulator reaches this host as 10.0.2.2, and MatrixRTC hands that
@@ -223,8 +263,9 @@ jobs:
         run: dev/matrix/seed-demo.sh
       - name: Check MatrixRTC backend
         run: dev/matrix/check-rtc.sh
-      - name: Assemble the minified app and its tests (R8, release rules)
-        run: ./gradlew --no-daemon "-Dorg.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1g" -PsendTestBuildType=minified :app:assembleMinified :app:assembleMinifiedAndroidTest
+      - name: Assemble the minified app and its tests (R8, release rules, ABI splits)
+        # Same packaging as the release APKs; the connected task installs the split matching the emulator (x86_64).
+        run: ./gradlew --no-daemon "-Dorg.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1g" -PsendTestBuildType=minified -PsendAbiSplits=true :app:assembleMinified :app:assembleMinifiedAndroidTest
       - name: Enable Android emulator KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -236,7 +277,7 @@ jobs:
           api-level: 35
           arch: x86_64
           disable-animations: true
-          script: ./gradlew --no-daemon "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g" -PsendTestBuildType=minified :app:connectedMinifiedAndroidTest; status=$?; mkdir -p /tmp/send-ui-screenshots/all; adb pull /storage/emulated/0/Download/Send/. /tmp/send-ui-screenshots/all/ || true; exit $status
+          script: ./gradlew --no-daemon "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g" -PsendTestBuildType=minified -PsendAbiSplits=true :app:connectedMinifiedAndroidTest; status=$?; mkdir -p /tmp/send-ui-screenshots/all; adb pull /storage/emulated/0/Download/Send/. /tmp/send-ui-screenshots/all/ || true; exit $status
       - name: Upload instrumentation results
         if: always()
         uses: actions/upload-artifact@v4

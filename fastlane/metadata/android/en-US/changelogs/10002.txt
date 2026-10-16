@@ -1,0 +1,4 @@
+Second release candidate of Send.
+• Much smaller downloads: one APK per device type (64-bit ARM, 32-bit ARM, x86_64) plus a universal APK
+• Native libraries are compressed inside the APKs
+• Room summaries in the conversation list update reliably

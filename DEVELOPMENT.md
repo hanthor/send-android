@@ -115,21 +115,49 @@ git push origin v0.1.0-rc.1
 ```
 
 The workflow then builds `:app:assembleRelease :app:bundleRelease` with R8
-(`app/proguard-rules.pro`), checks the APK with `apksigner verify --print-certs`
-and the AAB with `jarsigner -verify`, checks that the APK carries the tag's
-version and no cleartext/local-Synapse allowance, and in parallel runs the whole
+(`app/proguard-rules.pro`), checks every APK with `apksigner verify --print-certs`
+and the AAB with `jarsigner -verify`, checks that the APKs carry the tag's
+version, compressed native libraries of the right ABI, and no
+cleartext/local-Synapse allowance, and in parallel runs the whole
 instrumentation suite against the disposable Synapse on the `minified` build type
 (release R8 rules plus `app/proguard-minified-test.pro`, which only keeps what the
-separate test APK links against; debug-signed, with the debug cleartext config).
-Only when both pass does it create the GitHub Release (a prerelease for `-rc.N`)
-with the APK, the AAB, the R8 `mapping.txt` (keep it: it is the only way to read
-crash stack traces from that build) and `SHA256SUMS.txt`. To redo a tag, delete
-the GitHub Release and the tag (`git push --delete origin v0.1.0-rc.1`), then
-push it again.
+separate test APK links against; debug-signed, with the debug cleartext config;
+the emulator gets its x86_64 split APK). Only when both pass does it create the
+GitHub Release (a prerelease for `-rc.N`) with the APKs, the AAB, the R8
+`mapping.txt` (keep it: it is the only way to read crash stack traces from that
+build) and `SHA256SUMS.txt`. To redo a tag, delete the GitHub Release and the tag
+(`git push --delete origin v0.1.0-rc.1`), then push it again.
 
 To run the suite on the R8 build yourself in CI, pass
 `-PsendTestBuildType=minified` and use `:app:connectedMinifiedAndroidTest`;
 without the property tests run on `debug` as usual.
+
+**APKs, AAB and stores.** The Rust SDK and the RTC core are large native
+libraries (about 100 MB per ABI uncompressed), so release builds are packaged
+for download size:
+
+- With `-PsendAbiSplits=true` (release.yml) `assembleRelease` makes one APK per
+  ABI (`arm64-v8a`, `armeabi-v7a`, `x86_64`) plus a universal APK with all three.
+  They all share the tag's versionCode: they are for sideloading from GitHub
+  Releases, where a user installs exactly one. Debug builds never split
+  (`app-debug.apk` stays one file).
+- Release APKs compress their native libraries (`useLegacyPackaging`), which
+  Android extracts on install; debug keeps AGP's uncompressed default.
+- 32-bit `x86` is left out of release APKs and the AAB: no minSdk 34 device
+  needs it and matrix-rtc-android ships no x86 core.
+- AGP strips the bundled `.so` files with the NDK pinned in `android.ndkVersion`
+  (CI installs that version); the upstream libraries already ship stripped, so
+  this mainly guards future dependencies.
+- Google Play takes the AAB (`.aab`) and builds per-device APKs from it itself.
+  AGP can't bundle while ABI splits are on, so release.yml runs `bundleRelease`
+  in a second Gradle invocation without `-PsendAbiSplits` and checks that both
+  produced the same R8 mapping.
+- F-Droid builds from source with its own recipe. A plain
+  `gradle assembleRelease` (no `-PsendAbiSplits`) gives one APK with the three
+  ABIs, which is what F-Droid would ship under the tag's versionCode. Per-ABI
+  F-Droid builds would need a distinct versionCode per ABI (F-Droid's
+  `VercodeOperation` plus a matching override here), which the version contract
+  does not provide today.
 
 **Signing.** Gradle signs the release build only when `SEND_KEYSTORE_FILE`
 (path), `SEND_KEYSTORE_PASSWORD`, `SEND_KEY_ALIAS` and `SEND_KEY_PASSWORD` are

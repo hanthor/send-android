@@ -19,8 +19,8 @@ jobs:
           java-version: '17'
       - uses: android-actions/setup-android@v4
       - uses: gradle/actions/setup-gradle@v4
-      - name: Install Android API 37 SDK
-        run: sdkmanager 'platforms;android-37.2' 'build-tools;37.0.0'
+      - name: Install Android API 37 SDK and the NDK (android.ndkVersion; strips the bundled .so files)
+        run: sdkmanager 'platforms;android-37.2' 'build-tools;37.0.0' 'ndk;29.0.14206865'
       - name: Start disposable local Synapse and MatrixRTC backend
         run: |
           # The emulator reaches this host as 10.0.2.2, and MatrixRTC hands that address out (LiveKit
