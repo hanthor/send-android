@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Accept a plain-HTTP homeserver on port 8008 at 10.0.2.2/127.0.0.1/localhost (the local Synapse in
+         DEVELOPMENT.md). Off for release; the debug and test-only minified source sets turn it on together with
+         their cleartext network_security_config.xml. -->
+    <bool name="allow_local_dev_homeserver">false</bool>
+</resources>
