@@ -54,12 +54,14 @@ class MotionJankTest {
                 while (!device.hasObject(mayaRow) && guard++ < 30) device.swipe(x, high, x, low, 12)
                 SystemClock.sleep(800)
 
+                // The conversation's back arrow (the navigation bar has a "Back" button too).
+                val conversationBack = By.desc("Back").pkg(packageName)
                 repeat(3) { round ->
                     device.findObject(mayaRow).click()
-                    check(device.wait(Until.hasObject(By.desc("Back")), 10_000)) { "Round $round: the conversation didn't open. ${screenText(device)}" }
+                    check(device.wait(Until.hasObject(conversationBack), 10_000)) { "Round $round: the conversation didn't open. ${screenText(device)}" }
                     SystemClock.sleep(700)
                     device.pressBack()
-                    check(device.wait(Until.hasObject(By.text("Start chat")), 10_000) && !device.hasObject(By.desc("Back"))) {
+                    check(device.wait(Until.gone(conversationBack), 10_000) && device.hasObject(By.text("Start chat"))) {
                         "Round $round: the conversation didn't close. ${screenText(device)}"
                     }
                     SystemClock.sleep(700)
