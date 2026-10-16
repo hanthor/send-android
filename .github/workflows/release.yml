@@ -5,7 +5,6 @@ name: Release
 on:
   push:
     tags: ['v*']
-    branches: [phase8-release-build] # TEMPORARY while iterating; removed before merge
   workflow_dispatch:
 
 permissions:
