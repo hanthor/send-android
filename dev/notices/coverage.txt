@@ -1,0 +1,15 @@
+# Which THIRD_PARTY_NOTICES.txt entry attributes each bundled artifact (checked by dev/check-notices.sh in CI).
+#
+#   <selector> = <heading line of the notices entry>
+#
+# Selectors: group:artifact (exact; wins over group rules), group (every artifact of that group), group.* (the group
+# and all its subgroups), or a native library file name as packaged in the APK (libfoo.so).
+
+io.element.android = Element Call Android
+io.element.android:matrix-rtc-android = Matrix Rust RTC Android core
+org.matrix.rustcomponents:sdk-android = Matrix Rust SDK (Kotlin/Android binding)
+com.journeyapps:zxing-android-embedded = ZXing Android Embedded (QR login scanning)
+org.unifiedpush.android:connector = UnifiedPush Android connector (push notifications)
+com.google.crypto.tink:tink = Tink (used by the UnifiedPush connector for Web Push decryption)
+androidx.* = AndroidX libraries (Compose, Material 3, Activity, Browser, Core, WorkManager, Emoji2 emoji picker data, Test)
+com.google.guava = Guava: Google Core Libraries for Java (pulled in by the AndroidX emoji picker)
