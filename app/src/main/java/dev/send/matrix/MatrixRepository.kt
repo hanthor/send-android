@@ -246,6 +246,11 @@ data class MatrixMessage(
     val editable: Boolean = false,
     /** Other people's read receipts that sit on this event: user ID → receipt time in ms (0 when unknown). */
     val readBy: Map<String, Long> = emptyMap(),
+    /**
+     * Stable timeline identity (the SDK's unique item ID): unlike [id] it survives the local echo becoming the
+     * remote event, so list rows keep their state and don't replay entry animations.
+     */
+    val key: String = id,
 )
 
 /** The signed-in Matrix account and this device's session. */
@@ -1753,7 +1758,14 @@ class MatrixRepository(context: Context) {
      * (`org.matrix.msc3401.call.member` state in the timeline) between its notification and the next one.
      */
     private fun buildMessages(): List<MatrixMessage> {
-        val events = timelineItems.mapNotNull { it.asEvent() }
+        // Events with their timeline items, whose unique ID keys the rows.
+        val items = ArrayList<org.matrix.rustcomponents.sdk.TimelineItem>(timelineItems.size)
+        val events = ArrayList<org.matrix.rustcomponents.sdk.EventTimelineItem>(timelineItems.size)
+        for (item in timelineItems) {
+            val event = item.asEvent() ?: continue
+            items += item
+            events += event
+        }
         val changes = ArrayList<CallMemberChange>()
         val ringTimes = ArrayList<Long>()
         for (event in events) {
@@ -1766,12 +1778,13 @@ class MatrixRepository(context: Context) {
         }
         val ownUserId = ownUserId()
         var ring = 0
-        return events.mapNotNull { event ->
+        return events.indices.mapNotNull { index ->
+            val event = events[index]
             if (event.content is TimelineItemContent.RtcNotification) {
                 ring += 1
-                callMessage(event, ringTimes.getOrNull(ring), ownUserId, changes)
+                callMessage(items[index], event, ringTimes.getOrNull(ring), ownUserId, changes)
             } else {
-                toMessage(event, ownUserId)
+                toMessage(items[index], event, ownUserId)
             }
         }
     }
@@ -1792,6 +1805,7 @@ class MatrixRepository(context: Context) {
     }
 
     private fun callMessage(
+        item: org.matrix.rustcomponents.sdk.TimelineItem,
         event: org.matrix.rustcomponents.sdk.EventTimelineItem,
         nextRingMillis: Long?,
         ownUserId: String?,
@@ -1817,13 +1831,15 @@ class MatrixRepository(context: Context) {
                 answered = answered,
                 durationMillis = duration,
             ),
+            key = item.uniqueId().id,
         )
     }
 
-    private fun toMessage(event: org.matrix.rustcomponents.sdk.EventTimelineItem, ownUserId: String?): MatrixMessage? {
+    private fun toMessage(item: org.matrix.rustcomponents.sdk.TimelineItem, event: org.matrix.rustcomponents.sdk.EventTimelineItem, ownUserId: String?): MatrixMessage? {
         val content = event.content as? TimelineItemContent.MsgLike ?: return null
         val kind = content.content.kind
         if (kind !is MsgLikeKind.Message && kind !is MsgLikeKind.UnableToDecrypt && kind !is MsgLikeKind.Redacted) return null
+        val key = item.uniqueId().id
         val id = when (val identifier = event.eventOrTransactionId) {
             is EventOrTransactionId.EventId -> identifier.eventId
             is EventOrTransactionId.TransactionId -> identifier.transactionId
@@ -1851,6 +1867,7 @@ class MatrixRepository(context: Context) {
                 senderName = senderName,
                 deleted = true,
                 readBy = readBy,
+                key = key,
             )
         }
         if (kind is MsgLikeKind.UnableToDecrypt) {
@@ -1866,6 +1883,7 @@ class MatrixRepository(context: Context) {
                 decryptionFailure = decryptionFailureOf(kind.msg),
                 senderName = senderName,
                 readBy = readBy,
+                key = key,
             )
         }
         val message = (kind as MsgLikeKind.Message).content
@@ -1891,6 +1909,7 @@ class MatrixRepository(context: Context) {
             edited = message.isEdited,
             editable = event.isEditable,
             readBy = readBy,
+            key = key,
         )
     }
 

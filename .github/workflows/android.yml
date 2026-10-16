@@ -56,6 +56,9 @@ jobs:
           arch: x86_64
           disable-animations: true
           script: ./gradlew --no-daemon "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g" :app:connectedDebugAndroidTest && mkdir -p /tmp/send-ui-screenshots && adb pull /storage/emulated/0/Download/Send/send-login-hero-screen.png /tmp/send-ui-screenshots/ && adb pull /storage/emulated/0/Download/Send/send-login-screen.png /tmp/send-ui-screenshots/ && adb pull /storage/emulated/0/Download/Send/send-home-screen.png /tmp/send-ui-screenshots/ && adb pull /storage/emulated/0/Download/Send/send-conversation-screen.png /tmp/send-ui-screenshots/ && adb pull /storage/emulated/0/Download/Send/send-new-chat-dialog.png /tmp/send-ui-screenshots/ && adb pull /storage/emulated/0/Download/Send/send-reaction-picker.png /tmp/send-ui-screenshots/ && adb pull /storage/emulated/0/Download/Send/send-demo-create-chat.png /tmp/send-ui-screenshots/ && adb pull /storage/emulated/0/Download/Send/send-demo-conversations.png /tmp/send-ui-screenshots/ && adb pull /storage/emulated/0/Download/Send/send-demo-conversation.png /tmp/send-ui-screenshots/ && mkdir -p /tmp/send-ui-screenshots/all && adb pull /storage/emulated/0/Download/Send/. /tmp/send-ui-screenshots/all/
+      - name: Report motion jank (MotionJankTest)
+        if: always()
+        run: head -n 1 /tmp/send-ui-screenshots/all/send-motion-jank.txt || echo "No jank report (instrumentation stopped before it was pulled; see the test failure message)."
       - name: Upload Android instrumentation results
         if: always()
         uses: actions/upload-artifact@v4
@@ -82,6 +85,7 @@ jobs:
           path: |
             /tmp/send-ui-screenshots/*.png
             /tmp/send-ui-screenshots/all/send-*-device.png
+            /tmp/send-ui-screenshots/all/send-motion-jank.txt
           if-no-files-found: warn
           retention-days: 30
       - name: Show backend logs

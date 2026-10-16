@@ -4,7 +4,6 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.net.Uri
 import android.text.format.DateUtils
-import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -177,8 +176,9 @@ internal fun SettingsPage(
     snackbar: SnackbarHostState? = null,
     content: @Composable () -> Unit,
 ) {
-    BackHandler(onBack = onBack)
+    val leaving = rememberPredictiveBack(onBack = onBack)
     Scaffold(
+        modifier = Modifier.predictiveBack(leaving),
         containerColor = MaterialTheme.colorScheme.surfaceContainer,
         topBar = { ListScreenTopBar(title, onBack) },
         snackbarHost = { if (snackbar != null) SnackbarHost(snackbar) },

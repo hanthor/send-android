@@ -8,7 +8,7 @@
     <!-- Incoming MatrixRTC rings take over the screen. Special app access on Android 14+: without it a ring is a
          heads-up notification, and Account → Notifications links to the setting. -->
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
-    <application android:name=".SendApplication" android:allowBackup="false" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:label="Send" android:networkSecurityConfig="@xml/network_security_config">
+    <application android:name=".SendApplication" android:allowBackup="false" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:label="Send" android:networkSecurityConfig="@xml/network_security_config" android:enableOnBackInvokedCallback="true">
         <!-- Ringing screen opened by the "Calls" notification's full-screen intent, also over the lock screen. -->
         <activity
             android:name=".IncomingCallActivity"
