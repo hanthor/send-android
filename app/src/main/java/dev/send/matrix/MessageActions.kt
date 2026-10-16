@@ -592,10 +592,12 @@ internal fun LockedRecordingPanel(
         // Messages: three equal pills in their own row under the panel.
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             val pill = Modifier.weight(1f).height(56.dp)
-            FilledTonalButton(onClick = onRestart, modifier = pill) {
+            // Equal-width pills: tight padding and single-line labels so "Restart"/"Attach" never wrap mid-word.
+            val pillPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp)
+            FilledTonalButton(onClick = onRestart, modifier = pill, contentPadding = pillPadding) {
                 Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(20.dp))
-                Spacer(Modifier.width(8.dp))
-                Text("Restart")
+                Spacer(Modifier.width(6.dp))
+                Text("Restart", maxLines = 1, softWrap = false)
             }
             Button(
                 onClick = if (clip == null) onStop else onTogglePlay,
@@ -608,10 +610,10 @@ internal fun LockedRecordingPanel(
                     else -> Icon(Icons.Filled.PlayArrow, contentDescription = "Play recording")
                 }
             }
-            Button(onClick = onAttach, modifier = pill) {
+            Button(onClick = onAttach, modifier = pill, contentPadding = pillPadding) {
                 Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(20.dp))
-                Spacer(Modifier.width(8.dp))
-                Text("Attach")
+                Spacer(Modifier.width(6.dp))
+                Text("Attach", maxLines = 1, softWrap = false)
             }
         }
     }
