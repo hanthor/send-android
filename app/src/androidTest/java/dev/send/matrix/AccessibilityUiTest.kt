@@ -178,6 +178,13 @@ class AccessibilityUiTest {
         composeRule.waitForIdle()
     }
 
+    /** [auditShot] once the window has drawn: a capture right after setContent can still show the blank window. */
+    private fun shot(name: String) {
+        composeRule.waitForIdle()
+        Thread.sleep(500)
+        composeRule.auditShot(name)
+    }
+
     private fun onMain(block: () -> Unit) = InstrumentationRegistry.getInstrumentation().runOnMainSync(block)
 
     /**
@@ -262,7 +269,7 @@ class AccessibilityUiTest {
         composeRule.onNode(hasText("Family") and hasClickAction()).fetchSemanticsNode().label().let { assertTrue(it, "Pinned" in it) }
         composeRule.onNode(hasText("Book club") and hasClickAction()).fetchSemanticsNode().label().let { assertTrue(it, "Muted" in it) }
         assertClickablesLabelled()
-        composeRule.auditShot("a11y-font200-home")
+        shot("a11y-font200-home")
         // TalkBack can't swipe: Archive is a custom action on the row.
         customAction("Book club", "Archive")
         composeRule.runOnIdle { assertEquals(listOf("Book club"), archived) }
@@ -276,7 +283,7 @@ class AccessibilityUiTest {
         composeRule.onNodeWithContentDescription("Reactions").assertIsDisplayed()
         listOf("Back", "Video call", "Voice call", "More options", "Attach file", "Emoji", "Gallery", "Send").forEach(::assertTarget)
         assertClickablesLabelled()
-        composeRule.auditShot("a11y-font200-conversation")
+        shot("a11y-font200-conversation")
         // TalkBack can't swipe a bubble: Reply is a custom action on it, and opens the reply strip.
         customAction("See you at 7!", "Reply")
         composeRule.waitUntil(5_000) { composeRule.onAllNodesWithText("Replying to Maya").fetchSemanticsNodes().isNotEmpty() }
@@ -285,7 +292,7 @@ class AccessibilityUiTest {
         assertTarget("Cancel reply")
         assertTarget("Send")
         assertClickablesLabelled()
-        composeRule.auditShot("a11y-font200-composer")
+        shot("a11y-font200-composer")
     }
 
     @Test
@@ -295,21 +302,21 @@ class AccessibilityUiTest {
         assertTarget("Back")
         composeRule.onNode(hasText("Choose theme") and hasClickAction()).assertTouchTarget("Choose theme row")
         assertClickablesLabelled()
-        composeRule.auditShot("a11y-font200-settings")
+        shot("a11y-font200-settings")
     }
 
     @Test
     fun darkHome() {
         showHome(ThemeChoice.Dark, fontScale = 1f)
         composeRule.onNodeWithText("Maya").assertIsDisplayed()
-        composeRule.auditShot("dark-home")
+        shot("dark-home")
     }
 
     @Test
     fun darkConversationAndDetails() {
         showConversation(ThemeChoice.Dark, fontScale = 1f, title = "Weekend plans", direct = false)
         composeRule.onNodeWithText("See you at 7!").assertIsDisplayed()
-        composeRule.auditShot("dark-conversation")
+        shot("dark-conversation")
         // The header opens the details; a tap landing while the screen settles is retried.
         for (attempt in 1..3) {
             composeRule.onNode(hasText("Weekend plans") and hasClickAction()).performClick()
@@ -320,13 +327,13 @@ class AccessibilityUiTest {
         }
         composeRule.onAllNodesWithText("Cabin trip, 14–16 Nov").onFirst().assertIsDisplayed()
         assertTarget("Change group photo")
-        composeRule.auditShot("dark-details")
+        shot("dark-details")
     }
 
     @Test
     fun darkSettings() {
         showSettings(ThemeChoice.Dark, fontScale = 1f)
         composeRule.onNodeWithText("Choose theme").assertIsDisplayed()
-        composeRule.auditShot("dark-settings")
+        shot("dark-settings")
     }
 }

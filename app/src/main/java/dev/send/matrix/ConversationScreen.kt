@@ -629,9 +629,11 @@ internal fun ConversationScreen(
                                     cancelling = cancellingRecording,
                                     modifier = Modifier.fillMaxWidth().height(56.dp),
                                 )
-                            } else Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                                IconButton(onClick = { documentPicker.launch(arrayOf("*/*")) }) {
-                                    Icon(imageVector = Icons.Outlined.AddCircleOutline, contentDescription = "Attach file", tint = colors.onSurfaceVariant)
+                            } else {
+                                val attachButton = @Composable {
+                                    IconButton(onClick = { documentPicker.launch(arrayOf("*/*")) }) {
+                                        Icon(imageVector = Icons.Outlined.AddCircleOutline, contentDescription = "Attach file", tint = colors.onSurfaceVariant)
+                                    }
                                 }
                                 // Same decoration as TextField but with Messages' tight inner padding so the
                                 // placeholder stays on one line next to three inline actions.
@@ -646,49 +648,72 @@ internal fun ConversationScreen(
                                     focusedIndicatorColor = Color.Transparent,
                                     unfocusedIndicatorColor = Color.Transparent,
                                 )
-                                BasicTextField(
-                                    value = draft,
-                                    onValueChange = onDraft,
-                                    modifier = Modifier.weight(1f).focusRequester(composerFocus),
-                                    maxLines = 4,
-                                    textStyle = MaterialTheme.typography.bodyLarge.copy(color = colors.onSurface),
-                                    cursorBrush = SolidColor(colors.primary),
-                                    interactionSource = composerInteraction,
-                                ) { innerTextField ->
-                                    TextFieldDefaults.DecorationBox(
+                                val field = @Composable { fieldModifier: Modifier ->
+                                    BasicTextField(
                                         value = draft,
-                                        innerTextField = innerTextField,
-                                        enabled = true,
-                                        singleLine = false,
-                                        visualTransformation = VisualTransformation.None,
+                                        onValueChange = onDraft,
+                                        modifier = fieldModifier.focusRequester(composerFocus),
+                                        maxLines = 4,
+                                        textStyle = MaterialTheme.typography.bodyLarge.copy(color = colors.onSurface),
+                                        cursorBrush = SolidColor(colors.primary),
                                         interactionSource = composerInteraction,
-                                        placeholder = { Text("Message", maxLines = 1, softWrap = false) },
-                                        colors = composerColors,
-                                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 16.dp),
-                                        container = {},
-                                    )
-                                }
-                                // Messages swaps the keyboard for its emoji panel; the button then switches back.
-                                IconButton(
-                                    onClick = {
-                                        if (showEmojiPanel) {
-                                            showEmojiPanel = false
-                                            runCatching { composerFocus.requestFocus() }
-                                            keyboard?.show()
-                                        } else {
-                                            keyboard?.hide()
-                                            showEmojiPanel = true
-                                        }
-                                    },
-                                ) {
-                                    if (showEmojiPanel) {
-                                        Icon(Icons.Outlined.Keyboard, contentDescription = "Keyboard", tint = colors.onSurfaceVariant)
-                                    } else {
-                                        Icon(Icons.Filled.SentimentSatisfied, contentDescription = "Emoji", tint = colors.onSurfaceVariant)
+                                    ) { innerTextField ->
+                                        TextFieldDefaults.DecorationBox(
+                                            value = draft,
+                                            innerTextField = innerTextField,
+                                            enabled = true,
+                                            singleLine = false,
+                                            visualTransformation = VisualTransformation.None,
+                                            interactionSource = composerInteraction,
+                                            placeholder = { Text("Message", maxLines = 1, softWrap = false) },
+                                            colors = composerColors,
+                                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 16.dp),
+                                            container = {},
+                                        )
                                     }
                                 }
-                                IconButton(onClick = { mediaPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) }) {
-                                    Icon(imageVector = Icons.Outlined.Image, contentDescription = "Gallery", tint = colors.onSurfaceVariant)
+                                // Messages swaps the keyboard for its emoji panel; the button then switches back.
+                                val emojiButton = @Composable {
+                                    IconButton(
+                                        onClick = {
+                                            if (showEmojiPanel) {
+                                                showEmojiPanel = false
+                                                runCatching { composerFocus.requestFocus() }
+                                                keyboard?.show()
+                                            } else {
+                                                keyboard?.hide()
+                                                showEmojiPanel = true
+                                            }
+                                        },
+                                    ) {
+                                        if (showEmojiPanel) {
+                                            Icon(Icons.Outlined.Keyboard, contentDescription = "Keyboard", tint = colors.onSurfaceVariant)
+                                        } else {
+                                            Icon(Icons.Filled.SentimentSatisfied, contentDescription = "Emoji", tint = colors.onSurfaceVariant)
+                                        }
+                                    }
+                                }
+                                val galleryButton = @Composable {
+                                    IconButton(onClick = { mediaPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) }) {
+                                        Icon(imageVector = Icons.Outlined.Image, contentDescription = "Gallery", tint = colors.onSurfaceVariant)
+                                    }
+                                }
+                                if (LocalDensity.current.fontScale >= 1.5f) {
+                                    // Large font sizes: the field gets the pill's full width, the actions go under it.
+                                    Column(Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
+                                        field(Modifier.fillMaxWidth().padding(horizontal = 12.dp))
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            attachButton()
+                                            Spacer(Modifier.weight(1f))
+                                            emojiButton()
+                                            galleryButton()
+                                        }
+                                    }
+                                } else Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    attachButton()
+                                    field(Modifier.weight(1f))
+                                    emojiButton()
+                                    galleryButton()
                                 }
                             }
                         }
