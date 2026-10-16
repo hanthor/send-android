@@ -1379,17 +1379,21 @@ class MatrixRepository(context: Context) {
         return if (own) "You: $body" else body
     }
 
-    /** Re-reads one room's summary (e.g. after a read receipt) without waiting for the next list diff. */
+    /**
+     * Re-reads one room's summary (e.g. after a read receipt) without waiting for the next list diff. The summary is
+     * read under [roomEntriesLock], like list diffs are: read outside it, a summary taken just before sync applied
+     * the receipt could be published after (and over) the diff carrying the cleared count, leaving the badge stuck.
+     */
     private fun refreshRoom(roomId: String) {
         repositoryScope.launch {
-            val updated = try {
-                val room = client?.getRoom(roomId) ?: return@launch
-                room.use { toMatrixRoom(it) }
-            } catch (error: Exception) {
-                android.util.Log.w(TAG, "Could not refresh $roomId", error)
-                return@launch
-            }
             roomEntriesLock.withLock {
+                val updated = try {
+                    val room = client?.getRoom(roomId) ?: return@withLock
+                    room.use { toMatrixRoom(it) }
+                } catch (error: Exception) {
+                    android.util.Log.w(TAG, "Could not refresh $roomId", error)
+                    return@withLock
+                }
                 synchronized(roomEntries) {
                     val index = roomEntries.indexOfFirst { it.id == roomId }
                     if (index < 0) return@withLock

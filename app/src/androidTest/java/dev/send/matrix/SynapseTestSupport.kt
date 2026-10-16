@@ -14,6 +14,11 @@ import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
 import androidx.test.ext.junit.rules.ActivityScenarioRule
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeout
+import org.matrix.rustcomponents.sdk.Client
+import org.matrix.rustcomponents.sdk.Membership
+import org.matrix.rustcomponents.sdk.Room
 
 /** Disposable Synapse seeded by dev/matrix/seed-demo.sh, reached from the emulator. */
 internal const val SYNAPSE_URL = "http://10.0.2.2:8008"
@@ -22,6 +27,23 @@ internal const val BOB = "@bob:send.test"
 internal const val DEMO_PASSWORD = "local-dev-password"
 
 internal typealias SendComposeRule<A> = AndroidComposeTestRule<ActivityScenarioRule<A>, A>
+
+/**
+ * Joins [roomId] with a test client whose sync is running. The invite has to arrive through that sync first: a sync
+ * response computed before the join (typically the slow initial one) but applied after it puts the room back to
+ * "invited" for a moment, and a send in that moment fails with `SendQueueError(RoomNotJoined)`. Returns once the
+ * client sees itself joined.
+ */
+internal suspend fun Client.joinWhenSynced(roomId: String): Room {
+    withTimeout(60_000) {
+        while (getRoom(roomId)?.use { true } != true) delay(100)
+    }
+    val room = joinRoomById(roomId)
+    withTimeout(60_000) {
+        while (room.membership() != Membership.JOINED) delay(100)
+    }
+    return room
+}
 
 /** Signs Alice in through the password form unless a session is already showing the conversation list. */
 internal fun <A : ComponentActivity> SendComposeRule<A>.signInAsAliceIfNeeded() {
