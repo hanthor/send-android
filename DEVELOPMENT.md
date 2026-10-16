@@ -47,6 +47,11 @@ GitHub Actions provisions this disposable backend and runs the same real app
 flow on an Android emulator, including calls between the app and an SDK
 client (`ZZRtcCallsIntegrationTest`).
 
+Sharing into Send can be tried without another app:
+`adb shell am start -n dev.send.matrix/.ShareActivity -a android.intent.action.SEND -t text/plain --es android.intent.extra.TEXT "Hello"`.
+Conversations appear as direct-share targets in the system share sheet once
+their shortcut exists (after a message notification, or after sending there).
+
 ## UI design and screenshots
 
 - Use `app/src/main/java/dev/send/matrix/UiPreviews.kt` for static Compose previews.

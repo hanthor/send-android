@@ -481,9 +481,17 @@ internal fun ConversationSearchBar(
     }
 }
 
-/** Forward picker: Messages' list rows for every encrypted conversation except the current one. */
+/** Forward (and share) picker: Messages' list rows for the encrypted conversations in [rooms]. */
 @Composable
-internal fun ForwardScreen(rooms: List<MatrixRoom>, mutedRoomIds: Set<String>, preview: String, onPick: (MatrixRoom) -> Unit, onBack: () -> Unit) {
+internal fun ForwardScreen(
+    rooms: List<MatrixRoom>,
+    mutedRoomIds: Set<String>,
+    preview: String,
+    onPick: (MatrixRoom) -> Unit,
+    onBack: () -> Unit,
+    title: String = "Forward to",
+    emptyText: String = "No other encrypted conversations.",
+) {
     BackHandler(onBack = onBack)
     val colors = MaterialTheme.colorScheme
     Scaffold(
@@ -495,7 +503,7 @@ internal fun ForwardScreen(rooms: List<MatrixRoom>, mutedRoomIds: Set<String>, p
             ) {
                 IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
                 Column(Modifier.padding(start = 8.dp)) {
-                    Text("Forward to", style = MaterialTheme.typography.titleLarge)
+                    Text(title, style = MaterialTheme.typography.titleLarge)
                     Text(preview, style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
@@ -510,7 +518,7 @@ internal fun ForwardScreen(rooms: List<MatrixRoom>, mutedRoomIds: Set<String>, p
                 if (rooms.isEmpty()) {
                     item {
                         Text(
-                            "No other encrypted conversations.",
+                            emptyText,
                             color = colors.onSurfaceVariant,
                             modifier = Modifier.padding(horizontal = 16.dp, vertical = 24.dp),
                         )

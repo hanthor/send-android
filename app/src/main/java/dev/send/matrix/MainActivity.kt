@@ -295,12 +295,18 @@ class MainActivity : ComponentActivity() {
     val pendingConversation = mutableStateOf<String?>(null)
     /** Ring answered from the call notification or the incoming-call screen, joined by SendApp. */
     val pendingCall = mutableStateOf<PendingCall?>(null)
+    /** Content shared from another app (via [ShareActivity]), waiting for a recipient; consumed by SendApp. */
+    internal val pendingShare = mutableStateOf<SharePayload?>(null)
     private var pipController: ElementCallController? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // A recreated activity restores the conversation it showed; only a fresh launch follows the intent.
-        if (savedInstanceState == null && !acceptCall(intent)) acceptConversation(intent)
+        if (savedInstanceState == null) {
+            if (!acceptCall(intent) && !acceptConversation(intent)) acceptShare(intent)
+        } else {
+            savedInstanceState.getString(ShareTarget.EXTRA_SHARE_ID)?.let { pendingShare.value = ShareTarget.load(this, it) }
+        }
         enableEdgeToEdge()
         setContent {
             // Status/navigation bar icons follow Send's theme, which can differ from the system's.
@@ -311,6 +317,11 @@ class MainActivity : ComponentActivity() {
             }
             SendTheme { SendApp(repository, this@MainActivity) }
         }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        pendingShare.value?.let { outState.putString(ShareTarget.EXTRA_SHARE_ID, it.id) }
     }
 
     internal fun attachCallController(controller: ElementCallController) {
@@ -357,7 +368,7 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: android.content.Intent) {
         super.onNewIntent(intent)
         // Conversation and call requests are consumed into UI state, so they don't replace the launch intent.
-        if (acceptCall(intent) || acceptConversation(intent)) return
+        if (acceptCall(intent) || acceptConversation(intent) || acceptShare(intent)) return
         setIntent(intent)
         acceptSsoCallback(intent.data)
     }
@@ -366,6 +377,15 @@ class MainActivity : ComponentActivity() {
     private fun acceptConversation(intent: android.content.Intent?): Boolean {
         if (intent?.action != MessageNotifier.ACTION_OPEN_CONVERSATION) return false
         pendingConversation.value = intent.getStringExtra(MessageNotifier.EXTRA_ROOM_ID)
+        return true
+    }
+
+    /** Queues a share staged by [ShareActivity] (a newer share replaces an unsent one); false for any other intent. */
+    private fun acceptShare(intent: android.content.Intent?): Boolean {
+        if (intent?.action != ShareTarget.ACTION_SHARE) return false
+        val share = intent.getStringExtra(ShareTarget.EXTRA_SHARE_ID)?.let { ShareTarget.load(this, it) } ?: return true
+        pendingShare.value?.takeIf { it.id != share.id }?.let { ShareTarget.discard(this, it.id) }
+        pendingShare.value = share
         return true
     }
 
@@ -667,6 +687,7 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
                 user = ""
                 password = ""
                 signedIn = false
+                activity.pendingShare.value = null
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Exception) {
@@ -835,6 +856,8 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
                             try {
                                 repository.sendText(currentTimeline, currentRoom, sentText, replyTo?.id)
                                 if (drafts[roomId] == sentText) drafts = drafts - roomId
+                                // Recently messaged conversations are offered in the system share sheet.
+                                rooms.firstOrNull { it.id == roomId }?.let { MessageNotifier.publishConversationShortcut(activity, it.id, it.name, it.dmUserId) }
                             } catch (cancelled: CancellationException) {
                                 throw cancelled
                             } catch (failure: Exception) { error = failure.message ?: "Message could not be sent." }
@@ -1002,7 +1025,7 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
             val shownForward = remember { mutableStateOf<List<MatrixMessage>?>(null) }.apply { if (forwardTarget != null) value = forwardTarget }
             AnimatedVisibility(visible = forwardTarget != null && timeline != null, enter = SendMotion.openEnter, exit = SendMotion.closeExit) {
                 ForwardScreen(
-                    rooms = rooms.filter { it.encrypted && it.id != activeRoomId && (it.dmUserId == null || it.dmUserId !in ignoredUsers) },
+                    rooms = encryptedTargets(rooms, ignoredUsers, exclude = activeRoomId),
                     mutedRoomIds = mutedRoomIds,
                     preview = shownForward.value?.let { picked -> picked.singleOrNull()?.let(::messagePreviewText) ?: "${picked.size} messages" }.orEmpty(),
                     onPick = { target ->
@@ -1022,6 +1045,39 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
                         }
                     },
                     onBack = { forwarding = null },
+                )
+            }
+            // Shared from another app: once signed in, pick an encrypted conversation (or the direct-share one) and
+            // confirm; the content goes out through the encrypted send paths and that conversation opens.
+            val share = activity.pendingShare.value
+            if (share != null && sessionLive) {
+                ShareFlow(
+                    share = share,
+                    rooms = encryptedTargets(rooms, ignoredUsers),
+                    mutedRoomIds = mutedRoomIds,
+                    onSend = { target ->
+                        activity.pendingShare.value = null
+                        scope.launch {
+                            error = ""
+                            pendingUploads += 1
+                            try {
+                                openConversation(target.id, target.name, target.direct)
+                                repository.sendShared(checkNotNull(timeline), checkNotNull(room), share.text, share.files)
+                                MessageNotifier.publishConversationShortcut(activity, target.id, target.name, target.dmUserId)
+                            } catch (cancelled: CancellationException) {
+                                throw cancelled
+                            } catch (failure: Exception) {
+                                error = failure.message ?: "Couldn't share to ${target.name}."
+                            } finally {
+                                pendingUploads -= 1
+                                ShareTarget.discard(activity, share.id)
+                            }
+                        }
+                    },
+                    onDiscard = {
+                        activity.pendingShare.value = null
+                        ShareTarget.discard(activity, share.id)
+                    },
                 )
             }
             // Account menu → Settings (and its Devices page) and the account card's Profile; like Archived they
