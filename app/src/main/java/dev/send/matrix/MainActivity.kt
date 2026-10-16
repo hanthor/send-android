@@ -536,6 +536,18 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
         recoveryState == RecoveryState.INCOMPLETE -> "Enter recovery key"
         else -> null
     }
+    // Wide windows (tablets, unfolded foldables) show the list beside the open conversation; see AdaptiveScreenHost.
+    val paneWidth = listPaneWidth()
+    val twoPane = paneWidth != null
+    /**
+     * Beside the list, full-width pages (Settings, Archived, …) give way when a conversation opens so it shows; on
+     * one pane they only step aside while it is open (see their visibility below).
+     */
+    fun showConversationBesideList() {
+        if (twoPane) {
+            showSettings = false; showDevices = false; showProfile = false; showArchived = false; showBlocked = false
+        }
+    }
     /** Opens [roomId] (encrypted rooms only); title and kind come from the list when known, else from the SDK. */
     suspend fun openConversation(roomId: String, title: String?, direct: Boolean?) {
         val selectedRoom = repository.openEncryptedRoom(roomId)
@@ -547,6 +559,7 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
         activeRoomId = roomId
         roomTitle = title ?: selectedRoom.displayName().orEmpty().ifBlank { roomId }
         activeRoomIsDirect = direct ?: repository.isDirectRoom(selectedRoom)
+        showConversationBesideList()
     }
     // Notification tap or conversation shortcut: open that conversation once the session is live.
     val requestedConversation = activity.pendingConversation.value
@@ -580,7 +593,12 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
             }
         }
     }
-    val openFromList: (MatrixRoom) -> Unit = { selected ->
+    val openFromList: (MatrixRoom) -> Unit = open@{ selected ->
+        // Beside the list the open conversation's row (in the list or Archived) just shows it as it is.
+        if (selected.id == activeRoomId && timeline != null) {
+            showConversationBesideList()
+            return@open
+        }
         scope.launch {
             error = ""
             try {
@@ -592,13 +610,20 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
             }
         }
     }
+    /** Leaves the open conversation for the list. */
+    fun closeConversation() {
+        room?.let { left -> repository.setTyping(left, false) }
+        room = null; timeline = null; activeRoomId = ""; roomTitle = ""; activeRoomIsDirect = false; error = ""
+    }
     // Archive, pin, unread and delete are tags/flags/membership on each room; block is the account's ignore list.
+    // Beside the list, archiving, deleting or blocking the open conversation there closes it, as from its details.
     val listActions = remember(repository) {
         ConversationListActions(
             setArchived = { picked, archived ->
                 listAction(if (archived) "Conversation could not be archived." else "Conversation could not be unarchived.") {
                     repository.setArchived(picked.map { it.id }, archived)
                 }
+                if (archived && picked.any { it.id == activeRoomId }) closeConversation()
             },
             setPinned = { picked, pinned ->
                 listAction(if (pinned) "Conversation could not be pinned." else "Conversation could not be unpinned.") {
@@ -617,14 +642,13 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
             },
             delete = { picked ->
                 listAction("Conversation could not be deleted.") { repository.deleteConversations(picked.map { it.id }) }
+                if (picked.any { it.id == activeRoomId }) closeConversation()
             },
-            block = { userId -> listAction("$userId could not be blocked.") { repository.blockUser(userId) } },
+            block = { userId ->
+                listAction("$userId could not be blocked.") { repository.blockUser(userId) }
+                if (rooms.firstOrNull { it.id == activeRoomId }?.dmUserId == userId) closeConversation()
+            },
         )
-    }
-    /** Leaves the open conversation for the list. */
-    fun closeConversation() {
-        room?.let { left -> repository.setTyping(left, false) }
-        room = null; timeline = null; activeRoomId = ""; roomTitle = ""; activeRoomIsDirect = false; error = ""
     }
     // Conversation details act on the open room; archive, delete and blocking the DM's person return to the list.
     val detailsActions = remember(activeRoomId) {
@@ -779,7 +803,49 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
         // element keys through the close transition.
         val shownRoomId = remember { mutableStateOf(activeRoomId) }.apply { if (activeRoomId.isNotBlank()) value = activeRoomId }.value
         val shownTitle = remember { mutableStateOf(roomTitle) }.apply { if (roomTitle.isNotBlank()) value = roomTitle }.value
-        SendScreenHost(screen) { target ->
+        // The conversation list: the list screen on one pane, the start pane beside the conversation on two.
+        val conversationList: @Composable () -> Unit = {
+            HomeScreen(
+                rooms = rooms,
+                mutedRoomIds = mutedRoomIds,
+                blockedUserIds = ignoredUsers,
+                listActions = listActions,
+                onOpen = openFromList,
+                error = error,
+                notice = notice,
+                creatingDirectRoom = activeJob?.isActive == true,
+                onCreateDirectRoom = { matrixUserId ->
+                    error = ""
+                    notice = "Creating encrypted conversation…"
+                    activeJob = scope.launch {
+                        try {
+                            repository.createEncryptedDirectRoom(matrixUserId)
+                            notice = "Encrypted conversation created."
+                        } catch (failure: Exception) {
+                            error = failure.message ?: "Conversation could not be created."
+                        }
+                    }
+                },
+                onCreateGroup = { name, members ->
+                    error = ""
+                    notice = "Creating encrypted group…"
+                    activeJob = scope.launch {
+                        try {
+                            repository.createEncryptedGroup(name, members)
+                            notice = "Encrypted group created."
+                        } catch (failure: Exception) {
+                            error = failure.message ?: "Group could not be created."
+                        }
+                    }
+                },
+                onAccount = { showAccount = true },
+                onVerifyDevice = if (verificationState == VerificationState.UNVERIFIED && hasDevicesToVerifyAgainst) {
+                    { showSecurity = true }
+                } else null,
+                openRoomId = activeRoomId.takeIf { twoPane && it.isNotBlank() },
+            )
+        }
+        AdaptiveScreenHost(screen, paneWidth, list = conversationList) { target ->
         when (target) {
             0 -> Column(
                 Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing),
@@ -837,7 +903,8 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
                     }
                 }
             )
-            3 -> ConversationScreen(
+            // Keyed by room: beside the list another conversation can open in place of this one.
+            else -> androidx.compose.runtime.key(shownRoomId) { ConversationScreen(
                 // The list entry follows renames (here or by others); the title from opening covers new rooms.
                 title = rooms.firstOrNull { it.id == shownRoomId }?.name ?: shownTitle,
                 isDirect = activeRoomIsDirect,
@@ -978,45 +1045,7 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
                 detailsRefreshKey = rooms.firstOrNull { it.id == activeRoomId },
                 sounds = sounds,
                 sharedKey = shownRoomId,
-            )
-            else -> HomeScreen(
-                rooms = rooms,
-                mutedRoomIds = mutedRoomIds,
-                blockedUserIds = ignoredUsers,
-                listActions = listActions,
-                onOpen = openFromList,
-                error = error,
-                notice = notice,
-                creatingDirectRoom = activeJob?.isActive == true,
-                onCreateDirectRoom = { matrixUserId ->
-                    error = ""
-                    notice = "Creating encrypted conversation…"
-                    activeJob = scope.launch {
-                        try {
-                            repository.createEncryptedDirectRoom(matrixUserId)
-                            notice = "Encrypted conversation created."
-                        } catch (failure: Exception) {
-                            error = failure.message ?: "Conversation could not be created."
-                        }
-                    }
-                },
-                onCreateGroup = { name, members ->
-                    error = ""
-                    notice = "Creating encrypted group…"
-                    activeJob = scope.launch {
-                        try {
-                            repository.createEncryptedGroup(name, members)
-                            notice = "Encrypted group created."
-                        } catch (failure: Exception) {
-                            error = failure.message ?: "Group could not be created."
-                        }
-                    }
-                },
-                onAccount = { showAccount = true },
-                onVerifyDevice = if (verificationState == VerificationState.UNVERIFIED && hasDevicesToVerifyAgainst) {
-                    { showSecurity = true }
-                } else null,
-            )
+            ) }
         }
         }
         if (signedIn) {
@@ -1080,9 +1109,11 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
                     },
                 )
             }
-            // Account menu → Settings (and its Devices page) and the account card's Profile; like Archived they
-            // step aside while a conversation opened from them is on screen.
-            AnimatedVisibility(visible = showSettings && timeline == null, enter = SendMotion.openEnter, exit = SendMotion.closeExit) {
+            // Account menu → Settings (and its Devices page) and the account card's Profile open full-width. On one
+            // pane they, like Archived, step aside while a conversation opened from them is on screen; beside the
+            // list they show over it (opening a conversation there closes them, see openConversation).
+            val pagesShown = timeline == null || twoPane
+            AnimatedVisibility(visible = showSettings && pagesShown, enter = SendMotion.openEnter, exit = SendMotion.closeExit) {
                 SettingsScreen(
                     notificationSummary = notificationSummary(activity, notificationsOn, pushStatus),
                     onNotifications = { showNotifications = true },
@@ -1101,14 +1132,14 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
                     onBack = { showSettings = false },
                 )
             }
-            AnimatedVisibility(visible = showDevices && timeline == null, enter = SendMotion.openEnter, exit = SendMotion.closeExit) {
+            AnimatedVisibility(visible = showDevices && pagesShown, enter = SendMotion.openEnter, exit = SendMotion.closeExit) {
                 DevicesScreen(
                     load = repository::devices,
                     signOut = { deviceId, password, session -> repository.signOutDevice(deviceId, password, session) },
                     onBack = { showDevices = false },
                 )
             }
-            AnimatedVisibility(visible = showProfile && timeline == null, enter = SendMotion.openEnter, exit = SendMotion.closeExit) {
+            AnimatedVisibility(visible = showProfile && pagesShown, enter = SendMotion.openEnter, exit = SendMotion.closeExit) {
                 ProfileScreen(
                     userId = account?.userId.orEmpty(),
                     profile = ownProfile,
@@ -1118,8 +1149,8 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
                     onBack = { showProfile = false },
                 )
             }
-            // Account menu → Archived; hidden (not closed) while a conversation opened from it is on screen.
-            AnimatedVisibility(visible = showArchived && timeline == null, enter = SendMotion.openEnter, exit = SendMotion.closeExit) {
+            // Account menu → Archived; on one pane hidden (not closed) while a conversation opened from it is on screen.
+            AnimatedVisibility(visible = showArchived && pagesShown, enter = SendMotion.openEnter, exit = SendMotion.closeExit) {
                 ArchivedScreen(
                     rooms = archivedConversations(rooms, ignoredUsers),
                     mutedRoomIds = mutedRoomIds,
@@ -1696,6 +1727,8 @@ internal fun HomeScreen(
     blockedUserIds: Set<String> = emptySet(),
     /** Swipe-to-archive, long-press selection and its bar; without them rows only open. */
     listActions: ConversationListActions? = null,
+    /** The conversation open beside the list (two panes); its row is highlighted. */
+    openRoomId: String? = null,
 ) {
     var showingNewChat by rememberSaveable { mutableStateOf(false) }
     var matrixUserId by rememberSaveable { mutableStateOf("") }
@@ -1804,7 +1837,7 @@ internal fun HomeScreen(
                     )
                 }
             } else {
-                managedConversationRows(visibleRooms, mutedRoomIds, listState, listActions, archivedView = false, onOpen = onOpen)
+                managedConversationRows(visibleRooms, mutedRoomIds, listState, listActions, archivedView = false, onOpen = onOpen, openRoomId = openRoomId)
             }
         }
         }
@@ -2037,6 +2070,8 @@ internal fun ConversationRow(
     lifted: Boolean = false,
     /** TalkBack's equivalents of the row's gestures (swipe to archive), offered in its actions menu. */
     accessibilityActions: List<androidx.compose.ui.semantics.CustomAccessibilityAction> = emptyList(),
+    /** Open beside the list (two panes): tonal row, announced as selected. */
+    open: Boolean = false,
 ) {
     val context = LocalContext.current
     val colors = MaterialTheme.colorScheme
@@ -2050,6 +2085,7 @@ internal fun ConversationRow(
                 when {
                     selected -> colors.surfaceContainer
                     lifted -> colors.surfaceContainerHigh
+                    open -> colors.secondaryContainer
                     else -> colors.surface
                 },
             )
@@ -2060,7 +2096,8 @@ internal fun ConversationRow(
                 onLongClick = onLongClick,
             )
             .semantics {
-                if (onLongClick != null) this.selected = selected
+                // Picked in selection mode, or (two panes) the conversation open beside the list.
+                this.selected = selected || open
                 if (accessibilityActions.isNotEmpty()) customActions = accessibilityActions
             }
             .padding(horizontal = 8.dp, vertical = 10.dp),
