@@ -186,6 +186,8 @@ internal fun LazyListScope.managedConversationRows(
     actions: ConversationListActions?,
     archivedView: Boolean,
     onOpen: (MatrixRoom) -> Unit,
+    /** The conversation open beside the list (two panes), highlighted. */
+    openRoomId: String? = null,
 ) {
     items(rooms, key = { it.id }) { room ->
         val selecting = state.selecting
@@ -199,6 +201,7 @@ internal fun LazyListScope.managedConversationRows(
                     room = room,
                     muted = room.id in mutedRoomIds,
                     selected = room.id in state.selectedIds,
+                    open = room.id == openRoomId,
                     lifted = lifted,
                     onClick = { if (selecting) state.toggle(room) else onOpen(room) },
                     onLongClick = if (actions != null) ({ state.toggle(room) }) else null,

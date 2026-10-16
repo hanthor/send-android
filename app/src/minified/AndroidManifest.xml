@@ -1,0 +1,9 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- Large-screen fixture tests only (test build): keeps running through `wm size` / `wm density`. -->
+        <activity
+            android:name=".LargeScreenFixtureActivity"
+            android:exported="false"
+            android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|uiMode|density" />
+    </application>
+</manifest>
