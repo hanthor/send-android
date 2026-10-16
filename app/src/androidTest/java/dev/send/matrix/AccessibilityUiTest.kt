@@ -10,8 +10,7 @@ import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.assertTouchHeightIsAtLeast
-import androidx.compose.ui.test.assertTouchWidthIsAtLeast
+import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createComposeRule
@@ -195,7 +194,16 @@ class AccessibilityUiTest {
     }
 
     private fun assertTarget(description: String) {
-        composeRule.onNodeWithContentDescription(description).assertTouchHeightIsAtLeast(48.dp).assertTouchWidthIsAtLeast(48.dp)
+        composeRule.onNodeWithContentDescription(description).assertTouchTarget(description, width = true)
+    }
+
+    /** The node's touch bounds (including Compose's minimum touch-target expansion) are at least 48dp tall (and wide). */
+    private fun SemanticsNodeInteraction.assertTouchTarget(name: String, width: Boolean = false) {
+        val node = fetchSemanticsNode()
+        val min = with(node.layoutInfo.density) { 48.dp.toPx() } - 0.5f
+        val bounds = node.touchBoundsInRoot
+        assertTrue("\"$name\" touch target is ${bounds.height}px tall, under 48dp ($min px)", bounds.height >= min)
+        if (width) assertTrue("\"$name\" touch target is ${bounds.width}px wide, under 48dp ($min px)", bounds.width >= min)
     }
 
     private fun SemanticsNode.label(): String = listOfNotNull(
@@ -231,7 +239,7 @@ class AccessibilityUiTest {
         listOf("Send", "Maya", "Family", "Start chat").forEach(::assertShownWhole)
         assertTarget("Search")
         assertTarget("Account")
-        composeRule.onNode(hasText("Maya") and hasClickAction()).assertTouchHeightIsAtLeast(48.dp)
+        composeRule.onNode(hasText("Maya") and hasClickAction()).assertTouchTarget("Maya row")
         // Unread count, pinned and muted are read with the row.
         composeRule.onNode(hasText("Maya") and hasClickAction()).fetchSemanticsNode().label().let { assertTrue(it, "2 unread" in it) }
         composeRule.onNode(hasText("Family") and hasClickAction()).fetchSemanticsNode().label().let { assertTrue(it, "Pinned" in it) }
@@ -268,7 +276,7 @@ class AccessibilityUiTest {
         showSettings(ThemeChoice.Light, fontScale = 2f)
         listOf("Settings", "Choose theme", "Hear outgoing and incoming message sounds").forEach(::assertShownWhole)
         assertTarget("Back")
-        composeRule.onNode(hasText("Choose theme") and hasClickAction()).assertTouchHeightIsAtLeast(48.dp)
+        composeRule.onNode(hasText("Choose theme") and hasClickAction()).assertTouchTarget("Choose theme row")
         assertClickablesLabelled()
         composeRule.auditShot("a11y-font200-settings")
     }
