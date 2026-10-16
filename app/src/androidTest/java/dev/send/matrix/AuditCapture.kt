@@ -21,6 +21,11 @@ internal fun ComposeTestRule.auditShot(name: String) {
     }
     val instrumentation = InstrumentationRegistry.getInstrumentation()
     val device = UiDevice.getInstance(instrumentation)
+    // Tests that copy text leave SystemUI's clipboard overlay on screen; it isn't part of Send.
+    device.findObject(androidx.test.uiautomator.By.res("com.android.systemui", "dismiss_button"))?.let {
+        it.click()
+        device.waitForIdle(1_000)
+    }
     val shot = File(instrumentation.targetContext.cacheDir, "send-$name-device.png")
     check(device.takeScreenshot(shot))
     writeAuditDownload("send-$name-device.png", "image/png") { out -> shot.inputStream().use { it.copyTo(out) } }
