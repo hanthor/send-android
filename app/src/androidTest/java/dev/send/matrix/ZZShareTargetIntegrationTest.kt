@@ -134,13 +134,14 @@ class ZZShareTargetIntegrationTest {
         assertTrue("Sent before confirming: ${bobState()}", bobEvents.values.none { it.roomId == roomId })
         composeRule.auditShot("live-share-confirm")
         composeRule.onNode(hasText("Send") and hasClickAction()).performClick()
-
-        waitFor("Bob to receive the shared text", 90_000, ::bobState) { bobEvents.values.any { it.roomId == roomId && it.body == text } }
-        waitFor("Bob to receive the shared image", 90_000, ::bobState) {
+        // The send runs in the app's composition scope, which the v2 rule only advances while it waits: use waitForUi.
+        waitForUi("Bob to receive the shared text", 90_000, ::bobState) { bobEvents.values.any { it.roomId == roomId && it.body == text } }
+        waitForUi("Bob to receive the shared image", 90_000, ::bobState) {
             bobEvents.values.any { it.roomId == roomId && it.image && it.body == imageName }
         }
         waitForUi("the conversation open", 60_000, ::screenState) { NotificationRouter.visibleRoomId == roomId }
-        waitFor("the staged copies to be deleted", 30_000, { "share=${context.cacheDir.resolve("share").list()?.toList()}" }) {
+        // Deleted after the send and the shortcut push, so the shortcut is in place once they are gone.
+        waitForUi("the staged copies to be deleted", 30_000, { "share=${context.cacheDir.resolve("share").list()?.toList()}" }) {
             context.cacheDir.resolve("share").list().isNullOrEmpty()
         }
 
