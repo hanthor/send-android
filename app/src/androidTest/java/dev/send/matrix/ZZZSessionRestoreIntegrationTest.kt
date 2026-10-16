@@ -43,6 +43,7 @@ class ZZZSessionRestoreIntegrationTest {
         val repository = MatrixRepository.get(context)
         composeRule.waitUntil(timeoutMillis = 60_000) { repository.account.value != null }
         val deviceId = checkNotNull(repository.account.value).deviceId
+        val userId = checkNotNull(repository.account.value).userId
 
         // An encrypted message from before the restart.
         val message = "Sent before the restart ${System.currentTimeMillis()}"
@@ -71,6 +72,9 @@ class ZZZSessionRestoreIntegrationTest {
         runBlocking { repository.close() }
         assertNull(repository.account.value)
         assertTrue(repository.joinedRooms.value.isEmpty())
+        // The store on disk is encrypted with the Keystore-wrapped key: the SDK's SQLite stores encrypt values
+        // (the file header stays SQLite's), so no user ID, room name or message text is readable in them.
+        assertStoreHasNoPlaintext(listOf(userId, GROUP_NAME, message))
 
         // Cold start through MainActivity: same session (not a new login), sync resumes, rooms come back.
         composeRule.activityRule.scenario.recreate()
@@ -104,6 +108,37 @@ class ZZZSessionRestoreIntegrationTest {
         composeRule.waitUntil(timeoutMillis = 30_000) {
             composeRule.onAllNodesWithText("Get started").fetchSemanticsNodes().isNotEmpty()
         }
+
+        // A store from a build that wrote it unencrypted can't be opened with the key: restore discards it
+        // with the saved session, and the next start is a new sign-in.
+        composeRule.signInAsAlice()
+        runBlocking { repository.close() }
+        val store = context.filesDir.resolve(MatrixRepository.STORE_DIR)
+        assertTrue(store.resolve(MatrixRepository.LEGACY_UNENCRYPTED_STORE_DIR).mkdirs())
+        assertFalse(runBlocking { repository.restore() })
+        assertFalse(store.exists())
+        assertTrue(context.getSharedPreferences("matrix_session_locator", Context.MODE_PRIVATE).all.isEmpty())
+    }
+
+    private fun assertStoreHasNoPlaintext(needles: List<String>) {
+        val files = context.filesDir.resolve(MatrixRepository.STORE_DIR).walkTopDown().filter { it.isFile }.toList()
+        assertTrue(
+            "No SDK store files in ${MatrixRepository.STORE_DATA_DIR}: ${files.map { it.path }}",
+            files.any { it.parentFile?.name == MatrixRepository.STORE_DATA_DIR && it.name.endsWith(".sqlite3") },
+        )
+        val found = files.flatMap { file ->
+            val bytes = file.readBytes()
+            needles.filter { needle -> bytes.indexOf(needle.toByteArray()) >= 0 }.map { "${file.name}: $it" }
+        }
+        assertTrue("Plaintext in the store: $found", found.isEmpty())
+    }
+
+    private fun ByteArray.indexOf(needle: ByteArray): Int {
+        outer@ for (start in 0..size - needle.size) {
+            for (offset in needle.indices) if (this[start + offset] != needle[offset]) continue@outer
+            return start
+        }
+        return -1
     }
 
     private companion object {
