@@ -21,7 +21,6 @@ import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
-import androidx.compose.ui.test.performTextReplacement
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.UiDevice
@@ -109,7 +108,9 @@ class LargeScreenUiTest {
     fun tabletShowsListBesideConversation() {
         // 1280×800dp (the emulator's display tops out at 1920px a side, so sizes stay within it).
         display(1920, 1200, 240)
-        composeRule.setContent { SendTheme(ThemeChoice.Light) { LargeScreenFixture(rooms, chat) } }
+        // A saved draft rather than typing: with the keyboard up at this `wm size`/density the CI emulator's keyboard
+        // (which still sees the physical 320×640 display) leaves the composer off-screen; the fold test types.
+        composeRule.setContent { SendTheme(ThemeChoice.Light) { LargeScreenFixture(rooms, chat, mapOf(rooms[0].id to "See you at 7")) } }
         waitForPanes(true)
         // Nothing open: the list beside a quiet placeholder.
         composeRule.onNode(hasTestTag(NO_CONVERSATION_TAG)).assertIsDisplayed()
@@ -119,9 +120,6 @@ class LargeScreenUiTest {
         composeRule.onNode(row("Maya") and inListPane).performClick()
         composeRule.onNode(hasText("Message number 39 from Maya") and inDetailPane).assertIsDisplayed()
         composeRule.onNode(row("Maya") and inListPane).assertIsSelected()
-        // SetText without focusing: with the keyboard up at this `wm size`/density the CI emulator reports the composer
-        // off-screen (its keyboard sees the physical 320×640 display); the fold test covers typing with the keyboard.
-        composeRule.onNode(composer and inDetailPane).performTextReplacement("See you at 7")
         composeRule.onNode(hasText("See you at 7") and composer and inDetailPane).assertIsDisplayed()
         composeRule.auditShot("tablet-list-detail")
 
@@ -210,9 +208,9 @@ class LargeScreenUiTest {
  * room, per-room drafts, open from a row and back to the list, the open row highlighted beside the list.
  */
 @Composable
-private fun LargeScreenFixture(rooms: List<MatrixRoom>, messages: List<MatrixMessage>) {
+private fun LargeScreenFixture(rooms: List<MatrixRoom>, messages: List<MatrixMessage>, savedDrafts: Map<String, String> = emptyMap()) {
     var openId by remember { mutableStateOf<String?>(null) }
-    var drafts by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    var drafts by remember { mutableStateOf(savedDrafts) }
     // Like SendApp, the leaving conversation keeps its room through the close transition.
     val shown = remember { mutableStateOf<MatrixRoom?>(null) }.apply { openId?.let { id -> value = rooms.first { it.id == id } } }.value
     val paneWidth = listPaneWidth()
