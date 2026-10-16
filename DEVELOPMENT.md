@@ -54,6 +54,10 @@ client (`ZZRtcCallsIntegrationTest`).
   CI captures fixture sign-in visuals and live Synapse conversations at the
   emulator's full resolution, then uploads them with the APK and test reports.
 - CI cannot resolve `matrix.reilly.asia`; production SSO is not tested.
+- `docs/accessibility.md` holds the TalkBack/touch-target conventions and the
+  WCAG contrast table for both themes; `AccessibilityUiTest` checks 200% font
+  scale, 48dp targets and labels, and captures the `dark-*` screens. Recompute
+  the table when a colour token changes.
 
 ## Google Messages comparison
 

@@ -25,6 +25,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
@@ -479,7 +483,7 @@ internal fun ConversationScreen(
                 // Messages: back, avatar, title only, call, overflow. Body is a rounded sheet below.
                 else -> Surface(color = colors.surfaceContainer, modifier = Modifier.statusBarsPadding()) {
                     Row(
-                        modifier = Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 4.dp),
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(horizontal = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         IconButton(onClick = onBack) {
@@ -487,7 +491,7 @@ internal fun ConversationScreen(
                         }
                         // Messages: tapping the contact's avatar or name opens the conversation's details.
                         Row(
-                            modifier = Modifier.weight(1f).height(56.dp).clip(RoundedCornerShape(28.dp))
+                            modifier = Modifier.weight(1f).heightIn(min = 56.dp).clip(RoundedCornerShape(28.dp))
                                 .clickable(enabled = details != null, onClickLabel = "Details") {
                                     showEmojiPanel = false
                                     showDetails = true
@@ -884,7 +888,8 @@ internal fun ConversationScreen(
                                         shape = RoundedCornerShape(12.dp),
                                         color = colors.surfaceContainerLow,
                                         tonalElevation = 1.dp,
-                                        modifier = Modifier.padding(horizontal = 20.dp).offset(y = (-8).dp),
+                                        modifier = Modifier.padding(horizontal = 20.dp).offset(y = (-8).dp)
+                                            .semantics(mergeDescendants = true) { contentDescription = "Reactions" },
                                     ) {
                                         Text(
                                             message.reactions.joinToString(" "),
@@ -1098,7 +1103,12 @@ private fun MessageItem(
         reportBounds(parts.values.toList())
     }
     val shape = bubbleShape(message.own, isFirstInGroup, isLastInGroup)
-    SwipeToReply(enabled = swipeEnabled && actions.reply, onReply = onReply) {
+    val replyEnabled = swipeEnabled && actions.reply
+    // TalkBack can't swipe a bubble: Reply is also a custom action on it (long-press opens the full action bar).
+    val a11yActions = if (replyEnabled) {
+        Modifier.semantics { customActions = listOf(CustomAccessibilityAction("Reply") { onReply(); true }) }
+    } else Modifier
+    SwipeToReply(enabled = replyEnabled, onReply = onReply) {
         Box(
             Modifier
                 .fillMaxWidth()
@@ -1134,6 +1144,7 @@ private fun MessageItem(
                                     playback = playback,
                                     onLongPress = onLongPress,
                                     onOpenVisual = onOpenVisual.takeIf { attachment.kind == AttachmentKind.Image || attachment.kind == AttachmentKind.Video },
+                                    modifier = a11yActions,
                                 ) }
                             }
                         }
@@ -1149,7 +1160,7 @@ private fun MessageItem(
                                 onQuoteClick = onQuote,
                                 query = query,
                                 loadLinkPreview = loadLinkPreview,
-                                bubbleModifier = Modifier.part(2),
+                                bubbleModifier = Modifier.part(2).then(a11yActions),
                             )
                         }
                     }
@@ -1161,7 +1172,7 @@ private fun MessageItem(
 
 @OptIn(ExperimentalFoundationApi::class)
 private fun Modifier.combinedClickableCompat(onClick: () -> Unit, onLongClick: () -> Unit): Modifier =
-    combinedClickable(onClick = onClick, onLongClick = onLongClick)
+    combinedClickable(onClickLabel = "Show time", onClick = onClick, onLongClickLabel = "Select message", onLongClick = onLongClick)
 
 private fun dayHeaderLabel(context: android.content.Context, timestampMillis: Long): String {
     // Messages: time only for today, otherwise "Tuesday, Oct 6 • 4:46 PM".
@@ -1214,7 +1225,8 @@ fun MessageBubble(
             contentColor = content,
             border = if (query.isNotBlank() && annotated.spanStyles.isNotEmpty()) BorderStroke(1.dp, colors.tertiary) else null,
             // Tap reveals the message's time/status (as in Messages); long-press selects it for actions.
-            modifier = bubbleModifier.widthIn(max = 280.dp).combinedClickable(onClick = onClick, onLongClick = onLongPress),
+            modifier = bubbleModifier.widthIn(max = 280.dp)
+                .combinedClickable(onClickLabel = "Show time", onClick = onClick, onLongClickLabel = "Select message", onLongClick = onLongPress),
         ) {
             Column(Modifier.padding(horizontal = if (replyTo != null || preview != null) 6.dp else 0.dp, vertical = if (replyTo != null || preview != null) 6.dp else 0.dp)) {
                 if (replyTo != null) {

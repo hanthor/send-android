@@ -204,8 +204,8 @@ internal fun ConversationDetailsScreen(
                             FilledTonalIconButton(
                                 onClick = { avatarPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
                                 enabled = !busy,
-                                modifier = Modifier.align(Alignment.BottomEnd).offset(x = 6.dp, y = 6.dp).size(36.dp),
-                            ) { Icon(Icons.Outlined.CameraAlt, contentDescription = "Change group photo", modifier = Modifier.size(20.dp)) }
+                                modifier = Modifier.align(Alignment.BottomEnd).offset(x = 6.dp, y = 6.dp).size(48.dp),
+                            ) { Icon(Icons.Outlined.CameraAlt, contentDescription = "Change group photo") }
                         }
                     }
                     Spacer(Modifier.height(16.dp))

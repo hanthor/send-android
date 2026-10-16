@@ -75,6 +75,8 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
@@ -193,6 +195,8 @@ internal fun AttachmentBubble(
     onLongPress: () -> Unit,
     /** Opens a photo or video in the in-app viewer; without it they open in another app. */
     onOpenVisual: (() -> Unit)? = null,
+    /** Applied to the clickable media element itself (TalkBack custom actions). */
+    modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -219,7 +223,11 @@ internal fun AttachmentBubble(
             shape = shape,
             loadMedia = loadMedia,
             busy = busy,
-            modifier = Modifier.combinedClickable(onClick = { if (onOpenVisual != null) onOpenVisual() else open() }, onLongClick = onLongPress),
+            modifier = modifier.combinedClickable(
+                onClick = { if (onOpenVisual != null) onOpenVisual() else open() },
+                onLongClickLabel = "Select message",
+                onLongClick = onLongPress,
+            ),
         )
         AttachmentKind.Voice, AttachmentKind.Audio -> AudioRow(
             messageId = messageId,
@@ -229,13 +237,14 @@ internal fun AttachmentBubble(
             loadMedia = loadMedia,
             playback = playback,
             onLongPress = onLongPress,
+            modifier = modifier,
         )
         AttachmentKind.File -> FileRow(
             attachment = attachment,
             isFromMe = isFromMe,
             shape = shape,
             busy = busy,
-            modifier = Modifier.combinedClickable(onClick = ::open, onLongClick = onLongPress),
+            modifier = modifier.combinedClickable(onClick = ::open, onLongClickLabel = "Select message", onLongClick = onLongPress),
         )
     }
 }
@@ -375,6 +384,7 @@ private fun AudioRow(
     loadMedia: MediaLoader,
     playback: VoicePlayback,
     onLongPress: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -407,7 +417,12 @@ private fun AudioRow(
         shape = shape,
         color = container,
         contentColor = content,
-        modifier = Modifier.widthIn(max = 280.dp).combinedClickable(onClick = ::toggle, onLongClick = onLongPress),
+        modifier = modifier.widthIn(max = 280.dp).combinedClickable(
+            onClickLabel = if (playing) "Pause" else "Play",
+            onClick = ::toggle,
+            onLongClickLabel = "Select message",
+            onLongClick = onLongPress,
+        ),
     ) {
         Row(Modifier.padding(start = 8.dp, end = 16.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(
@@ -548,6 +563,9 @@ internal fun VoiceRecordButton(
                     contentDescription = "Voice message"
                     role = Role.Button
                     onClick(label = "Hold to record") { tap(); true }
+                    // TalkBack can't hold and slide: this starts the recording already locked, so the recorder
+                    // panel's stop/attach and the composer's send button finish it.
+                    customActions = listOf(CustomAccessibilityAction("Record hands-free") { if (start()) lock(); true })
                 }
                 .pointerInput(Unit) {
                     val slop = 48.dp.toPx()

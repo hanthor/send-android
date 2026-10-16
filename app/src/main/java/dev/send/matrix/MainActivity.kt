@@ -20,6 +20,9 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.browser.customtabs.CustomTabsIntent
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
@@ -177,15 +180,18 @@ import io.element.android.call.api.ElementCallController
 /** A typing notice lapses after this long without changes to the draft. */
 private const val TYPING_IDLE_MILLIS = 5_000L
 
-// Messages-style contact avatars: saturated solid fills with a white glyph.
+// Messages-style contact avatars: saturated solid fills with a white glyph. Each fill is the darker Google tone
+// of Messages' hue so the white initial keeps WCAG AA contrast (≥4.5:1, see docs/accessibility.md).
 private val AvatarColors = listOf(
-    Color(0xFF4285F4), Color(0xFF5BB974), Color(0xFFFCC934), Color(0xFFEE675C),
-    Color(0xFFAF5CF7), Color(0xFF4ECDE6), Color(0xFFFA903E), Color(0xFFFF63B8),
+    Color(0xFF1967D2), Color(0xFF188038), Color(0xFFB06000), Color(0xFFD93025),
+    Color(0xFF9334E6), Color(0xFF007B83), Color(0xFFB55400), Color(0xFFD01884),
 )
 
 // Static palette measured from Google Messages on the comparison emulator (cool
 // neutral surfaces, tonal-blue accents, pink voice button). Messages does not
-// follow the wallpaper there, so neither does Send.
+// follow the wallpaper there, so neither does Send. Tokens Messages doesn't show (secondary, tertiary, outline,
+// error, background, inverse) come from the same tonal-blue scheme instead of M3's purple baseline, so dark and
+// light stay one family; docs/accessibility.md lists the contrast of every text pair.
 private val GoogleLightColors = lightColorScheme(
     primary = Color(0xFF415F91),
     onPrimary = Color(0xFFFFFFFF),
@@ -202,6 +208,25 @@ private val GoogleLightColors = lightColorScheme(
     surfaceContainer = Color(0xFFEDEDF4),
     surfaceContainerHigh = Color(0xFFE3E5ED),
     surfaceContainerHighest = Color(0xFFDDDFE7),
+    surfaceContainerLowest = Color(0xFFFFFFFF),
+    surfaceDim = Color(0xFFD9D9E0),
+    surfaceBright = Color(0xFFF9F9FF),
+    surfaceVariant = Color(0xFFE0E2EC),
+    background = Color(0xFFF9F9FF),
+    onBackground = Color(0xFF191C20),
+    secondary = Color(0xFF565F71),
+    onSecondary = Color(0xFFFFFFFF),
+    tertiary = Color(0xFF705575),
+    onTertiary = Color(0xFFFFFFFF),
+    outline = Color(0xFF74777F),
+    outlineVariant = Color(0xFFC4C6D0),
+    error = Color(0xFFBA1A1A),
+    onError = Color(0xFFFFFFFF),
+    errorContainer = Color(0xFFFFDAD6),
+    onErrorContainer = Color(0xFF93000A),
+    inverseSurface = Color(0xFF2E3036),
+    inverseOnSurface = Color(0xFFF0F0F7),
+    inversePrimary = Color(0xFFAAC7FF),
 )
 private val GoogleDarkColors = darkColorScheme(
     primary = Color(0xFFAAC7FF),
@@ -219,6 +244,25 @@ private val GoogleDarkColors = darkColorScheme(
     surfaceContainer = Color(0xFF1D2024),
     surfaceContainerHigh = Color(0xFF282A2F),
     surfaceContainerHighest = Color(0xFF33353A),
+    surfaceContainerLowest = Color(0xFF0C0E13),
+    surfaceDim = Color(0xFF111318),
+    surfaceBright = Color(0xFF37393E),
+    surfaceVariant = Color(0xFF44474E),
+    background = Color(0xFF111318),
+    onBackground = Color(0xFFE2E2E9),
+    secondary = Color(0xFFBDC7DC),
+    onSecondary = Color(0xFF273141),
+    tertiary = Color(0xFFDDBCE0),
+    onTertiary = Color(0xFF3F2844),
+    outline = Color(0xFF8E9099),
+    outlineVariant = Color(0xFF44474E),
+    error = Color(0xFFFFB4AB),
+    onError = Color(0xFF690005),
+    errorContainer = Color(0xFF93000A),
+    onErrorContainer = Color(0xFFFFDAD6),
+    inverseSurface = Color(0xFFE2E2E9),
+    inverseOnSurface = Color(0xFF2E3036),
+    inversePrimary = Color(0xFF415F91),
 )
 
 /** Whether Send draws dark: Settings → Choose theme, or the system's night mode for "System default". */
@@ -1293,7 +1337,7 @@ private fun OnboardingSetupStep(
             IconButton(
                 onClick = onBack,
                 enabled = !busy,
-                modifier = Modifier.size(40.dp).clip(CircleShape).background(colors.surfaceContainerHigh),
+                modifier = Modifier.size(48.dp).clip(CircleShape).background(colors.surfaceContainerHigh),
             ) {
                 Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = colors.onSurface)
             }
@@ -1619,7 +1663,7 @@ internal fun HomeScreen(
         } else {
             // Messages: plain top bar — wordmark left, search + account right; no pill.
             Row(
-                modifier = Modifier.fillMaxWidth().statusBarsPadding().height(64.dp).padding(start = 16.dp, end = 4.dp),
+                modifier = Modifier.fillMaxWidth().statusBarsPadding().heightIn(min = 64.dp).padding(start = 16.dp, end = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 if (searching) {
@@ -1646,6 +1690,7 @@ internal fun HomeScreen(
                         text = "Send",
                         style = MaterialTheme.typography.titleLarge.copy(fontSize = 22.sp),
                         color = colors.onSurfaceVariant,
+                        maxLines = 1,
                         modifier = Modifier.weight(1f),
                     )
                     IconButton(onClick = { searching = true }) {
@@ -1934,6 +1979,8 @@ internal fun ConversationRow(
     onLongClick: (() -> Unit)? = null,
     /** Being swiped: Messages lifts the row onto a tinted pill above the archive track. */
     lifted: Boolean = false,
+    /** TalkBack's equivalents of the row's gestures (swipe to archive), offered in its actions menu. */
+    accessibilityActions: List<androidx.compose.ui.semantics.CustomAccessibilityAction> = emptyList(),
 ) {
     val context = LocalContext.current
     val colors = MaterialTheme.colorScheme
@@ -1950,7 +1997,16 @@ internal fun ConversationRow(
                     else -> colors.surface
                 },
             )
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+            .combinedClickable(
+                onClickLabel = if (onLongClick != null && selected) "Deselect" else null,
+                onClick = onClick,
+                onLongClickLabel = if (onLongClick != null) (if (selected) "Deselect" else "Select") else null,
+                onLongClick = onLongClick,
+            )
+            .semantics {
+                if (onLongClick != null) this.selected = selected
+                if (accessibilityActions.isNotEmpty()) customActions = accessibilityActions
+            }
             .padding(horizontal = 8.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
