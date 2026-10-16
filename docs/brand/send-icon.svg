@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Send app icon, source of truth (original artwork, AGPL-3.0-only like the rest of Send): a white speech
+  bubble carrying a "send" arrow, on Send's primary colour.
+  108x108 adaptive-icon canvas: everything sits inside the 66-unit safe zone (r=33 around 54,54).
+  res/drawable/ic_launcher_background.xml, ic_launcher_foreground.xml and ic_launcher_monochrome.xml mirror
+  these paths; the store PNGs are rendered from this file and send-feature-graphic.svg with rsvg-convert
+  (DEVELOPMENT.md, "Store listing").
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="108" height="108" viewBox="0 0 108 108">
+  <rect id="background" width="108" height="108" fill="#415F91"/>
+  <g id="foreground">
+    <path id="bubble" fill="#FFFFFF"
+        d="M42,30H66A14,14 0 0 1 80,44V58A14,14 0 0 1 66,72H46L34,80L33,68.7A14,14 0 0 1 28,58V44A14,14 0 0 1 42,30Z"/>
+    <path id="arrow" fill="none" stroke="#415F91" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"
+        d="M41,51H65M55,41L65,51L55,61"/>
+  </g>
+</svg>
