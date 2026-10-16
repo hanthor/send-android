@@ -15,6 +15,7 @@ import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
@@ -179,7 +180,10 @@ class AccessibilityUiTest {
 
     private fun onMain(block: () -> Unit) = InstrumentationRegistry.getInstrumentation().runOnMainSync(block)
 
-    /** [text] is on screen, inside the window horizontally, and laid out without clipping or ellipsis. */
+    /**
+     * [text] is on screen, inside the window horizontally, not cut by an ancestor's clip, and laid out whole: no
+     * ellipsized line, no line dropped by maxLines and no line wider than the text's own box.
+     */
     private fun assertShownWhole(text: String) {
         val interaction = composeRule.onNodeWithText(text, useUnmergedTree = true)
         interaction.assertIsDisplayed()
@@ -187,10 +191,23 @@ class AccessibilityUiTest {
         val root = composeRule.onRoot().fetchSemanticsNode().boundsInRoot
         val bounds = node.boundsInRoot
         assertTrue("\"$text\" sticks out of the screen: $bounds in $root", bounds.left >= root.left - 1f && bounds.right <= root.right + 1f)
+        assertTrue(
+            "\"$text\" is cut by its container: visible $bounds, laid out ${node.size}",
+            bounds.height >= node.size.height - 1f && bounds.width >= node.size.width - 1f,
+        )
         val layouts = mutableListOf<TextLayoutResult>()
         onMain { node.config.getOrNull(SemanticsActions.GetTextLayoutResult)?.action?.invoke(layouts) }
         assertTrue("\"$text\" has no text layout", layouts.isNotEmpty())
-        layouts.forEach { assertTrue("\"$text\" is clipped or ellipsized at this font scale", !it.hasVisualOverflow) }
+        layouts.forEach { layout ->
+            val paragraph = layout.multiParagraph
+            val diagnostics = "lines=${layout.lineCount} exceeded=${paragraph.didExceedMaxLines} paragraph=${paragraph.width}x${paragraph.height} " +
+                "size=${layout.size} constraints=${layout.layoutInput.constraints} fontSize=${layout.layoutInput.style.fontSize}"
+            assertTrue("\"$text\" loses lines at this font scale: $diagnostics", !paragraph.didExceedMaxLines)
+            for (line in 0 until layout.lineCount) {
+                assertTrue("\"$text\" is ellipsized at this font scale: $diagnostics", !layout.isLineEllipsized(line))
+                assertTrue("\"$text\" line $line is wider than its box: $diagnostics", layout.getLineRight(line) <= layout.size.width + 1f)
+            }
+        }
     }
 
     private fun assertTarget(description: String) {
@@ -301,7 +318,7 @@ class AccessibilityUiTest {
             }.isSuccess
             if (opened) break
         }
-        composeRule.onNodeWithText("Cabin trip, 14–16 Nov").assertIsDisplayed()
+        composeRule.onAllNodesWithText("Cabin trip, 14–16 Nov").onFirst().assertIsDisplayed()
         assertTarget("Change group photo")
         composeRule.auditShot("dark-details")
     }
