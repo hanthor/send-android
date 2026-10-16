@@ -93,7 +93,8 @@ read-only copy to the app you pick. Those apps have their own policies.
 - **Matrix data.** The Matrix SDK keeps its databases (rooms, messages, your
   encryption keys) in Send's private app storage. Their contents are
   encrypted with a random key that is itself encrypted by an AES-GCM key held
-  in Android Keystore.
+  in Android Keystore. Table and entry names stay readable, and one of them
+  in the encryption database contains your own Matrix ID.
 - **Your session.** Your access token, user ID, device ID and homeserver are
   saved encrypted with the same Keystore key, so Send can reopen your account
   after a restart.
