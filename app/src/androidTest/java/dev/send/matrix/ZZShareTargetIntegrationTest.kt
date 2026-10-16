@@ -218,7 +218,7 @@ class ZZShareTargetIntegrationTest {
             val sync = client.syncService().finish()
             bobSync = sync
             sync.start()
-            val room = client.joinRoomById(roomId)
+            val room = client.joinWhenSynced(roomId)
             bobRooms[roomId] = room
             val timeline = room.timeline()
             bobTimelines[roomId] = timeline

@@ -5,7 +5,7 @@ import androidx.compose.ui.test.ComposeTimeoutException
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
@@ -248,7 +248,7 @@ class ZZConversationActionsIntegrationTest {
             bobSync = sync
             sync.start()
             for (roomId in roomIds) {
-                val room = client.joinRoomById(roomId)
+                val room = client.joinWhenSynced(roomId)
                 bobRooms[roomId] = room
                 val timeline = room.timeline()
                 bobTimelines[roomId] = timeline

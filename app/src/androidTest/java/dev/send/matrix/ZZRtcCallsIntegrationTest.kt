@@ -8,10 +8,11 @@ import android.service.notification.StatusBarNotification
 import android.util.Log
 import androidx.compose.ui.test.ComposeTimeoutException
 import androidx.compose.ui.test.hasText
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.lifecycle.Lifecycle
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -214,7 +215,17 @@ class ZZRtcCallsIntegrationTest {
                 composeRule.onAllNodesWithText("Call declined").fetchSemanticsNodes().isNotEmpty()
         }
 
-        // 4. The conversation shows the three calls as call rows from the real events.
+        // 4. The conversation shows the three calls as call rows from the real events. The first ring can sit before
+        // the page the timeline loaded when Answer opened the conversation (call memberships, declines and the later
+        // rings fill it), so older history is loaded the way a user would: ⋮ → Load older messages.
+        var olderLoads = 0
+        while (repository.messages.value.none { it.id == firstRing } && olderLoads++ < 5) {
+            composeRule.onNodeWithContentDescription("More options").performClick()
+            composeRule.onNodeWithText("Load older messages").performClick()
+            runCatching {
+                composeRule.waitUntil(timeoutMillis = 10_000) { repository.messages.value.any { it.id == firstRing } }
+            }
+        }
         waitForUi("call rows in the conversation", 60_000, ::callState) {
             val messages = repository.messages.value.mapNotNull { it.call }
             messages.count { it.declined } >= 2 && messages.any { it.answered && it.durationMillis != null } &&
@@ -258,7 +269,7 @@ class ZZRtcCallsIntegrationTest {
             val sync = client.syncService().finish()
             bobSync = sync
             sync.start()
-            val room = client.joinRoomById(roomId)
+            val room = client.joinWhenSynced(roomId)
             bobRoom = room
             val timeline = room.timeline()
             bobTimeline = timeline
