@@ -36,6 +36,9 @@ fun requiredSigningEnv(name: String): String =
 android {
     namespace = "dev.send.matrix"
     compileSdk = 37
+    // The NDK only provides llvm-strip here (Send has no native code of its own): with it AGP strips debug symbols
+    // from the bundled .so files. CI installs this exact version (android.yml, release.yml).
+    ndkVersion = "29.0.14206865"
 
     defaultConfig {
         applicationId = "dev.send.matrix"
@@ -72,11 +75,38 @@ android {
             matchingFallbacks += listOf("release")
         }
     }
+    // Per-ABI APKs for sideloading from GitHub Releases, plus a universal one; release.yml passes -PsendAbiSplits=true.
+    // Off by default so debug keeps its single app-debug.apk. All split APKs share the tag's versionCode (they are not
+    // published to a store side by side). AGP can't build the AAB with splits on, so release.yml builds it in a second
+    // invocation without the property; Play splits the AAB per device itself.
+    splits {
+        abi {
+            isEnable = providers.gradleProperty("sendAbiSplits").map { it.toBoolean() }.getOrElse(false)
+            reset()
+            include("arm64-v8a", "armeabi-v7a", "x86_64")
+            isUniversalApk = true
+        }
+    }
     testBuildType = providers.gradleProperty("sendTestBuildType").getOrElse("debug")
     buildFeatures { compose = true }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+    }
+}
+
+androidComponents {
+    onVariants { variant ->
+        if (variant.buildType != "debug") {
+            // Release (and the minified test copy of it): ship arm64-v8a, armeabi-v7a and x86_64 only. 32-bit x86 has
+            // no matrix-rtc-android core (calls could never work) and no minSdk 34 device needs it; JNA also brings
+            // libjnidispatch.so for armeabi, mips and mips64, which Android no longer runs. Applies to APKs and AAB.
+            variant.packaging.jniLibs.excludes.addAll("lib/x86/**", "lib/armeabi/**", "lib/mips/**", "lib/mips64/**")
+            // Compress the native libraries inside the APKs (the Rust SDK and RTC cores are ~100 MB per ABI
+            // uncompressed); the device extracts them on install. APKs Play generates from the AAB keep AGP's default
+            // (uncompressed, page-aligned), since useLegacyPackagingFromBundle stays unset.
+            variant.packaging.jniLibs.useLegacyPackaging.set(true)
+        }
     }
 }
 
