@@ -15,7 +15,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -202,6 +202,15 @@ internal fun LazyListScope.managedConversationRows(
                     lifted = lifted,
                     onClick = { if (selecting) state.toggle(room) else onOpen(room) },
                     onLongClick = if (actions != null) ({ state.toggle(room) }) else null,
+                    // TalkBack can't swipe the row: the same archive is a custom action.
+                    accessibilityActions = if (actions != null && !selecting) {
+                        listOf(
+                            androidx.compose.ui.semantics.CustomAccessibilityAction(if (archivedView) "Unarchive" else "Archive") {
+                                state.archive(listOf(room), archived = !archivedView, actions)
+                                true
+                            },
+                        )
+                    } else emptyList(),
                 )
             }
         }
@@ -296,7 +305,7 @@ internal fun ConversationSelectionBar(
     val colors = MaterialTheme.colorScheme
     var showMenu by remember { mutableStateOf(false) }
     Surface(color = colors.surfaceContainer, modifier = Modifier.statusBarsPadding()) {
-        Row(Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = state::clearSelection) { Icon(Icons.Filled.Close, contentDescription = "Close") }
             Text(
                 selected.size.toString(),
@@ -573,7 +582,7 @@ internal fun StarredMessagesScreen(
 @Composable
 internal fun ListScreenTopBar(title: String, onBack: () -> Unit) {
     Row(
-        modifier = Modifier.fillMaxWidth().statusBarsPadding().height(64.dp).padding(horizontal = 4.dp),
+        modifier = Modifier.fillMaxWidth().statusBarsPadding().heightIn(min = 64.dp).padding(horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
