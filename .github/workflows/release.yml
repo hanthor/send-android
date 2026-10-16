@@ -1,0 +1,286 @@
+name: Release
+
+# Builds the R8-optimized release APK and AAB for a v* tag, signs them, runs the instrumentation suite on the R8
+# `minified` build type, and publishes a GitHub Release. See DEVELOPMENT.md, "Releases".
+on:
+  push:
+    tags: ['v*']
+    branches: [phase8-release-build] # TEMPORARY while iterating; removed before merge
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  BUILD_TOOLS: '37.0.0'
+
+defaults:
+  run:
+    # bash -eo pipefail: a failing apksigner/jarsigner/aapt2 in a pipeline fails the step.
+    shell: bash
+
+jobs:
+  release-build:
+    name: Build, sign and verify release APK and AAB
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.dist.outputs.version }}
+      official: ${{ steps.signing.outputs.official }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Gradle derives the version from `git describe` when this isn't a tag build (workflow_dispatch).
+          fetch-depth: 0
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v4
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Install Android API 37 SDK
+        run: sdkmanager 'platforms;android-37.2' "build-tools;$BUILD_TOOLS"
+      - name: Prepare signing key
+        id: signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.SEND_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.SEND_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.SEND_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.SEND_KEY_PASSWORD }}
+          LC_ALL: C.UTF-8
+        run: |
+          keystore="$RUNNER_TEMP/send-release.keystore"
+          if [ -n "$KEYSTORE_BASE64$KEYSTORE_PASSWORD$KEY_ALIAS$KEY_PASSWORD" ]; then
+            if [ -z "$KEYSTORE_BASE64" ] || [ -z "$KEYSTORE_PASSWORD" ] || [ -z "$KEY_ALIAS" ] || [ -z "$KEY_PASSWORD" ]; then
+              echo "::error::Set all four secrets SEND_KEYSTORE_BASE64, SEND_KEYSTORE_PASSWORD, SEND_KEY_ALIAS and SEND_KEY_PASSWORD, or none of them."
+              exit 1
+            fi
+            printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$keystore"
+            {
+              echo "SEND_KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD"
+              echo "SEND_KEY_ALIAS=$KEY_ALIAS"
+              echo "SEND_KEY_PASSWORD=$KEY_PASSWORD"
+            } >> "$GITHUB_ENV"
+            echo "official=true" >> "$GITHUB_OUTPUT"
+            echo "Signing with the release key from the repository secrets."
+          else
+            # No release key configured: sign with a key that exists only for this run. Such builds can't be
+            # updated by (or update) any other Send build and must never be distributed.
+            password="$(openssl rand -hex 24)"
+            echo "::add-mask::$password"
+            keytool -genkeypair -noprompt -keystore "$keystore" -storetype PKCS12 \
+              -alias send-ci-throwaway -keyalg RSA -keysize 4096 -validity 3650 \
+              -storepass "$password" -keypass "$password" \
+              -dname "CN=Send CI throwaway – NOT FOR DISTRIBUTION, O=Send CI"
+            {
+              echo "SEND_KEYSTORE_PASSWORD=$password"
+              echo "SEND_KEY_ALIAS=send-ci-throwaway"
+              echo "SEND_KEY_PASSWORD=$password"
+            } >> "$GITHUB_ENV"
+            echo "official=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::No release signing secrets are set; signing with a throwaway CI key. These builds are UNOFFICIAL and NOT FOR DISTRIBUTION."
+          fi
+          echo "SEND_KEYSTORE_FILE=$keystore" >> "$GITHUB_ENV"
+      - name: Build release APK and AAB (R8)
+        run: |
+          version_arg=()
+          if [ "$GITHUB_REF_TYPE" = tag ]; then version_arg=("-PsendVersion=$GITHUB_REF_NAME"); fi
+          ./gradlew --no-daemon "-Dorg.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1g" "${version_arg[@]}" \
+            :app:assembleRelease :app:bundleRelease
+      - name: Remove signing key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/send-release.keystore"
+      - name: Verify signatures, version and network policy
+        run: |
+          bt="$ANDROID_HOME/build-tools/$BUILD_TOOLS"
+          apk=app/build/outputs/apk/release/app-release.apk
+          aab=app/build/outputs/bundle/release/app-release.aab
+          "$bt/apksigner" verify --verbose --print-certs "$apk" | tee "$RUNNER_TEMP/apksigner.txt"
+          jarsigner -verify -certs "$aab" | tee "$RUNNER_TEMP/jarsigner.txt"
+          grep -q '^jar verified\.' "$RUNNER_TEMP/jarsigner.txt"
+          keytool -printcert -jarfile "$aab"
+          # Version contract: the tag's versionName/versionCode made it into the APK.
+          badging="$("$bt/aapt2" dump badging "$apk")"
+          package_line="$(sed -n 1p <<< "$badging")"
+          echo "$package_line"
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            grep -q "versionName='${GITHUB_REF_NAME#v}'" <<< "$package_line"
+          fi
+          # The release build must not allow cleartext HTTP or the local-Synapse shortcut (debug/minified only).
+          resources="$("$bt/aapt2" dump resources "$apk")"
+          nsc="$(awk '/xml\/network_security_config/ { found = 1; next } found && /\(file\)/ && !done { print $3; done = 1 }' <<< "$resources")"
+          test -n "$nsc"
+          "$bt/aapt2" dump xmltree --file "$nsc" "$apk" | tee "$RUNNER_TEMP/nsc.txt"
+          if grep -q 'domain-config' "$RUNNER_TEMP/nsc.txt" || grep -q 'cleartextTrafficPermitted.*true' "$RUNNER_TEMP/nsc.txt"; then
+            echo "::error::The release network security config allows cleartext traffic."
+            exit 1
+          fi
+          local_flag="$(awk '/bool\/allow_local_dev_homeserver/ && !done { getline; print $2; done = 1 }' <<< "$resources")"
+          echo "allow_local_dev_homeserver=$local_flag"
+          test "$local_flag" = false
+      - name: Collect release files
+        id: dist
+        env:
+          OFFICIAL: ${{ steps.signing.outputs.official }}
+        run: |
+          bt="$ANDROID_HOME/build-tools/$BUILD_TOOLS"
+          apk=app/build/outputs/apk/release/app-release.apk
+          package_line="$("$bt/aapt2" dump badging "$apk" | sed -n 1p)"
+          version="$(sed -E "s/.*versionName='([^']*)'.*/\1/" <<< "$package_line")"
+          code="$(sed -E "s/.*versionCode='([^']*)'.*/\1/" <<< "$package_line")"
+          suffix=""
+          if [ "$OFFICIAL" != true ]; then suffix="-UNOFFICIAL-ci-signed"; fi
+          base="Send-$version$suffix"
+          mkdir -p dist notes
+          cp "$apk" "dist/$base.apk"
+          cp app/build/outputs/bundle/release/app-release.aab "dist/$base.aab"
+          cp app/build/outputs/mapping/release/mapping.txt "dist/$base-mapping.txt"
+          (cd dist && sha256sum -- * > SHA256SUMS.txt)
+          ls -l dist
+          cert="$(grep -m1 'certificate SHA-256 digest' "$RUNNER_TEMP/apksigner.txt" | sed -E 's/.*digest: //')"
+          dn="$(grep -m1 'certificate DN' "$RUNNER_TEMP/apksigner.txt" | sed -E 's/.*DN: //')"
+          {
+            if [ "$OFFICIAL" != true ]; then
+              echo '> [!CAUTION]'
+              echo '> **UNOFFICIAL CI-SIGNED BUILD. NOT FOR DISTRIBUTION.**'
+              echo '> No release signing key is configured for this repository, so CI signed these files with a throwaway key'
+              echo '> that existed only for this workflow run. No later Send build can update this install (Android would'
+              echo '> require uninstalling it and losing its data), and these files must not be published to a store or'
+              echo '> shared as an official release. The `-UNOFFICIAL-ci-signed` file names say the same.'
+              echo
+            fi
+            echo "Send $version (versionCode $code)."
+            echo
+            changelog="fastlane/metadata/android/en-US/changelogs/$code.txt"
+            if [ -f "$changelog" ]; then
+              echo '## Changes'
+              echo
+              cat "$changelog"
+              echo
+            fi
+            echo '## Files'
+            echo
+            echo '| File | SHA-256 |'
+            echo '| --- | --- |'
+            while read -r sum file; do echo "| \`$file\` | \`$sum\` |"; done < dist/SHA256SUMS.txt
+            echo
+            echo "The APK is universal (arm64-v8a, armeabi-v7a, x86, x86_64); the AAB is for app stores. The mapping file"
+            echo "turns R8-obfuscated crash stack traces back into readable ones (\`retrace\`)."
+            echo
+            echo "Signing certificate: \`$dn\`, SHA-256 \`$cert\`."
+            echo
+            echo "Built, signature-checked and tested (full instrumentation suite on the R8 \`minified\` build) by"
+            echo "[workflow run $GITHUB_RUN_ID]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)."
+          } > notes/release-notes.md
+          cat notes/release-notes.md
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Upload release files
+        uses: actions/upload-artifact@v4
+        with:
+          name: Send-release
+          path: |
+            dist/
+            notes/
+          if-no-files-found: error
+          retention-days: 30
+
+  minified-instrumentation:
+    name: Instrumentation suite on the R8 minified build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v4
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Install Android API 37 SDK
+        run: sdkmanager 'platforms;android-37.2' "build-tools;$BUILD_TOOLS"
+      - name: Start disposable local Synapse and MatrixRTC backend
+        run: |
+          # Same backend as android.yml: the emulator reaches this host as 10.0.2.2, and MatrixRTC hands that
+          # address out (LiveKit URL, lk-jwt-service), so the host answers on it as well.
+          sudo ip addr add 10.0.2.2/32 dev lo
+          docker compose -f dev/matrix/compose.yaml config --quiet
+          docker compose -f dev/matrix/compose.yaml run --rm synapse generate
+          docker compose -f dev/matrix/compose.yaml up -d
+          ready=
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:8008/_matrix/client/versions >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 2
+          done
+          if [ -z "$ready" ]; then docker compose -f dev/matrix/compose.yaml logs synapse; exit 1; fi
+      - name: Seed demo Matrix accounts
+        run: dev/matrix/seed-demo.sh
+      - name: Check MatrixRTC backend
+        run: dev/matrix/check-rtc.sh
+      - name: Assemble the minified app and its tests (R8, release rules)
+        run: ./gradlew --no-daemon "-Dorg.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1g" -PsendTestBuildType=minified :app:assembleMinified :app:assembleMinifiedAndroidTest
+      - name: Enable Android emulator KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Run the instrumentation suite on the minified build
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          disable-animations: true
+          script: ./gradlew --no-daemon "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g" -PsendTestBuildType=minified :app:connectedMinifiedAndroidTest; status=$?; mkdir -p /tmp/send-ui-screenshots/all; adb pull /storage/emulated/0/Download/Send/. /tmp/send-ui-screenshots/all/ || true; exit $status
+      - name: Upload instrumentation results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Send-Minified-Test-Results
+          path: |
+            app/build/reports/androidTests/connected/**
+            app/build/outputs/androidTest-results/connected/**
+            app/build/outputs/mapping/minified/mapping.txt
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Send-Minified-UI-Screenshots
+          path: /tmp/send-ui-screenshots/all/send-*
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Show backend logs
+        if: failure()
+        run: docker compose -f dev/matrix/compose.yaml logs --tail 400 synapse federation livekit lk-jwt-service
+      - name: Stop disposable local Synapse backend
+        if: always()
+        run: docker compose -f dev/matrix/compose.yaml down
+
+  publish:
+    name: Publish GitHub Release
+    needs: [release-build, minified-instrumentation]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: Send-release
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.release-build.outputs.version }}
+          OFFICIAL: ${{ needs.release-build.outputs.official }}
+        run: |
+          title="Send $VERSION"
+          if [ "$OFFICIAL" != true ]; then title="$title (UNOFFICIAL CI-signed, not for distribution)"; fi
+          prerelease=()
+          case "$GITHUB_REF_NAME" in *-rc.*) prerelease=(--prerelease) ;; esac
+          gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "$title" --notes-file notes/release-notes.md "${prerelease[@]}"
