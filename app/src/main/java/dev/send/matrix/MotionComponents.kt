@@ -39,11 +39,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.hapticfeedback.HapticFeedback
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import android.view.HapticFeedbackConstants
+import android.view.View
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CancellationException
@@ -304,16 +304,18 @@ internal const val INCOMING_START_SCALE = 0.8f
 // ---- Swipe gestures --------------------------------------------------------------------------------------------
 
 /**
- * Threshold feedback shared by swipe-to-reply and swipe-to-archive: a `GestureThresholdActivate` tick crossing the
- * threshold, `GestureThresholdDeactivate` crossing back.
+ * Threshold feedback shared by swipe-to-reply and swipe-to-archive: `GESTURE_THRESHOLD_ACTIVATE` crossing the
+ * threshold, `GESTURE_THRESHOLD_DEACTIVATE` crossing back (the platform pair; Compose only maps the first).
  */
-internal class SwipeThreshold(private val haptics: HapticFeedback) {
+internal class SwipeThreshold(private val view: View) {
     var armed by mutableStateOf(false)
         private set
 
     fun update(nowArmed: Boolean) {
         if (nowArmed == armed) return
-        haptics.performHapticFeedback(if (nowArmed) HapticFeedbackType.GestureThresholdActivate else HapticFeedbackType.GestureThresholdDeactivate)
+        view.performHapticFeedback(
+            if (nowArmed) HapticFeedbackConstants.GESTURE_THRESHOLD_ACTIVATE else HapticFeedbackConstants.GESTURE_THRESHOLD_DEACTIVATE,
+        )
         armed = nowArmed
     }
 
@@ -323,6 +325,6 @@ internal class SwipeThreshold(private val haptics: HapticFeedback) {
 
 @Composable
 internal fun rememberSwipeThreshold(): SwipeThreshold {
-    val haptics = LocalHapticFeedback.current
-    return remember(haptics) { SwipeThreshold(haptics) }
+    val view = LocalView.current
+    return remember(view) { SwipeThreshold(view) }
 }
