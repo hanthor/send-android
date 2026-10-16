@@ -21,6 +21,7 @@ import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTextReplacement
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.UiDevice
@@ -118,8 +119,9 @@ class LargeScreenUiTest {
         composeRule.onNode(row("Maya") and inListPane).performClick()
         composeRule.onNode(hasText("Message number 39 from Maya") and inDetailPane).assertIsDisplayed()
         composeRule.onNode(row("Maya") and inListPane).assertIsSelected()
-        composeRule.onNode(composer and inDetailPane).performTextInput("See you at 7")
-        settle()
+        // SetText without focusing: with the keyboard up at this `wm size`/density the CI emulator reports the composer
+        // off-screen (its keyboard sees the physical 320×640 display); the fold test covers typing with the keyboard.
+        composeRule.onNode(composer and inDetailPane).performTextReplacement("See you at 7")
         composeRule.onNode(hasText("See you at 7") and composer and inDetailPane).assertIsDisplayed()
         composeRule.auditShot("tablet-list-detail")
 
