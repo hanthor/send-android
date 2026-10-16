@@ -6,7 +6,6 @@ import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.provider.OpenableColumns
-import android.content.pm.ApplicationInfo
 import android.util.Base64
 import java.net.URI
 import java.security.KeyStore
@@ -1199,6 +1198,7 @@ class MatrixRepository(context: Context) {
         wipeLocalSession()
         PushRegistration.onSignedOut(appContext)
         MessageNotifier.clearAll(appContext)
+        ShareTarget.clearAll(appContext)
         NotificationRouter.onSignedOut(appContext)
     }
 
@@ -2116,20 +2116,27 @@ class MatrixRepository(context: Context) {
      */
     suspend fun sendAttachment(timeline: Timeline, room: Room, uri: Uri) = withContext(Dispatchers.IO) {
         check(room.isEncrypted()) { "Attachments are disabled because this room is not encrypted." }
-        val resolver = appContext.contentResolver
-        val mimetype = resolver.getType(uri) ?: "application/octet-stream"
-        val displayName = resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
-            if (cursor.moveToFirst()) cursor.getString(0) else null
-        }
         // A per-send directory keeps the original file name, which the SDK uses as the event body.
         val workDir = appContext.cacheDir.resolve("outgoing/${java.util.UUID.randomUUID()}").apply { mkdirs() }
         try {
-            val file = File(workDir, safeFileName(displayName ?: uri.lastPathSegment ?: "attachment"))
-            val input = resolver.openInputStream(uri) ?: error("The selected file could not be read.")
-            input.use { source -> file.outputStream().use { source.copyTo(it) } }
-            sendFileAttachment(timeline, file, mimetype, workDir)
+            val picked = copyToCache(appContext, uri, workDir)
+            sendFileAttachment(timeline, picked.file, picked.mimeType, workDir)
         } finally {
             workDir.deleteRecursively()
+        }
+    }
+
+    /**
+     * Sends a share the user confirmed: its text, then each staged copy through the attachment path (m.image /
+     * m.video with a thumbnail, or m.file). The caller deletes the staged copies.
+     */
+    internal suspend fun sendShared(timeline: Timeline, room: Room, text: String?, files: List<SharedFile>) = withContext(Dispatchers.IO) {
+        check(room.isEncrypted()) { "Sharing is disabled because this room is not encrypted." }
+        if (!text.isNullOrBlank()) sendText(timeline, room, text)
+        for (shared in files) {
+            // Thumbnails go beside the copy, not over a shared file that happens to be called thumbnail.jpg.
+            val workDir = (shared.file.parentFile ?: appContext.cacheDir).resolve("work").apply { mkdirs() }
+            sendFileAttachment(timeline, shared.file, shared.mimeType, workDir)
         }
     }
 
@@ -2274,8 +2281,10 @@ class MatrixRepository(context: Context) {
 
     private fun normalizeHomeserverUrl(value: String): String {
         val url = URI(value.trim())
+        // Plain-HTTP local Synapse (DEVELOPMENT.md): only debug and the test-only `minified` build set this flag,
+        // alongside their cleartext network security config. Release builds never accept it.
         val localDebugHomeserver =
-            (appContext.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0 &&
+            appContext.resources.getBoolean(R.bool.allow_local_dev_homeserver) &&
             url.scheme == "http" &&
             url.port == 8008 &&
             when (url.host?.lowercase()) {

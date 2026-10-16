@@ -29,6 +29,37 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="dev.send.matrix" android:host="sso" android:path="/callback" />
             </intent-filter>
+            <!-- Direct share: the share-target declaration matched by the conversation shortcuts' share category. -->
+            <meta-data android:name="android.app.shortcuts" android:resource="@xml/shortcuts" />
+        </activity>
+        <!-- Receives ACTION_SEND / ACTION_SEND_MULTIPLE (and direct-share) shares: copies the content while it holds
+             the sender's read grant, then hands it to MainActivity in Send's own task for recipient confirmation. -->
+        <activity
+            android:name=".ShareActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|uiMode">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/*" />
+                <data android:mimeType="image/*" />
+                <data android:mimeType="video/*" />
+                <data android:mimeType="audio/*" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/*" />
+                <data android:mimeType="image/*" />
+                <data android:mimeType="video/*" />
+                <data android:mimeType="audio/*" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
         </activity>
         <!-- UnifiedPush: the connector binds this service to deliver endpoints and push messages. -->
         <service android:name=".notifications.SendPushService" android:exported="false">
