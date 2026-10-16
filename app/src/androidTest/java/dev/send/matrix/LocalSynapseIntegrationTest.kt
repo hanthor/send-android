@@ -2,7 +2,7 @@ package dev.send.matrix
 
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.assertCountEquals
@@ -264,7 +264,7 @@ class ZLocalSynapseIntegrationTest {
 
     private fun joinReceiverRoom(roomId: String, message: String) {
         runBlocking(Dispatchers.IO) {
-            val room = checkNotNull(receiverClient).joinRoomById(roomId)
+            val room = checkNotNull(receiverClient).joinWhenSynced(roomId)
             val timeline = room.timeline()
             receiverTimeline = timeline
             receiverTimelineHandle = timeline.addListener(object : TimelineListener {
