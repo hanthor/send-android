@@ -2117,7 +2117,7 @@ class MatrixRepository(context: Context) {
      * Sends a share the user confirmed: its text, then each staged copy through the attachment path (m.image /
      * m.video with a thumbnail, or m.file). The caller deletes the staged copies.
      */
-    suspend fun sendShared(timeline: Timeline, room: Room, text: String?, files: List<SharedFile>) = withContext(Dispatchers.IO) {
+    internal suspend fun sendShared(timeline: Timeline, room: Room, text: String?, files: List<SharedFile>) = withContext(Dispatchers.IO) {
         check(room.isEncrypted()) { "Sharing is disabled because this room is not encrypted." }
         if (!text.isNullOrBlank()) sendText(timeline, room, text)
         for (shared in files) {
