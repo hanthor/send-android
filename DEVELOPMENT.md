@@ -139,8 +139,10 @@ for download size:
 - AGP strips the bundled `.so` files with the NDK pinned in `android.ndkVersion`
   (CI installs that version); the upstream libraries already ship stripped, so
   this mainly guards future dependencies.
-- Google Play takes the AAB (`.aab`), which ignores the split settings: Play
-  builds per-device APKs from it itself.
+- Google Play takes the AAB (`.aab`) and builds per-device APKs from it itself.
+  AGP can't bundle while ABI splits are on, so release.yml runs `bundleRelease`
+  in a second Gradle invocation without `-PsendAbiSplits` and checks that both
+  produced the same R8 mapping.
 - F-Droid builds from source with its own recipe. A plain
   `gradle assembleRelease` (no `-PsendAbiSplits`) gives one APK with the three
   ABIs, which is what F-Droid would ship under the tag's versionCode. Per-ABI

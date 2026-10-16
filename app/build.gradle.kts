@@ -77,7 +77,8 @@ android {
     }
     // Per-ABI APKs for sideloading from GitHub Releases, plus a universal one; release.yml passes -PsendAbiSplits=true.
     // Off by default so debug keeps its single app-debug.apk. All split APKs share the tag's versionCode (they are not
-    // published to a store side by side); the AAB ignores this block and Play splits it per device.
+    // published to a store side by side). AGP can't build the AAB with splits on, so release.yml builds it in a second
+    // invocation without the property; Play splits the AAB per device itself.
     splits {
         abi {
             isEnable = providers.gradleProperty("sendAbiSplits").map { it.toBoolean() }.getOrElse(false)

@@ -90,8 +90,16 @@ jobs:
         run: |
           version_arg=()
           if [ "$GITHUB_REF_TYPE" = tag ]; then version_arg=("-PsendVersion=$GITHUB_REF_NAME"); fi
-          ./gradlew --no-daemon "-Dorg.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1g" "${version_arg[@]}" \
-            -PsendAbiSplits=true :app:assembleRelease :app:bundleRelease
+          gradle_args=(--no-daemon "-Dorg.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1g" "${version_arg[@]}")
+          ./gradlew "${gradle_args[@]}" -PsendAbiSplits=true :app:assembleRelease
+          cp app/build/outputs/mapping/release/mapping.txt "$RUNNER_TEMP/mapping-apks.txt"
+          # AGP refuses to build an app bundle while ABI splits are on (issuetracker 402800800), so the AAB comes from
+          # a second invocation. Same code and rules, so R8 must produce the same mapping; one mapping.txt is shipped.
+          ./gradlew "${gradle_args[@]}" :app:bundleRelease
+          if ! cmp -s "$RUNNER_TEMP/mapping-apks.txt" app/build/outputs/mapping/release/mapping.txt; then
+            echo "::error::The APK and AAB builds produced different R8 mappings."
+            exit 1
+          fi
       - name: Remove signing key
         if: always()
         run: rm -f "$RUNNER_TEMP/send-release.keystore"
