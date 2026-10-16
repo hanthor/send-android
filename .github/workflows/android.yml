@@ -21,6 +21,12 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - name: Install Android API 37 SDK and the NDK (android.ndkVersion; strips the bundled .so files)
         run: sdkmanager 'platforms;android-37.2' 'build-tools;37.0.0' 'ndk;29.0.14206865'
+      - name: Third-party notices cover every release dependency
+        run: |
+          # The resolved release runtime classpath (what R8 packs into the release APK) against
+          # dev/notices/coverage.txt and THIRD_PARTY_NOTICES.txt; DEVELOPMENT.md, "Third-party notices".
+          ./gradlew --no-daemon -q :app:dependencies --configuration releaseRuntimeClasspath > "$RUNNER_TEMP/release-dependencies.txt"
+          dev/check-notices.sh --deps "$RUNNER_TEMP/release-dependencies.txt"
       - name: Start disposable local Synapse and MatrixRTC backend
         run: |
           # The emulator reaches this host as 10.0.2.2, and MatrixRTC hands that address out (LiveKit
@@ -44,6 +50,8 @@ jobs:
         run: dev/matrix/check-rtc.sh
       - name: Assemble, test, and lint
         run: ./gradlew --no-daemon "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g" :app:assembleDebug :app:testDebugUnitTest :app:lintDebug
+      - name: Third-party notices cover every bundled native library
+        run: dev/check-notices.sh --apk app/build/outputs/apk/debug/app-debug.apk
       - name: Enable Android emulator KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
