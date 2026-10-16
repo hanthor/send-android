@@ -5,11 +5,37 @@
 # Selectors: group:artifact (exact; wins over group rules), group (every artifact of that group), group.* (the group
 # and all its subgroups), or a native library file name as packaged in the APK (libfoo.so).
 
+# Element Call and its native cores
 io.element.android = Element Call Android
 io.element.android:matrix-rtc-android = Matrix Rust RTC Android core
+libmatrix_rtc_ffi.so = Matrix Rust RTC Android core
 org.matrix.rustcomponents:sdk-android = Matrix Rust SDK (Kotlin/Android binding)
+libmatrix_sdk_ffi.so = Matrix Rust SDK (Kotlin/Android binding)
+net.java.dev.jna:jna = Java Native Access (JNA)
+libjnidispatch.so = Java Native Access (JNA)
+com.jakewharton.timber:timber = Timber (logging, used by Element Call)
+
+# Kotlin
+org.jetbrains.kotlin = Kotlin standard library
+org.jetbrains.kotlinx = Kotlin libraries (kotlinx.coroutines, kotlinx.serialization, kotlinx.collections.immutable)
+org.jetbrains:annotations = JetBrains Java Annotations
+
+# AndroidX and Google libraries
+androidx.* = AndroidX libraries (Compose, Material 3, Activity, Browser, Core, WorkManager, Emoji2 emoji picker data, Room, Navigation and their dependencies)
+libandroidx.graphics.path.so = AndroidX libraries (Compose, Material 3, Activity, Browser, Core, WorkManager, Emoji2 emoji picker data, Room, Navigation and their dependencies)
+com.google.guava = Guava: Google Core Libraries for Java (a transitive dependency of AndroidX libraries)
+com.google.errorprone:error_prone_annotations = Annotation libraries (transitive dependencies of Guava, Tink and AndroidX)
+com.google.j2objc:j2objc-annotations = Annotation libraries (transitive dependencies of Guava, Tink and AndroidX)
+org.jspecify:jspecify = Annotation libraries (transitive dependencies of Guava, Tink and AndroidX)
+com.google.code.findbugs:jsr305 = Annotation libraries (transitive dependencies of Guava, Tink and AndroidX)
+org.checkerframework:checker-qual = Checker Framework qualifiers (annotations used by Guava)
+
+# QR scanning
 com.journeyapps:zxing-android-embedded = ZXing Android Embedded (QR login scanning)
+com.google.zxing:core = ZXing core (barcode decoding, used by ZXing Android Embedded)
+
+# UnifiedPush and its Web Push crypto
 org.unifiedpush.android:connector = UnifiedPush Android connector (push notifications)
 com.google.crypto.tink:tink = Tink (used by the UnifiedPush connector for Web Push decryption)
-androidx.* = AndroidX libraries (Compose, Material 3, Activity, Browser, Core, WorkManager, Emoji2 emoji picker data, Test)
-com.google.guava = Guava: Google Core Libraries for Java (pulled in by the AndroidX emoji picker)
+com.google.code.gson:gson = Gson (used by Tink)
+com.google.protobuf:protobuf-java = Protocol Buffers for Java (used by Tink)

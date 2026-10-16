@@ -44,6 +44,23 @@ while IFS= read -r line; do
   fi
 done <<< "$mappings"
 
+# Every license named in the notices ("License: <SPDX expression> [(comment)]" lines and "- <SPDX expression>: ..."
+# crate lines) needs its full text in assets/licenses/<id>.txt; the AGPL is assets/LICENSE.txt and LicenseRef-* terms
+# are the upstream's own (Send doesn't take them).
+license_ids="$(sed -n -E -e 's/^License: ([^(]*)( \(.*)?$/\1/p' -e 's/^- ([^:]*): .*/\1/p' "$notices" |
+  tr ' ()' '\n\n\n' | grep -vE '^(OR|AND|WITH|)$' | sed 's/+$//' | sort -u)"
+while IFS= read -r id; do
+  case "$id" in
+    AGPL-3.0-only | AGPL-3.0-or-later) file="$root/app/src/main/assets/LICENSE.txt" ;;
+    LicenseRef-*) continue ;;
+    *) file="$root/app/src/main/assets/licenses/$id.txt" ;;
+  esac
+  if [ ! -s "$file" ]; then
+    echo "::error::THIRD_PARTY_NOTICES.txt names license '$id' but ${file#"$root"/} is missing"
+    fail=1
+  fi
+done <<< "$license_ids"
+
 # Prints the selector covering $1 (group:artifact) or nothing.
 maven_selector() {
   local coordinate="$1" group="${1%%:*}" selector
@@ -98,6 +115,17 @@ if [ -n "$deps_file" ]; then
       fail=1
     fi
   done < <(cut -d' ' -f1 <<< "$mappings")
+  # Where the notices state a version ("group:artifact:1.2.3"), it must be the resolved one.
+  while IFS= read -r dependency; do
+    coordinate="${dependency%:*}"
+    while IFS= read -r stated; do
+      [ -n "$stated" ] || continue
+      if [ "$stated" != "$dependency" ]; then
+        echo "::error::THIRD_PARTY_NOTICES.txt names $stated but the release build resolves $dependency"
+        fail=1
+      fi
+    done < <(grep -oE -- "$(sed 's/[.]/\\./g' <<< "$coordinate"):[0-9][A-Za-z0-9.+-]*[A-Za-z0-9]" "$notices" | sort -u || true)
+  done <<< "$resolved"
 fi
 
 if [ ${#apks[@]} -gt 0 ]; then

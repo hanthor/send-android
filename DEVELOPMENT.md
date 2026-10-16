@@ -198,3 +198,31 @@ the workflow generates a throwaway key for that run (certificate CN
 `Send-<version>-UNOFFICIAL-ci-signed.*` and puts a warning at the top of the
 release notes. Such builds can't be updated by any other build (each run's key
 is different and discarded) and must not be distributed.
+
+## Third-party notices
+
+`app/src/main/assets/THIRD_PARTY_NOTICES.txt` (shown in *About & licenses*)
+attributes everything the release APK bundles; the full license texts it names
+are in `app/src/main/assets/licenses/` (`<SPDX id>.txt`, plus
+`libwebrtc-LICENSE.md`, the license file of the WebRTC build inside the RTC
+core). `dev/check-notices.sh` keeps it complete, and fails CI when:
+
+- an artifact on `releaseRuntimeClasspath` (direct or transitive) has no entry:
+  `Android CI` dumps `:app:dependencies --configuration releaseRuntimeClasspath`
+  and prints the resolved, deduplicated `group:artifact:version` list;
+- a native library in the APK (`lib/*/*.so`; the debug APK in `Android CI`, the
+  release APK in `release.yml`) has no entry;
+- `dev/notices/coverage.txt`, which maps artifacts (`group:artifact`, `group`,
+  `group.*`) and `.so` names to entry headings, has a stale line or a heading the
+  notices don't have;
+- the notices state a `group:artifact:version` the build doesn't resolve;
+- a license named on a `License:` or `- ` line has no text in `assets/licenses/`.
+
+When a dependency is added or upgraded: take the license from the artifact's POM
+(or upstream repository), add or extend the entry and its `coverage.txt` line,
+and add the license text if it is new. When the Matrix Rust SDK or the RTC core
+changes, regenerate the statically linked crate lists of its `.so` with
+`dev/notices/native-crates.py <lib.so>` (from the AAR's `jni/arm64-v8a/`) and
+replace the `- ` lines of that entry; for a new WebRTC build (the `WEBRTC_TAG`
+of LiveKit's `webrtc-sys-build`) replace `libwebrtc-LICENSE.md` with the
+release's `LICENSE.md`.

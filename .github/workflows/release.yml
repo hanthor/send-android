@@ -153,6 +153,8 @@ jobs:
           local_flag="$(awk '/bool\/allow_local_dev_homeserver/ && !done { getline; print $2; done = 1 }' <<< "$resources")"
           echo "allow_local_dev_homeserver=$local_flag"
           test "$local_flag" = false
+      - name: Third-party notices cover every native library in the release APKs
+        run: dev/check-notices.sh --apk app/build/outputs/apk/release/app-universal-release.apk
       - name: Collect release files
         id: dist
         env:
