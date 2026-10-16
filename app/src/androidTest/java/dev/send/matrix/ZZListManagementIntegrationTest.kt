@@ -3,15 +3,19 @@ package dev.send.matrix
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.ComposeTimeoutException
+import androidx.compose.ui.test.hasScrollToNodeAction
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onLast
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.swipe
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -86,7 +90,7 @@ class ZZListManagementIntegrationTest {
         val dm = runBlocking { repository.createEncryptedDirectRoom(BOB) }
         startBob(archiveRoom, pinRoom, deleteRoom, dm)
         waitForUi("the new conversations in Alice's list", 60_000, ::roomsState) {
-            listOf(archiveName, pinName, deleteName).all { hasNodeWithText(it) } &&
+            listOf(archiveName, pinName, deleteName).all { rowListed(it) } &&
                 listOf(archiveRoom, pinRoom, deleteRoom, dm).all { id -> repository.joinedRooms.value.any { it.id == id && it.encrypted } }
         }
 
@@ -109,7 +113,7 @@ class ZZListManagementIntegrationTest {
 
         // Account menu → Archived lists it; swiping it there unarchives (tag removed on the homeserver).
         openAccountItem("Archived")
-        waitForUi("the archived conversation on the Archived screen", 30_000, ::roomsState) { hasNodeWithText(archiveName) }
+        waitForUi("the archived conversation on the Archived screen", 30_000, ::roomsState) { rowListed(archiveName) }
         composeRule.auditShot("live-archived")
         swipeRow(archiveName, towardsEnd = false)
         // The action fires once the row's spring settles off-screen; the test clock only runs frames while Compose
@@ -124,7 +128,7 @@ class ZZListManagementIntegrationTest {
             }
         }
         composeRule.onNodeWithContentDescription("Back").performClick()
-        softly { waitForUi("the unarchived row back in the list", 30_000, ::roomsState) { hasNodeWithText(archiveName) } }
+        softly { waitForUi("the unarchived row back in the list", 30_000, ::roomsState) { rowListed(archiveName) } }
 
         // 2. Pin from the selection bar: m.favourite on the homeserver, and the row sorts above newer ones.
         longPressRow(pinName)
@@ -132,7 +136,7 @@ class ZZListManagementIntegrationTest {
         waitFor("m.favourite on the homeserver", 60_000, { "serverTags=${serverTags(pinRoom)}" }) { "m.favourite" in serverTags(pinRoom) }
         waitFor("m.favourite on the pinned room", 60_000, ::roomsState) { roomInfo(pinRoom)?.isFavourite == true }
         waitForUi("the pinned row first", 30_000, ::roomsState) {
-            hasNodeWithText(pinName) && top(pinName) < top(deleteName)
+            rowListed(pinName) && hasNodeWithText(deleteName) && top(pinName) < top(deleteName)
         }
         assertEquals(pinRoom, inboxConversations(repository.joinedRooms.value, repository.ignoredUsers.value).first().id)
         assertTrue(composeRule.onAllNodesWithContentDescription("Pinned").fetchSemanticsNodes().isNotEmpty())
@@ -216,7 +220,7 @@ class ZZListManagementIntegrationTest {
         val blockCheck = "Block check $stamp"
         bobSends(dm, blockCheck)
         waitForUi("Bob's DM in the list", 60_000, ::roomsState) {
-            hasNodeWithText(blockCheck) && repository.joinedRooms.value.firstOrNull { it.id == dm }?.dmUserId == BOB
+            rowListed(blockCheck) && repository.joinedRooms.value.firstOrNull { it.id == dm }?.dmUserId == BOB
         }
         longPressRow(blockCheck)
         composeRule.onNodeWithContentDescription("More options").performClick()
@@ -331,11 +335,25 @@ class ZZListManagementIntegrationTest {
     private fun hasNodeWithText(text: String, substring: Boolean = false): Boolean =
         composeRule.onAllNodesWithText(text, substring = substring).fetchSemanticsNodes().isNotEmpty()
 
+    /**
+     * Whether a row showing [text] is in the list on screen, scrolling the list to it first: rows below the fold
+     * aren't composed. A room that has no recency stamp from sync yet sorts after every room that has one (then by
+     * name), so a just-created conversation can sit far down a long list until its first message.
+     */
+    private fun rowListed(text: String): Boolean {
+        if (hasNodeWithText(text)) return true
+        val scrolled = runCatching {
+            composeRule.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToNode(hasText(text))
+        }.isSuccess
+        return scrolled && hasNodeWithText(text)
+    }
+
     private fun top(text: String): Float = composeRule.onAllNodesWithText(text).fetchSemanticsNodes().first().boundsInRoot.top
 
     /** Swipes the conversation row showing [text] most of the screen width, towards the end or the start. */
     private fun swipeRow(text: String, towardsEnd: Boolean) {
         val width = context.resources.displayMetrics.widthPixels.toFloat()
+        check(rowListed(text)) { "No row \"$text\"; ${roomsState()}" }
         composeRule.onNodeWithText(text).performTouchInput {
             swipe(start = center, end = Offset(centerX + if (towardsEnd) width * 0.6f else -width * 0.6f, centerY), durationMillis = 300)
         }
@@ -343,6 +361,7 @@ class ZZListManagementIntegrationTest {
 
     /** Long-presses the row showing [text] and waits for the selection bar. */
     private fun longPressRow(text: String) {
+        check(rowListed(text)) { "No row \"$text\"; ${roomsState()}" }
         composeRule.onNodeWithText(text).performTouchInput { longClick() }
         waitForUi("the selection bar for \"$text\"", 10_000, ::roomsState) {
             composeRule.onAllNodesWithContentDescription("Close").fetchSemanticsNodes().isNotEmpty()
