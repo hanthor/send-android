@@ -1,0 +1,38 @@
+Send is a free and open-source messenger for Matrix, the open, decentralized chat network. It has a clean Material 3 interface built around your conversations, and it only opens end-to-end encrypted chats.
+
+Send is a Matrix client: you need an account on a Matrix homeserver (for example matrix.org, or your own server). Send has no servers or accounts of its own.
+
+Messaging
+• End-to-end encrypted direct chats and groups, created encrypted by default
+• Replies, edits, deletes, reactions with a full emoji picker, forwarding, multi-select and starred messages
+• Photos, videos, files and voice messages, with an in-app photo and video viewer
+• Typing indicators and read receipts ("Read" / "Seen by")
+• Link previews fetched by your homeserver (can be turned off)
+• Search inside a conversation
+
+Conversations
+• Pin, archive, mute, mark as unread and delete conversations
+• Block people and manage blocked contacts
+• Conversation details: members, shared media and files, notification settings
+
+Calls
+• Voice and video calls with Element Call (MatrixRTC), using the call server your homeserver provides
+• Incoming calls ring full-screen, even over the lock screen
+• Picture-in-picture during calls
+
+Notifications without Google
+• Push notifications through UnifiedPush with a distributor of your choice (for example ntfy)
+• Pushes carry only event IDs, never message content
+• Without a distributor, Send checks for new messages about every 15 minutes
+• Reply and mark as read from the notification
+
+Security and privacy
+• Sign in with a password, single sign-on or a QR code from another session
+• Type just your server name or Matrix ID; Send finds your homeserver
+• Recovery key and key backup, emoji verification of your other sessions
+• Manage your signed-in devices
+• Local data encrypted with a key held in Android Keystore; no backups to the cloud
+• No analytics, no crash reporting, no ads
+
+Free software
+Send is licensed under the GNU Affero General Public License v3.0 only (AGPL-3.0-only). Source code, issues and the privacy policy: https://github.com/hanthor/send-android
