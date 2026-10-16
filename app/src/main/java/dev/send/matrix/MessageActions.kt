@@ -589,14 +589,15 @@ internal fun LockedRecordingPanel(
             }
         }
         Spacer(Modifier.height(12.dp))
-        // Messages: three equal pills in their own row under the panel.
+        // Messages: three pills in their own row under the panel.
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            val pill = Modifier.weight(1f).height(56.dp)
-            // Equal-width pills: tight padding and single-line labels so "Restart"/"Attach" never wrap mid-word.
-            val pillPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp)
-            FilledTonalButton(onClick = onRestart, modifier = pill, contentPadding = pillPadding) {
-                Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(20.dp))
-                Spacer(Modifier.width(6.dp))
+            // The icon-only Stop pill gives width to the labelled pills so "Restart"/"Attach" fit on small phones.
+            val labelledPill = Modifier.weight(1.15f).height(56.dp)
+            val pill = Modifier.weight(0.7f).height(56.dp)
+            val pillPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp)
+            FilledTonalButton(onClick = onRestart, modifier = labelledPill, contentPadding = pillPadding) {
+                Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(4.dp))
                 Text("Restart", maxLines = 1, softWrap = false)
             }
             Button(
@@ -610,9 +611,9 @@ internal fun LockedRecordingPanel(
                     else -> Icon(Icons.Filled.PlayArrow, contentDescription = "Play recording")
                 }
             }
-            Button(onClick = onAttach, modifier = pill, contentPadding = pillPadding) {
-                Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(20.dp))
-                Spacer(Modifier.width(6.dp))
+            Button(onClick = onAttach, modifier = labelledPill, contentPadding = pillPadding) {
+                Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(4.dp))
                 Text("Attach", maxLines = 1, softWrap = false)
             }
         }
