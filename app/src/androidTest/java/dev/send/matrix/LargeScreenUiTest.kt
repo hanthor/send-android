@@ -79,6 +79,11 @@ class LargeScreenUiTest {
             val configuration = composeRule.activity.resources.configuration
             configuration.densityDpi == density && kotlin.math.abs(configuration.screenWidthDp - widthDp) <= 48
         }
+        settle()
+    }
+
+    /** Lets the window and keyboard catch up (the keyboard re-lays itself out for a new density once it shows). */
+    private fun settle() {
         composeRule.waitForIdle()
         device.waitForIdle()
         Thread.sleep(SETTLE_MS)
@@ -114,6 +119,7 @@ class LargeScreenUiTest {
         composeRule.onNode(hasText("Message number 39 from Maya") and inDetailPane).assertIsDisplayed()
         composeRule.onNode(row("Maya") and inListPane).assertIsSelected()
         composeRule.onNode(composer and inDetailPane).performTextInput("See you at 7")
+        settle()
         composeRule.onNode(hasText("See you at 7") and composer and inDetailPane).assertIsDisplayed()
         composeRule.auditShot("tablet-list-detail")
 
@@ -142,6 +148,7 @@ class LargeScreenUiTest {
         composeRule.onNode(row("Maya")).performClick()
         composeRule.onNode(hasText("Message number 39 from Maya")).assertIsDisplayed()
         composeRule.onNode(composer).performTextInput("Draft before unfolding")
+        settle()
         // Scroll back into history so the position has something to keep.
         composeRule.onNode(hasScrollToNodeAction()).performScrollToNode(hasText("Message number 12 from Maya"))
         composeRule.onNode(hasText("Message number 12 from Maya")).assertIsDisplayed()
@@ -187,7 +194,7 @@ class LargeScreenUiTest {
 
     private companion object {
         const val DISPLAY_TIMEOUT_MS = 15_000L
-        const val SETTLE_MS = 1_500L
+        const val SETTLE_MS = 3_000L
         const val PHONE_WIDTH = 864
         const val PHONE_HEIGHT = 1800
         const val UNFOLDED_WIDTH = 1766
