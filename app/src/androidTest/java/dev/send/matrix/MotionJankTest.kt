@@ -102,7 +102,13 @@ class MotionJankTest {
         const val ROWS = 200
         const val MIN_FRAMES = 60
 
-        /** Upper bound for HWUI's "Janky frames" share on the CI emulator; see IMPLEMENTATION_STATUS.md for the baseline. */
-        const val MAX_JANKY_PERCENT = 50f
+        /**
+         * Upper bound for HWUI's "Janky frames" share (frames that missed their deadline) on the CI emulator. The
+         * baseline there is 5.3% (24 of 450 frames, CI run 38831588979); 15% is about three times that, so shared-runner
+         * noise passes while a regression such as a recomposition every scroll frame or a layout pass per animation
+         * frame, which misses deadlines on most frames of the swiftshader-rendered emulator, fails. It is a guard on
+         * the emulator, not a device-quality bar: the emulator renders in software (half its frames take >16ms).
+         */
+        const val MAX_JANKY_PERCENT = 15f
     }
 }
