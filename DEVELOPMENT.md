@@ -64,9 +64,9 @@ client (`ZZRtcCallsIntegrationTest`).
   Render the store images from the SVGs:
   `rsvg-convert -w 512 -h 512 docs/brand/send-icon.svg -o fastlane/metadata/android/en-US/images/icon.png` and
   `rsvg-convert -w 1024 -h 500 docs/brand/send-feature-graphic.svg -o fastlane/metadata/android/en-US/images/featureGraphic.png`.
-- Phone screenshots come from `StoreScreenshotsTest`, which runs at 1080x2400 / 420 dpi with a demo-mode
-  status bar. Copy `send-store-<n>-<name>-device.png` from a green run's `Send-UI-Screenshots` artifact to
-  `images/phoneScreenshots/<n>.png`.
+- Phone screenshots come from `StoreScreenshotsTest`, which asks for a 1080x2400 / 420 dpi display with a
+  demo-mode status bar (the CI emulator delivers 1080x1920 captures). Copy `send-store-<n>-<name>-device.png`
+  from a green run's `Send-UI-Screenshots` artifact to `images/phoneScreenshots/<n>.png`.
 
 ## Google Messages comparison
 

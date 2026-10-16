@@ -22,7 +22,7 @@ import org.junit.runner.RunWith
 
 /**
  * Store listing screenshots (fastlane `images/phoneScreenshots`): the main screens with realistic fake data on a
- * phone-sized display (1080x2400 at 420 dpi, like a current mid-size phone) and a demo-mode status bar. Saved as
+ * phone-sized display (1080x2400 at 420 dpi requested; the CI emulator captures 1080x1920) and a demo-mode status bar. Saved as
  * `send-store-<n>-<name>-device.png` in the `Send-UI-Screenshots` artifact.
  */
 @RunWith(AndroidJUnit4::class)
@@ -60,6 +60,10 @@ class StoreScreenshotsTest {
             }
         }
         composeRule.onNodeWithText("Get started").assertIsDisplayed()
+        // The hero's endless orbit animation holds frames back from the display: pause the clock so
+        // auditShot pumps frames itself.
+        composeRule.mainClock.autoAdvance = false
+        composeRule.mainClock.advanceTimeBy(2_000)
         composeRule.auditShot("store-1-sign-in")
     }
 
@@ -278,8 +282,8 @@ class StoreScreenshotsTest {
             device.executeShellCommand("wm size 1080x2400")
             device.executeShellCommand("wm density 420")
             device.executeShellCommand("settings put global sysui_demo_allowed 1")
+            // Demo mode keeps the real clock, so the status bar agrees with the fixtures' relative times.
             demo("enter")
-            demo("clock -e hhmm 0930")
             demo("battery -e level 100 -e plugged false")
             demo("network -e wifi show -e level 4 -e mobile hide")
             demo("notifications -e visible false")
