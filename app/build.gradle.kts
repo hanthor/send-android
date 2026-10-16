@@ -86,6 +86,8 @@ dependencies {
     implementation(libs.compose.animation)
     implementation(libs.compose.material3)
     implementation(libs.compose.material.icons)
+    // @Preview annotations in UiPreviews.kt (main) for every build type; ui-tooling itself stays debug-only.
+    implementation(libs.compose.tooling.preview)
     implementation(libs.lifecycle.runtime)
     implementation(libs.navigation.compose)
     implementation(libs.matrix.sdk)
