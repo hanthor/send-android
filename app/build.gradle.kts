@@ -102,6 +102,7 @@ dependencies {
     implementation(libs.element.call.impl)
     implementation(libs.element.call.matrix)
     implementation(libs.element.call.ui)
+    testImplementation(libs.junit)
     androidTestImplementation(platform(libs.compose.bom))
     androidTestImplementation(libs.compose.ui.test.junit4)
     androidTestImplementation(libs.androidx.test.junit)
