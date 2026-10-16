@@ -359,12 +359,22 @@ class ZZListManagementIntegrationTest {
         }
     }
 
-    /** Long-presses the row showing [text] and waits for the selection bar. */
+    /**
+     * Long-presses the row showing [text] and waits for the selection bar. A press is retried (as a person would) when
+     * no bar appears: a sync update can move the row (e.g. Bob's new message re-sorting it to the top, animated) while
+     * the finger is down, and a row sliding under a still pointer counts as movement, which cancels the long press.
+     */
     private fun longPressRow(text: String) {
-        check(rowListed(text)) { "No row \"$text\"; ${roomsState()}" }
-        composeRule.onNodeWithText(text).performTouchInput { longClick() }
-        waitForUi("the selection bar for \"$text\"", 10_000, ::roomsState) {
-            composeRule.onAllNodesWithContentDescription("Close").fetchSemanticsNodes().isNotEmpty()
+        fun selectionBarShown() = composeRule.onAllNodesWithContentDescription("Close").fetchSemanticsNodes().isNotEmpty()
+        repeat(3) { attempt ->
+            check(rowListed(text)) { "No row \"$text\"; ${roomsState()}" }
+            composeRule.waitForIdle()
+            composeRule.onNodeWithText(text).performTouchInput { longClick() }
+            if (attempt == 2) {
+                waitForUi("the selection bar for \"$text\"", 10_000, ::roomsState, ::selectionBarShown)
+                return
+            }
+            if (runCatching { composeRule.waitUntil(timeoutMillis = 5_000, condition = ::selectionBarShown) }.isSuccess) return
         }
     }
 
