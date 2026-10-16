@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Test-only R8 build (release.yml runs the instrumentation suite on it against the CI Synapse). -->
+    <bool name="allow_local_dev_homeserver">true</bool>
+</resources>
