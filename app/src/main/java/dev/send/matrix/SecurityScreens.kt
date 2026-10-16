@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -434,7 +435,7 @@ internal fun SecurityScreen(
         topBar = {
             Surface(color = colors.surfaceContainer, modifier = Modifier.statusBarsPadding()) {
                 Row(
-                    modifier = Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 4.dp),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(horizontal = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     IconButton(onClick = ::back, enabled = !locked) {
@@ -755,7 +756,7 @@ internal fun VerificationScreen(
         topBar = {
             Surface(color = colors.surfaceContainer, modifier = Modifier.statusBarsPadding()) {
                 Row(
-                    modifier = Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 4.dp),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(horizontal = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     IconButton(onClick = if (finished) onDone else onCancel) {
