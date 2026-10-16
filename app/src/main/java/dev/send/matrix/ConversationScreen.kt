@@ -25,6 +25,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
@@ -479,7 +483,7 @@ internal fun ConversationScreen(
                 // Messages: back, avatar, title only, call, overflow. Body is a rounded sheet below.
                 else -> Surface(color = colors.surfaceContainer, modifier = Modifier.statusBarsPadding()) {
                     Row(
-                        modifier = Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 4.dp),
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(horizontal = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         IconButton(onClick = onBack) {
@@ -487,21 +491,25 @@ internal fun ConversationScreen(
                         }
                         // Messages: tapping the contact's avatar or name opens the conversation's details.
                         Row(
-                            modifier = Modifier.weight(1f).height(56.dp).clip(RoundedCornerShape(28.dp))
+                            modifier = Modifier.weight(1f).heightIn(min = 56.dp).clip(RoundedCornerShape(28.dp))
                                 .clickable(enabled = details != null, onClickLabel = "Details") {
                                     showEmojiPanel = false
                                     showDetails = true
                                 },
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            val avatarModifier = if (sharedKey != null) Modifier.sendSharedElement(sharedAvatarKey(sharedKey)) else Modifier
-                            Box(avatarModifier) { Avatar(name = title, size = 40.dp, url = avatarUrl) }
-                            Spacer(modifier = Modifier.width(14.dp))
+                            // At large font sizes the avatar gives its room to the name, which may also take two lines.
+                            val largeText = LocalDensity.current.fontScale >= 1.5f
+                            if (!largeText) {
+                                val avatarModifier = if (sharedKey != null) Modifier.sendSharedElement(sharedAvatarKey(sharedKey)) else Modifier
+                                Box(avatarModifier) { Avatar(name = title, size = 40.dp, url = avatarUrl) }
+                                Spacer(modifier = Modifier.width(14.dp))
+                            } else Spacer(modifier = Modifier.width(8.dp))
                             Text(
                                 title,
                                 style = MaterialTheme.typography.titleLarge,
                                 color = colors.onSurface,
-                                maxLines = 1,
+                                maxLines = if (largeText) 2 else 1,
                                 overflow = TextOverflow.Ellipsis,
                                 modifier = if (sharedKey != null) Modifier.sendSharedBounds(sharedTitleKey(sharedKey)) else Modifier,
                             )
@@ -621,9 +629,11 @@ internal fun ConversationScreen(
                                     cancelling = cancellingRecording,
                                     modifier = Modifier.fillMaxWidth().height(56.dp),
                                 )
-                            } else Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                                IconButton(onClick = { documentPicker.launch(arrayOf("*/*")) }) {
-                                    Icon(imageVector = Icons.Outlined.AddCircleOutline, contentDescription = "Attach file", tint = colors.onSurfaceVariant)
+                            } else {
+                                val attachButton = @Composable {
+                                    IconButton(onClick = { documentPicker.launch(arrayOf("*/*")) }) {
+                                        Icon(imageVector = Icons.Outlined.AddCircleOutline, contentDescription = "Attach file", tint = colors.onSurfaceVariant)
+                                    }
                                 }
                                 // Same decoration as TextField but with Messages' tight inner padding so the
                                 // placeholder stays on one line next to three inline actions.
@@ -638,49 +648,72 @@ internal fun ConversationScreen(
                                     focusedIndicatorColor = Color.Transparent,
                                     unfocusedIndicatorColor = Color.Transparent,
                                 )
-                                BasicTextField(
-                                    value = draft,
-                                    onValueChange = onDraft,
-                                    modifier = Modifier.weight(1f).focusRequester(composerFocus),
-                                    maxLines = 4,
-                                    textStyle = MaterialTheme.typography.bodyLarge.copy(color = colors.onSurface),
-                                    cursorBrush = SolidColor(colors.primary),
-                                    interactionSource = composerInteraction,
-                                ) { innerTextField ->
-                                    TextFieldDefaults.DecorationBox(
+                                val field = @Composable { fieldModifier: Modifier ->
+                                    BasicTextField(
                                         value = draft,
-                                        innerTextField = innerTextField,
-                                        enabled = true,
-                                        singleLine = false,
-                                        visualTransformation = VisualTransformation.None,
+                                        onValueChange = onDraft,
+                                        modifier = fieldModifier.focusRequester(composerFocus),
+                                        maxLines = 4,
+                                        textStyle = MaterialTheme.typography.bodyLarge.copy(color = colors.onSurface),
+                                        cursorBrush = SolidColor(colors.primary),
                                         interactionSource = composerInteraction,
-                                        placeholder = { Text("Message", maxLines = 1, softWrap = false) },
-                                        colors = composerColors,
-                                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 16.dp),
-                                        container = {},
-                                    )
-                                }
-                                // Messages swaps the keyboard for its emoji panel; the button then switches back.
-                                IconButton(
-                                    onClick = {
-                                        if (showEmojiPanel) {
-                                            showEmojiPanel = false
-                                            runCatching { composerFocus.requestFocus() }
-                                            keyboard?.show()
-                                        } else {
-                                            keyboard?.hide()
-                                            showEmojiPanel = true
-                                        }
-                                    },
-                                ) {
-                                    if (showEmojiPanel) {
-                                        Icon(Icons.Outlined.Keyboard, contentDescription = "Keyboard", tint = colors.onSurfaceVariant)
-                                    } else {
-                                        Icon(Icons.Filled.SentimentSatisfied, contentDescription = "Emoji", tint = colors.onSurfaceVariant)
+                                    ) { innerTextField ->
+                                        TextFieldDefaults.DecorationBox(
+                                            value = draft,
+                                            innerTextField = innerTextField,
+                                            enabled = true,
+                                            singleLine = false,
+                                            visualTransformation = VisualTransformation.None,
+                                            interactionSource = composerInteraction,
+                                            placeholder = { Text("Message", maxLines = 1, softWrap = false) },
+                                            colors = composerColors,
+                                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 16.dp),
+                                            container = {},
+                                        )
                                     }
                                 }
-                                IconButton(onClick = { mediaPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) }) {
-                                    Icon(imageVector = Icons.Outlined.Image, contentDescription = "Gallery", tint = colors.onSurfaceVariant)
+                                // Messages swaps the keyboard for its emoji panel; the button then switches back.
+                                val emojiButton = @Composable {
+                                    IconButton(
+                                        onClick = {
+                                            if (showEmojiPanel) {
+                                                showEmojiPanel = false
+                                                runCatching { composerFocus.requestFocus() }
+                                                keyboard?.show()
+                                            } else {
+                                                keyboard?.hide()
+                                                showEmojiPanel = true
+                                            }
+                                        },
+                                    ) {
+                                        if (showEmojiPanel) {
+                                            Icon(Icons.Outlined.Keyboard, contentDescription = "Keyboard", tint = colors.onSurfaceVariant)
+                                        } else {
+                                            Icon(Icons.Filled.SentimentSatisfied, contentDescription = "Emoji", tint = colors.onSurfaceVariant)
+                                        }
+                                    }
+                                }
+                                val galleryButton = @Composable {
+                                    IconButton(onClick = { mediaPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) }) {
+                                        Icon(imageVector = Icons.Outlined.Image, contentDescription = "Gallery", tint = colors.onSurfaceVariant)
+                                    }
+                                }
+                                if (LocalDensity.current.fontScale >= 1.5f) {
+                                    // Large font sizes: the field gets the pill's full width, the actions go under it.
+                                    Column(Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
+                                        field(Modifier.fillMaxWidth().padding(horizontal = 12.dp))
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            attachButton()
+                                            Spacer(Modifier.weight(1f))
+                                            emojiButton()
+                                            galleryButton()
+                                        }
+                                    }
+                                } else Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    attachButton()
+                                    field(Modifier.weight(1f))
+                                    emojiButton()
+                                    galleryButton()
                                 }
                             }
                         }
@@ -884,7 +917,8 @@ internal fun ConversationScreen(
                                         shape = RoundedCornerShape(12.dp),
                                         color = colors.surfaceContainerLow,
                                         tonalElevation = 1.dp,
-                                        modifier = Modifier.padding(horizontal = 20.dp).offset(y = (-8).dp),
+                                        modifier = Modifier.padding(horizontal = 20.dp).offset(y = (-8).dp)
+                                            .semantics(mergeDescendants = true) { contentDescription = "Reactions" },
                                     ) {
                                         Text(
                                             message.reactions.joinToString(" "),
@@ -1098,7 +1132,12 @@ private fun MessageItem(
         reportBounds(parts.values.toList())
     }
     val shape = bubbleShape(message.own, isFirstInGroup, isLastInGroup)
-    SwipeToReply(enabled = swipeEnabled && actions.reply, onReply = onReply) {
+    val replyEnabled = swipeEnabled && actions.reply
+    // TalkBack can't swipe a bubble: Reply is also a custom action on it (long-press opens the full action bar).
+    val a11yActions = if (replyEnabled) {
+        Modifier.semantics { customActions = listOf(CustomAccessibilityAction("Reply") { onReply(); true }) }
+    } else Modifier
+    SwipeToReply(enabled = replyEnabled, onReply = onReply) {
         Box(
             Modifier
                 .fillMaxWidth()
@@ -1134,6 +1173,7 @@ private fun MessageItem(
                                     playback = playback,
                                     onLongPress = onLongPress,
                                     onOpenVisual = onOpenVisual.takeIf { attachment.kind == AttachmentKind.Image || attachment.kind == AttachmentKind.Video },
+                                    modifier = a11yActions,
                                 ) }
                             }
                         }
@@ -1149,7 +1189,7 @@ private fun MessageItem(
                                 onQuoteClick = onQuote,
                                 query = query,
                                 loadLinkPreview = loadLinkPreview,
-                                bubbleModifier = Modifier.part(2),
+                                bubbleModifier = Modifier.part(2).then(a11yActions),
                             )
                         }
                     }
@@ -1161,7 +1201,7 @@ private fun MessageItem(
 
 @OptIn(ExperimentalFoundationApi::class)
 private fun Modifier.combinedClickableCompat(onClick: () -> Unit, onLongClick: () -> Unit): Modifier =
-    combinedClickable(onClick = onClick, onLongClick = onLongClick)
+    combinedClickable(onClickLabel = "Show time", onClick = onClick, onLongClickLabel = "Select message", onLongClick = onLongClick)
 
 private fun dayHeaderLabel(context: android.content.Context, timestampMillis: Long): String {
     // Messages: time only for today, otherwise "Tuesday, Oct 6 • 4:46 PM".
@@ -1214,7 +1254,8 @@ fun MessageBubble(
             contentColor = content,
             border = if (query.isNotBlank() && annotated.spanStyles.isNotEmpty()) BorderStroke(1.dp, colors.tertiary) else null,
             // Tap reveals the message's time/status (as in Messages); long-press selects it for actions.
-            modifier = bubbleModifier.widthIn(max = 280.dp).combinedClickable(onClick = onClick, onLongClick = onLongPress),
+            modifier = bubbleModifier.widthIn(max = 280.dp)
+                .combinedClickable(onClickLabel = "Show time", onClick = onClick, onLongClickLabel = "Select message", onLongClick = onLongPress),
         ) {
             Column(Modifier.padding(horizontal = if (replyTo != null || preview != null) 6.dp else 0.dp, vertical = if (replyTo != null || preview != null) 6.dp else 0.dp)) {
                 if (replyTo != null) {

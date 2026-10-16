@@ -64,6 +64,10 @@ their shortcut exists (after a message notification, or after sending there).
   `send-fold-folded-device.png`) and a landscape phone; it runs in `LargeScreenFixtureActivity` (src/debug and
   src/minified only, never in release), which like `MainActivity` keeps running through size changes.
 - CI cannot resolve `matrix.reilly.asia`; production SSO is not tested.
+- `docs/accessibility.md` holds the TalkBack/touch-target conventions and the
+  WCAG contrast table for both themes; `AccessibilityUiTest` checks 200% font
+  scale, 48dp targets and labels, and captures the `dark-*` screens. Recompute
+  the table when a colour token changes.
 
 ## Google Messages comparison
 
