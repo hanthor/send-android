@@ -362,7 +362,8 @@ internal fun MessageInfoDialog(message: MatrixMessage, readers: Map<String, Long
     val kind = when {
         message.deleted -> "Deleted message"
         message.decryptionFailure != null -> "Encrypted message (not decrypted yet)"
-        message.attachment?.kind == AttachmentKind.Image -> "Photo"
+        message.attachment?.kind == AttachmentKind.Sticker -> "Sticker"
+        message.attachment?.kind == AttachmentKind.Image -> if (message.attachment?.mimetype == "image/gif") "GIF" else "Photo"
         message.attachment?.kind == AttachmentKind.Video -> "Video"
         message.attachment?.kind == AttachmentKind.Voice -> "Voice message"
         message.attachment != null -> "File"
@@ -428,7 +429,8 @@ internal fun ComposerContextBar(title: String, text: String, cancelDescription: 
 internal fun messagePreviewText(message: MatrixMessage): String = when {
     message.deleted -> "Message deleted"
     message.text.isNotBlank() -> message.text
-    message.attachment?.kind == AttachmentKind.Image -> "Photo"
+    message.attachment?.kind == AttachmentKind.Sticker -> "Sticker"
+    message.attachment?.kind == AttachmentKind.Image -> if (message.attachment?.mimetype == "image/gif") "GIF" else "Photo"
     message.attachment?.kind == AttachmentKind.Video -> "Video"
     message.attachment?.kind == AttachmentKind.Voice -> "Voice message"
     message.attachment?.kind == AttachmentKind.Audio -> "Audio"
