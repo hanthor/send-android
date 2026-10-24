@@ -2118,6 +2118,7 @@ class MatrixRepository(context: Context) {
             )
             else -> error("This message can't be forwarded.")
         }
+        Unit
     }
 
     // ---- Stickers and GIFs: MSC2545 image packs (im.ponies.*), sent as m.sticker / m.image with the pack's mxc URL ----
