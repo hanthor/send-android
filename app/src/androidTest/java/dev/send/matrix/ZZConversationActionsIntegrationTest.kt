@@ -189,6 +189,27 @@ class ZZConversationActionsIntegrationTest {
             NotificationRouter.visibleRoomId == second && hasNodeWithText(original)
         }
         assertTrue(bobEvent(dm, original) != null)
+
+        // 7. Schedule send: holding Send opens the sheet; a message scheduled a few seconds out shows under the
+        // conversation with its time, goes out encrypted from the open app when due, and then leaves the list.
+        val scheduledText = "Scheduled from Alice $stamp"
+        composeRule.onNode(hasSetTextAction()).performTextInput(scheduledText)
+        composeRule.onNodeWithContentDescription("Send").performTouchInput { longClick() }
+        waitForUi("the Schedule send sheet", 10_000, ::conversationState) { hasNodeWithText("Schedule send") && hasNodeWithText("Pick date and time") }
+        composeRule.auditShot("live-schedule-send")
+        androidx.test.uiautomator.UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()).pressBack()
+        waitForUi("the sheet to close", 10_000, ::conversationState) { !hasNodeWithText("Pick date and time") }
+        composeRule.onNode(hasSetTextAction()).performTextReplacement("")
+        val store = ScheduledMessages.get(composeRule.activity)
+        val pending = store.schedule(second, scheduledText, System.currentTimeMillis() + 4_000)
+        waitForUi("the scheduled message under the conversation", 10_000, ::conversationState) {
+            hasNodeWithText("Scheduled for Today, ", substring = true) && hasNodeWithText(scheduledText)
+        }
+        composeRule.auditShot("live-scheduled-message")
+        waitFor("Bob to receive the scheduled message", 90_000, ::bobState) { bobEvent(second, scheduledText) != null }
+        waitForUi("the schedule to clear once sent", 30_000, { "scheduled=${store.messages.value}" }) {
+            store.messages.value.none { it.id == pending.id } && !hasNodeWithText("Scheduled for Today, ", substring = true)
+        }
     }
 
     private fun hasNodeWithText(text: String, substring: Boolean = false): Boolean =

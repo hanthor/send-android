@@ -97,6 +97,8 @@ class ConversationActionsUiTest {
         var loadUntil: String? = null
         var voice: VoiceRecording? = null
         var older = 0
+        var scheduledAt: Pair<String, Long>? = null
+        var scheduledAction: Pair<ScheduledMessage, ScheduledAction>? = null
     }
 
     private fun show(
@@ -107,6 +109,8 @@ class ConversationActionsUiTest {
         loadMedia: MediaLoader = { _, _ -> error("No media in this fixture.") },
         loadLinkPreview: (suspend (String) -> LinkPreview?)? = null,
         voiceCapture: VoiceCapture? = null,
+        /** Scheduled messages shown under the timeline; null leaves scheduling out of the fixture. */
+        scheduled: MutableState<List<ScheduledMessage>>? = null,
     ): Callbacks {
         val callbacks = Callbacks()
         composeRule.setContent {
@@ -140,10 +144,63 @@ class ConversationActionsUiTest {
                     typingUsers = typingUsers,
                     loadLinkPreview = loadLinkPreview,
                     voiceCapture = voiceCapture,
+                    scheduled = scheduled?.value.orEmpty(),
+                    onSchedule = if (scheduled != null) ({ text, at -> callbacks.scheduledAt = text to at }) else null,
+                    onScheduledAction = { pending, action -> callbacks.scheduledAction = pending to action },
                 )
             }
         }
         return callbacks
+    }
+
+    @Test
+    fun holdingSendSchedulesTheDraftAndScheduledMessagesOfferSendNowUpdateAndDelete() {
+        val draft = mutableStateOf("Happy birthday!")
+        val scheduled = mutableStateOf(emptyList<ScheduledMessage>())
+        val callbacks = show(chat, draft = draft, scheduled = scheduled)
+        val tomorrowEight = scheduleOptions().first { it.label == "Tomorrow, 8:00 AM" }.sendAtMillis
+
+        // Hold Send: Messages' Schedule send sheet with quick times and a date/time picker.
+        composeRule.onNodeWithContentDescription("Send").performTouchInput { longClick() }
+        composeRule.waitUntil(5_000) { composeRule.onAllNodesWithText("Schedule send").fetchSemanticsNodes().isNotEmpty() }
+        composeRule.onNodeWithText("Pick date and time").assertIsDisplayed()
+        composeRule.auditShot("schedule-send")
+        composeRule.onNodeWithText("Tomorrow, 8:00 AM").performClick()
+        composeRule.waitUntil(5_000) { callbacks.scheduledAt != null }
+        assertEquals("Happy birthday!" to tomorrowEight, callbacks.scheduledAt)
+        composeRule.runOnIdle { assertEquals("", draft.value) }
+
+        // The scheduled message sits under the conversation with its time; tapping offers Send now / Update / Delete.
+        val pending = ScheduledMessage("s1", "!room:example.org", "Happy birthday!", tomorrowEight, now)
+        scheduled.value = listOf(pending)
+        composeRule.onNodeWithText("Scheduled for Tomorrow, 8:00 AM").assertIsDisplayed()
+        composeRule.auditShot("scheduled-message")
+        composeRule.onNodeWithText("Happy birthday!").performClick()
+        composeRule.waitUntil(5_000) { composeRule.onAllNodesWithText("Send now").fetchSemanticsNodes().isNotEmpty() }
+        composeRule.onNodeWithText("Send now").performClick()
+        composeRule.waitUntil(5_000) { callbacks.scheduledAction != null }
+        assertEquals(pending to ScheduledAction.SendNow, callbacks.scheduledAction)
+
+        // Update message: the text comes back to the composer and Send (now a clock) re-schedules it.
+        callbacks.scheduledAction = null
+        composeRule.onNodeWithText("Happy birthday!").performClick()
+        composeRule.waitUntil(5_000) { composeRule.onAllNodesWithText("Update message").fetchSemanticsNodes().isNotEmpty() }
+        composeRule.onNodeWithText("Update message").performClick()
+        composeRule.waitUntil(5_000) { composeRule.onAllNodesWithText("Updating scheduled message").fetchSemanticsNodes().isNotEmpty() }
+        composeRule.runOnIdle { assertEquals("Happy birthday!", draft.value) }
+        composeRule.onNode(hasSetTextAction()).performTextReplacement("Happy birthday, Alice!")
+        composeRule.onNodeWithContentDescription("Schedule").performClick()
+        composeRule.waitUntil(5_000) { callbacks.scheduledAction != null }
+        assertEquals(pending to ScheduledAction.Update("Happy birthday, Alice!", tomorrowEight), callbacks.scheduledAction)
+        composeRule.runOnIdle { assertEquals("", draft.value) }
+
+        // Delete.
+        callbacks.scheduledAction = null
+        composeRule.onNodeWithText("Happy birthday!").performClick()
+        composeRule.waitUntil(5_000) { composeRule.onAllNodesWithText("Delete").fetchSemanticsNodes().isNotEmpty() }
+        composeRule.onNodeWithText("Delete").performClick()
+        composeRule.waitUntil(5_000) { callbacks.scheduledAction != null }
+        assertEquals(pending to ScheduledAction.Delete, callbacks.scheduledAction)
     }
 
     private fun longPress(text: String) {

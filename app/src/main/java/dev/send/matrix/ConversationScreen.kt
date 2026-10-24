@@ -59,6 +59,7 @@ import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Keyboard
 import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.NotificationsOff
+import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Videocam
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -174,6 +175,12 @@ internal fun ConversationScreen(
     sounds: Boolean = false,
     /** The room ID when opened from the list: the header's avatar and name continue the row's (shared elements). */
     sharedKey: String? = null,
+    /** Messages scheduled for this conversation, shown under the newest message until they send. */
+    scheduled: List<ScheduledMessage> = emptyList(),
+    /** Schedules the draft (long-press Send → Schedule send); null hides scheduling. */
+    onSchedule: ((text: String, sendAtMillis: Long) -> Unit)? = null,
+    /** Send now, update or delete a scheduled message. */
+    onScheduledAction: (ScheduledMessage, ScheduledAction) -> Unit = { _, _ -> },
 ) {
     val context = LocalContext.current
     val colors = MaterialTheme.colorScheme
@@ -203,6 +210,11 @@ internal fun ConversationScreen(
     var showStarred by remember { mutableStateOf(false) }
     var showDetails by remember { mutableStateOf(false) }
     var showMediaGrid by remember { mutableStateOf(false) }
+    var showSchedulePicker by remember { mutableStateOf(false) }
+    var scheduledSheetFor by remember { mutableStateOf<ScheduledMessage?>(null) }
+    /** A scheduled message whose text is back in the composer (Update message); Send re-schedules it. */
+    var updatingScheduled by remember { mutableStateOf<ScheduledMessage?>(null) }
+    var draftBeforeUpdate by remember { mutableStateOf("") }
     PlayConversationSounds(messages, sounds)
     val composerFocus = remember { FocusRequester() }
 
@@ -256,12 +268,22 @@ internal fun ConversationScreen(
     // Newest first, as the list is laid out bottom-up; the typing bubble sits below the newest message.
     val reversed = messages.asReversed()
     val typingShown = typingUsers.isNotEmpty()
+    // Scheduled messages sit under the newest message (the list's start), latest-scheduled lowest.
+    val scheduledShown = scheduled.asReversed()
     // At the newest message (the list's start) a new bubble or typing dots scroll into view as they arrive.
-    val listState = rememberTopAnchoredListState(if (typingShown) "typing" else reversed.firstOrNull()?.key)
+    val listState = rememberTopAnchoredListState(
+        when {
+            typingShown -> "typing"
+            scheduledShown.isNotEmpty() -> "scheduled:${scheduledShown.first().id}"
+            else -> reversed.firstOrNull()?.key
+        },
+    )
     val bubbleEntries = rememberBubbleEntries()
+    // Rows before the messages: typing dots, then scheduled messages.
+    val leadingRows = (if (typingShown) 1 else 0) + scheduledShown.size
     fun listIndexOf(id: String): Int? {
         val index = reversed.indexOfFirst { it.id == id }
-        return if (index < 0) null else index + if (typingShown) 1 else 0
+        return if (index < 0) null else index + leadingRows
     }
     fun jumpTo(eventId: String) {
         val index = listIndexOf(eventId)
@@ -323,11 +345,45 @@ internal fun ConversationScreen(
         onDraft(draftBeforeEdit)
         editing = null
     }
+    fun cancelUpdateScheduled() {
+        onDraft(draftBeforeUpdate)
+        updatingScheduled = null
+    }
+    /** Messages' "Update message": the scheduled text comes back to the composer; Send re-schedules it. */
+    fun startUpdateScheduled(message: ScheduledMessage) {
+        scheduledSheetFor = null
+        selectedId = null
+        replyingTo = null
+        if (editing != null) cancelEdit()
+        if (updatingScheduled == null) draftBeforeUpdate = draft
+        updatingScheduled = message
+        onDraft(message.text)
+        runCatching { composerFocus.requestFocus() }
+    }
+    fun scheduleDraft(sendAtMillis: Long) {
+        showSchedulePicker = false
+        val text = draft
+        if (text.isBlank()) return
+        val updating = updatingScheduled
+        if (updating != null) {
+            onScheduledAction(updating, ScheduledAction.Update(text, sendAtMillis))
+            updatingScheduled = null
+            onDraft(draftBeforeUpdate)
+        } else {
+            onSchedule?.invoke(text, sendAtMillis)
+            onDraft("")
+        }
+        replyingTo = null
+    }
     fun sendDraft() {
         val target = editing
+        val updating = updatingScheduled
         if (target != null) {
             if (draft.isNotBlank() && draft != target.text) onEdit(target, draft)
             cancelEdit()
+        } else if (updating != null) {
+            // Keeps the scheduled time; long-press Send to change it.
+            scheduleDraft(maxOf(updating.sendAtMillis, System.currentTimeMillis() + MIN_SCHEDULE_LEAD_MS))
         } else {
             onSend(replyingTo)
             replyingTo = null
@@ -381,7 +437,7 @@ internal fun ConversationScreen(
 
     // Composer, selection and search states close first; with none left back leaves with predictive back.
     val nestedBack = selectedId != null || multiSelected.isNotEmpty() || showEmojiPanel || searching || recordingLocked ||
-        editing != null || replyingTo != null
+        editing != null || replyingTo != null || updatingScheduled != null
     BackHandler(enabled = nestedBack) {
         when {
             selectedId != null -> selectedId = null
@@ -390,6 +446,7 @@ internal fun ConversationScreen(
             searching -> closeSearch()
             recordingLocked -> discardRecording("Voice message discarded")
             editing != null -> cancelEdit()
+            updatingScheduled != null -> cancelUpdateScheduled()
             replyingTo != null -> replyingTo = null
         }
     }
@@ -596,8 +653,16 @@ internal fun ConversationScreen(
                     }
                     val editTarget = editing
                     val replyTarget = replyingTo
+                    val updateTarget = updatingScheduled
                     if (editTarget != null) {
                         ComposerContextBar("Editing message", messagePreviewText(editTarget), "Cancel edit", ::cancelEdit)
+                    } else if (updateTarget != null) {
+                        ComposerContextBar(
+                            "Updating scheduled message",
+                            "Scheduled for ${scheduleLabel(context, updateTarget.sendAtMillis)} · hold Send to change",
+                            "Cancel update",
+                            ::cancelUpdateScheduled,
+                        )
                     } else if (replyTarget != null) {
                         val name = when {
                             replyTarget.own -> "yourself"
@@ -745,8 +810,25 @@ internal fun ConversationScreen(
                                 Icon(imageVector = Icons.Filled.GraphicEq, contentDescription = "Hide voice recorder")
                             }
                         } else if (draft.isNotBlank()) {
-                            FilledIconButton(onClick = ::sendDraft, modifier = Modifier.size(56.dp), colors = sendColors) {
-                                Icon(imageVector = Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
+                            // Messages: tap sends, hold opens "Schedule send" (while updating a scheduled message
+                            // the button shows a clock and re-schedules).
+                            val canSchedule = onSchedule != null && editing == null
+                            Box(
+                                modifier = Modifier.size(56.dp).clip(androidx.compose.foundation.shape.CircleShape).background(colors.primary)
+                                    .combinedClickable(
+                                        onClickLabel = "Send",
+                                        onClick = ::sendDraft,
+                                        onLongClickLabel = if (canSchedule) "Schedule send" else null,
+                                        onLongClick = if (canSchedule) ({ showSchedulePicker = true }) else null,
+                                    )
+                                    .semantics { contentDescription = if (updatingScheduled != null) "Schedule" else "Send" },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    imageVector = if (updatingScheduled != null) Icons.Outlined.Schedule else Icons.AutoMirrored.Filled.Send,
+                                    contentDescription = null,
+                                    tint = colors.onPrimary,
+                                )
                             }
                         } else {
                             VoiceRecordButton(
@@ -832,6 +914,10 @@ internal fun ConversationScreen(
                 ) {
                     if (typingShown) {
                         item(key = "typing") { Box(sendItemPlacement().then(backdrop)) { TypingBubble(typingUsers) } }
+                    }
+                    items(scheduledShown.size, key = { "scheduled:${scheduledShown[it].id}" }) { index ->
+                        val pending = scheduledShown[index]
+                        ScheduledBubble(pending, onClick = { scheduledSheetFor = pending }, modifier = sendItemPlacement().then(backdrop))
                     }
                     items(reversed.size, key = { reversed[it].key }) { index ->
                         val message = reversed[index]
@@ -1082,6 +1168,21 @@ internal fun ConversationScreen(
                 onDismiss = { viewing = null },
             )
         }
+    }
+    if (showSchedulePicker) {
+        ScheduleSendSheet(onPick = ::scheduleDraft, onDismiss = { showSchedulePicker = false })
+    }
+    scheduledSheetFor?.let { pending ->
+        ScheduledMessageSheet(
+            message = pending,
+            onAction = { action ->
+                scheduledSheetFor = null
+                if (updatingScheduled?.id == pending.id) cancelUpdateScheduled()
+                onScheduledAction(pending, action)
+            },
+            onUpdate = { startUpdateScheduled(pending) },
+            onDismiss = { scheduledSheetFor = null },
+        )
     }
     reactionPickerFor?.let { eventId ->
         ModalBottomSheet(onDismissRequest = { reactionPickerFor = null }) {

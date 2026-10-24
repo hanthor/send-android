@@ -339,11 +339,14 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         NotificationRouter.activityResumed = true
+        // Scheduled messages that come due while Send is on screen go out from here, on the minute.
+        ScheduledMessages.get(this).onForeground(true)
         conversationVisible(NotificationRouter.openRoomId)
     }
 
     override fun onPause() {
         NotificationRouter.activityResumed = false
+        ScheduledMessages.get(this).onForeground(false)
         super.onPause()
     }
 
@@ -427,6 +430,8 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
     var notice by rememberSaveable { mutableStateOf("") }
     var pendingUploads by remember { mutableIntStateOf(0) }
     val rooms by repository.joinedRooms.collectAsState()
+    val scheduledStore = remember(activity) { ScheduledMessages.get(activity) }
+    val scheduledMessages by scheduledStore.messages.collectAsState()
     var callSession by remember { mutableStateOf<NativeMatrixCallSession?>(null) }
     val account by repository.account.collectAsState()
     val recoveryState by repository.recoveryState.collectAsState()
@@ -979,6 +984,16 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
                     if (currentRoom != null && currentTimeline != null) scope.launch {
                         try { repository.react(currentTimeline, currentRoom, eventId, emoji) }
                         catch (failure: Exception) { error = failure.message ?: "Reaction could not be sent." }
+                    }
+                },
+                // Messages' Schedule send: kept on this device and sent through the encrypted path when due.
+                scheduled = scheduledMessages.filter { it.roomId == activeRoomId },
+                onSchedule = { text, sendAt -> scheduledStore.schedule(activeRoomId, text, sendAt) },
+                onScheduledAction = { pending, action ->
+                    when (action) {
+                        ScheduledAction.SendNow -> scheduledStore.sendNow(pending.id)
+                        ScheduledAction.Delete -> scheduledStore.cancel(pending.id)
+                        is ScheduledAction.Update -> scheduledStore.update(pending.id, action.text, action.sendAtMillis)
                     }
                 },
                 onCall = { video -> callSession?.startCall(activeRoomId, video) },

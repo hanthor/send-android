@@ -1205,6 +1205,8 @@ class MatrixRepository(context: Context) {
     private fun wipeLocalSession() {
         appContext.filesDir.resolve(STORE_DIR).deleteRecursively()
         appContext.cacheDir.resolve("media").deleteRecursively()
+        // Messages scheduled by the signed-out account must not go out from the next one.
+        ScheduledMessages.get(appContext).clear()
         // Saved session, store key and anything older builds kept here.
         check(prefs().edit().clear().commit()) { "The signed-out session could not be cleared." }
         KeyStore.getInstance("AndroidKeyStore").apply { load(null) }.deleteEntry(STORE_KEY_ALIAS)

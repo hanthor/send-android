@@ -22,6 +22,9 @@ voice and video calls. Unencrypted rooms are never opened.
 - Typing dots, "Read" / "Seen by N" receipts, link previews, a full emoji
   picker and search inside a conversation.
 - Encrypted direct chats and groups; star messages and find them later.
+- Hold Send to schedule a message for later (quick times or a date and
+  time); it waits on your phone, shows under the conversation with Send now /
+  Update / Delete, and goes out encrypted when the time comes.
 
 **Conversation list**
 - Snippets, relative times and unread badges; search.
