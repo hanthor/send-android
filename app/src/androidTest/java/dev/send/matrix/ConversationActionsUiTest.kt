@@ -21,6 +21,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
@@ -167,7 +168,9 @@ class ConversationActionsUiTest {
         composeRule.onNodeWithTag(TIMELINE_TAG).performScrollToIndex(history.lastIndex)
         composeRule.waitForIdle()
         composeRule.runOnIdle { assertEquals(1, callbacks.older) }
-        composeRule.onNodeWithContentDescription("Loading older messages").assertIsDisplayed()
+        // The list was scrolled to its very end before the spinner grew the oldest row upward past the top edge;
+        // a nudge brings it into view, as a user's next finger movement would.
+        composeRule.onNodeWithContentDescription("Loading older messages").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithContentDescription("Jump to newest message").assertIsDisplayed()
         composeRule.auditShot("conversation-loading-older")
 
