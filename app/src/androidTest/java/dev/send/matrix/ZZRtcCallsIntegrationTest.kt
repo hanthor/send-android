@@ -12,7 +12,8 @@ import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
-import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performClick
 import androidx.lifecycle.Lifecycle
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -155,6 +156,32 @@ class ZZRtcCallsIntegrationTest {
         assertTrue(roomId !in IncomingCalls.ringing.value)
         bobLeavesCall()
 
+        // 1b. Bob rings and gives up before Alice picks up: the ring stops and Messages' "Missed call" notification
+        // takes its place, with Call back and Message.
+        val missedRing = bobRings(bobJoinsCall())
+        waitForRing(roomId)
+        assertEquals(missedRing, IncomingCalls.ringing.value[roomId]?.eventId)
+        bobLeavesCall()
+        waitFor("the ring to end as missed", 90_000, { "${callState()} active=${notificationManager.activeNotifications.map { "${it.tag}/${it.id}" }}" }) {
+            callNotification(roomId) == null && missedCallNotification(roomId) != null
+        }
+        val missed = checkNotNull(missedCallNotification(roomId)).notification
+        assertEquals(Notification.CATEGORY_MISSED_CALL, missed.category)
+        assertEquals(IncomingCalls.CHANNEL_MISSED_CALLS, missed.channelId)
+        assertEquals("Missed voice call", missed.extras.getCharSequence(Notification.EXTRA_TITLE).toString())
+        assertEquals(listOf("Call back", "Message"), missed.actions.map { it.title.toString() })
+        // Opening the conversation (notification tap) clears it, as it does in Messages.
+        missed.contentIntent.send(
+            context, 0, null, null, null, null,
+            ActivityOptions.makeBasic()
+                .setPendingIntentBackgroundActivityStartMode(ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED)
+                .toBundle(),
+        )
+        waitForUi("the missed-call notification to clear", 60_000, ::callState) {
+            NotificationRouter.visibleRoomId == roomId && missedCallNotification(roomId) == null
+        }
+        goHome()
+
         // 2. Bob rings again; Answer opens Send, which joins the room's MatrixRTC session through Element Call.
         val secondRing = bobRings(bobJoinsCall())
         val answered = waitForRing(roomId)
@@ -217,11 +244,13 @@ class ZZRtcCallsIntegrationTest {
 
         // 4. The conversation shows the three calls as call rows from the real events. The first ring can sit before
         // the page the timeline loaded when Answer opened the conversation (call memberships, declines and the later
-        // rings fill it), so older history is loaded the way a user would: ⋮ → Load older messages.
+        // rings fill it), so older history is loaded the way a user would: scrolling up to the oldest loaded message,
+        // which fetches the next page by itself (there is no menu entry, as in Messages).
         var olderLoads = 0
         while (repository.messages.value.none { it.id == firstRing } && olderLoads++ < 5) {
-            composeRule.onNodeWithContentDescription("More options").performClick()
-            composeRule.onNodeWithText("Load older messages").performClick()
+            composeRule.waitForIdle()
+            val oldest = repository.messages.value.size - 1
+            if (oldest > 0) composeRule.onNodeWithTag(TIMELINE_TAG).performScrollToIndex(oldest)
             runCatching {
                 composeRule.waitUntil(timeoutMillis = 10_000) { repository.messages.value.any { it.id == firstRing } }
             }
@@ -346,6 +375,9 @@ class ZZRtcCallsIntegrationTest {
 
     private fun callNotification(roomId: String): StatusBarNotification? =
         notificationManager.activeNotifications.firstOrNull { it.tag == roomId && it.id == IncomingCalls.NOTIFICATION_ID }
+
+    private fun missedCallNotification(roomId: String): StatusBarNotification? =
+        notificationManager.activeNotifications.firstOrNull { it.tag == roomId && it.id == IncomingCalls.MISSED_NOTIFICATION_ID }
 
     private fun waitForRing(roomId: String): StatusBarNotification {
         waitFor("Alice's phone to ring", 90_000, { "${callState()} active=${notificationManager.activeNotifications.map { "${it.tag}/${it.id}" }}" }) {

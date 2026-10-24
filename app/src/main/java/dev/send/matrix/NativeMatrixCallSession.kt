@@ -47,8 +47,11 @@ import org.matrix.rustcomponents.sdk.TimelineListener
 /** A call this device placed in a 1:1 conversation while it rings the other person: Send shows "Calling…". */
 data class OutgoingRing(val roomId: String, val name: String, val video: Boolean)
 
-/** A ring answered outside the call UI (notification, incoming-call screen), waiting for the session to join it. */
-data class PendingCall(val roomId: String, val video: Boolean)
+/**
+ * A call requested outside the call UI, waiting for the session: a ring answered from the notification or the
+ * incoming-call screen, or ([outgoing]) "Call back" from a missed-call notification, which places a new call.
+ */
+data class PendingCall(val roomId: String, val video: Boolean, val outgoing: Boolean = false)
 
 /**
  * Native MatrixRTC calls (Element Call) for the lifetime of one authenticated Matrix session: the controller
