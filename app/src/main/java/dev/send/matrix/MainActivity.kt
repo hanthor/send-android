@@ -464,6 +464,7 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
     val theme by settings.theme.collectAsState()
     val sounds by settings.sounds.collectAsState()
     val linkPreviews by settings.linkPreviews.collectAsState()
+    val swipeActions by settings.swipeActions.collectAsState()
     val ownProfile by repository.ownProfile.collectAsState()
     val pushStatus by PushRegistration.status.collectAsState()
     val lifecycleState by LocalLifecycleOwner.current.lifecycle.currentStateFlow.collectAsState()
@@ -659,6 +660,11 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
                 listAction("$userId could not be blocked.") { repository.blockUser(userId) }
                 if (rooms.firstOrNull { it.id == activeRoomId }?.dmUserId == userId) closeConversation()
             },
+            reportSpam = spam@{ picked ->
+                val userId = picked.dmUserId ?: return@spam
+                listAction("The conversation could not be reported.") { repository.reportSpam(picked.id, userId) }
+                if (picked.id == activeRoomId) closeConversation()
+            },
         )
     }
     // Conversation details act on the open room; archive, delete and blocking the DM's person return to the list.
@@ -822,6 +828,7 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
                 mutedRoomIds = mutedRoomIds,
                 blockedUserIds = ignoredUsers,
                 listActions = listActions,
+                swipeActions = swipeActions,
                 onOpen = openFromList,
                 error = error,
                 notice = notice,
@@ -1144,6 +1151,8 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
                     onTheme = settings::setTheme,
                     linkPreviews = linkPreviews,
                     onLinkPreviews = settings::setLinkPreviews,
+                    swipeActions = swipeActions,
+                    onSwipeActions = settings::setSwipeActions,
                     securitySummary = securitySummary(verificationState, recoveryState),
                     onSecurity = { showSecurity = true },
                     onDevices = { showDevices = true },
@@ -1750,6 +1759,8 @@ internal fun HomeScreen(
     listActions: ConversationListActions? = null,
     /** The conversation open beside the list (two panes); its row is highlighted. */
     openRoomId: String? = null,
+    /** Settings → Swipe actions. */
+    swipeActions: SwipeActions = SwipeActions(),
 ) {
     var showingNewChat by rememberSaveable { mutableStateOf(false) }
     var matrixUserId by rememberSaveable { mutableStateOf("") }
@@ -1858,7 +1869,7 @@ internal fun HomeScreen(
                     )
                 }
             } else {
-                managedConversationRows(visibleRooms, mutedRoomIds, listState, listActions, archivedView = false, onOpen = onOpen, openRoomId = openRoomId)
+                managedConversationRows(visibleRooms, mutedRoomIds, listState, listActions, archivedView = false, onOpen = onOpen, openRoomId = openRoomId, swipeActions = swipeActions)
             }
         }
         }
