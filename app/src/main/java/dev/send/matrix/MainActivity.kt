@@ -397,8 +397,9 @@ class MainActivity : ComponentActivity() {
      * notification: opens the conversation and queues a new call. False for any other intent.
      */
     private fun acceptCall(intent: android.content.Intent?): Boolean {
-        val callBack = intent?.action == IncomingCalls.ACTION_CALL_BACK
-        if (intent?.action != IncomingCalls.ACTION_ANSWER && !callBack) return false
+        if (intent == null) return false
+        val callBack = intent.action == IncomingCalls.ACTION_CALL_BACK
+        if (intent.action != IncomingCalls.ACTION_ANSWER && !callBack) return false
         val roomId = intent.getStringExtra(MessageNotifier.EXTRA_ROOM_ID) ?: return true
         if (callBack) IncomingCalls.cancelMissed(this, roomId) else IncomingCalls.stop(this, roomId)
         pendingCall.value = PendingCall(roomId, video = intent.getBooleanExtra(IncomingCalls.EXTRA_VIDEO, false), outgoing = callBack)
