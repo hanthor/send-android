@@ -943,7 +943,7 @@ class MatrixRepository(context: Context) {
      * text — restoring the session first when the process was cold, and returns once the homeserver has every
      * event. The caller deletes the files afterwards.
      */
-    suspend fun sendScheduled(roomId: String, text: String, files: List<SharedFile>): Unit = withContext(Dispatchers.IO) {
+    internal suspend fun sendScheduled(roomId: String, text: String, files: List<SharedFile>): Unit = withContext(Dispatchers.IO) {
         check(restore()) { "Sign in to a Matrix account first." }
         val expected = files.size + if (text.isBlank()) 0 else 1
         require(expected > 0)
@@ -2155,7 +2155,7 @@ class MatrixRepository(context: Context) {
     }
 
     /** Sends a file the composer staged (a cache copy from [copyToCache]) and deletes it afterwards. */
-    suspend fun sendStaged(timeline: Timeline, room: Room, shared: SharedFile) = withContext(Dispatchers.IO) {
+    internal suspend fun sendStaged(timeline: Timeline, room: Room, shared: SharedFile) = withContext(Dispatchers.IO) {
         check(room.isEncrypted()) { "Attachments are disabled because this room is not encrypted." }
         val workDir = (shared.file.parentFile ?: appContext.cacheDir).resolve("work").apply { mkdirs() }
         try {

@@ -66,7 +66,7 @@ class ScheduledMessages private constructor(private val context: Context) {
      * Schedules [text] and the staged [attachments] for [roomId] at [sendAtMillis]; it shows in the conversation
      * until it is sent. The staged copies move under the app's files so they outlive the cache and the process.
      */
-    fun schedule(roomId: String, text: String, sendAtMillis: Long, attachments: List<SharedFile> = emptyList()): ScheduledMessage {
+    internal fun schedule(roomId: String, text: String, sendAtMillis: Long, attachments: List<SharedFile> = emptyList()): ScheduledMessage {
         val id = java.util.UUID.randomUUID().toString()
         val message = ScheduledMessage(
             id = id,
