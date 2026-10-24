@@ -184,16 +184,16 @@ class ConversationActionsUiTest {
         val pending = ScheduledMessage("s1", "!room:example.org", "Happy birthday!", tomorrowEight, now)
         // State written from the test thread is applied on the UI thread, so the next frame sees it.
         composeRule.runOnIdle { scheduled.value = listOf(pending) }
-        val status = composeRule.onNodeWithText("Scheduled for Tomorrow, 8:00 AM")
+        val label = "Scheduled for Tomorrow, 8:00 AM"
+        fun tree(): String = composeRule.onRoot(useUnmergedTree = true).printToString(maxDepth = 14).lineSequence()
+            .filter { "Node #" in it || "Scheduled" in it || "Text = " in it }.take(120).joinToString("\n")
         try {
-            status.assertIsDisplayed()
-        } catch (failure: AssertionError) {
-            val node = status.fetchSemanticsNode()
-            throw AssertionError(
-                "${failure.message}\nbounds=${node.boundsInRoot} window=${node.boundsInWindow} size=${node.size} placed=${node.layoutInfo.isPlaced}\n" +
-                    composeRule.onRoot().printToString(maxDepth = 8).lineSequence().filter { "Scheduled" in it || "Node #" in it }.take(60).joinToString("\n"),
-                failure,
-            )
+            composeRule.waitUntil(5_000) {
+                composeRule.onAllNodesWithText(label).fetchSemanticsNodes().any { !it.boundsInRoot.isEmpty }
+            }
+            composeRule.onNodeWithText(label).assertIsDisplayed()
+        } catch (failure: Throwable) {
+            throw AssertionError("${failure.message}\n${tree()}", failure)
         }
         composeRule.auditShot("scheduled-message")
         composeRule.onNodeWithText("Happy birthday!").performClick()
