@@ -14,6 +14,7 @@ import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.longClick
+import androidx.compose.ui.test.printToString
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
@@ -174,7 +175,17 @@ class ConversationActionsUiTest {
         val pending = ScheduledMessage("s1", "!room:example.org", "Happy birthday!", tomorrowEight, now)
         // State written from the test thread is applied on the UI thread, so the next frame sees it.
         composeRule.runOnIdle { scheduled.value = listOf(pending) }
-        composeRule.onNodeWithText("Scheduled for Tomorrow, 8:00 AM").assertIsDisplayed()
+        val status = composeRule.onNodeWithText("Scheduled for Tomorrow, 8:00 AM")
+        try {
+            status.assertIsDisplayed()
+        } catch (failure: AssertionError) {
+            val node = status.fetchSemanticsNode()
+            throw AssertionError(
+                "${failure.message}\nbounds=${node.boundsInRoot} window=${node.boundsInWindow} size=${node.size} placed=${node.layoutInfo.isPlaced}\n" +
+                    composeRule.onRoot().printToString(maxDepth = 8).lineSequence().filter { "Scheduled" in it || "Node #" in it }.take(60).joinToString("\n"),
+                failure,
+            )
+        }
         composeRule.auditShot("scheduled-message")
         composeRule.onNodeWithText("Happy birthday!").performClick()
         composeRule.waitUntil(5_000) { composeRule.onAllNodesWithText("Send now").fetchSemanticsNodes().isNotEmpty() }
