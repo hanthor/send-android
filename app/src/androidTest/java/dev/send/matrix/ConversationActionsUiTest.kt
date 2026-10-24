@@ -107,6 +107,7 @@ class ConversationActionsUiTest {
         loadMedia: MediaLoader = { _, _ -> error("No media in this fixture.") },
         loadLinkPreview: (suspend (String) -> LinkPreview?)? = null,
         voiceCapture: VoiceCapture? = null,
+        stickers: StickerActions? = null,
     ): Callbacks {
         val callbacks = Callbacks()
         composeRule.setContent {
@@ -140,10 +141,74 @@ class ConversationActionsUiTest {
                     typingUsers = typingUsers,
                     loadLinkPreview = loadLinkPreview,
                     voiceCapture = voiceCapture,
+                    stickers = stickers,
                 )
             }
         }
         return callbacks
+    }
+
+    @Test
+    fun stickersShowWithoutABubbleAndTheComposerPanelSendsThem() {
+        val image = fixtureImage("sticker.png")
+        val party = PackImage(
+            shortcode = "party",
+            body = "Party",
+            url = "mxc://example.org/party",
+            sourceJson = "{\"url\":\"mxc://example.org/party\"}",
+            mimetype = "image/png",
+            width = 512,
+            height = 512,
+            sizeBytes = image.length(),
+            animated = false,
+            sticker = true,
+        )
+        val messages = chat + message(
+            "\$sticker",
+            "",
+            own = false,
+            minutesAgo = 1,
+            attachment = MatrixAttachment(
+                kind = AttachmentKind.Sticker,
+                filename = "Party",
+                mimetype = "image/png",
+                sizeBytes = image.length(),
+                durationMillis = null,
+                width = 512,
+                height = 512,
+                sourceJson = party.sourceJson,
+                thumbnailSourceJson = null,
+            ),
+        )
+        var sent: Pair<PackImage, Boolean>? = null
+        val actions = StickerActions(
+            loadPacks = { listOf(ImagePack(MatrixRepository.USER_PACK_ID, "Your stickers", listOf(party))) },
+            send = { picked, asGif -> sent = picked to asGif },
+            add = { error("Not in this fixture.") },
+            remove = {},
+        )
+        show(messages, loadMedia = { _, _ -> image }, stickers = actions)
+
+        // A received sticker is the picture alone, described for TalkBack, with no text bubble.
+        composeRule.onNodeWithContentDescription("Sticker: Party").assertIsDisplayed()
+        composeRule.onAllNodesWithText("Party").assertCountEquals(0)
+
+        // The composer panel has Messages' three tabs; Stickers lists the pack, tapping one sends it.
+        composeRule.onNodeWithContentDescription("Emoji").performClick()
+        composeRule.waitUntil(15_000) { composeRule.onAllNodesWithText("Stickers").fetchSemanticsNodes().isNotEmpty() }
+        composeRule.onNodeWithText("GIFs").assertIsDisplayed()
+        composeRule.onNodeWithText("Stickers").performClick()
+        composeRule.waitUntil(10_000) { composeRule.onAllNodesWithText("Your stickers").fetchSemanticsNodes().isNotEmpty() }
+        composeRule.onNodeWithContentDescription("Add a sticker from your photos").assertIsDisplayed()
+        composeRule.auditShot("sticker-picker")
+        composeRule.onNodeWithContentDescription("Send sticker: Party").performClick()
+        composeRule.waitUntil(5_000) { sent != null }
+        assertEquals(party to false, sent)
+
+        // No animated pictures in the pack: the GIFs tab explains how to add some.
+        composeRule.onNodeWithText("GIFs").performClick()
+        composeRule.waitUntil(10_000) { composeRule.onAllNodesWithText("No GIFs yet").fetchSemanticsNodes().isNotEmpty() }
+        composeRule.onNodeWithText("Add GIF").assertIsDisplayed()
     }
 
     private fun longPress(text: String) {
