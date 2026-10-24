@@ -64,7 +64,16 @@ class ZZConversationActionsIntegrationTest {
     private val repository get() = MatrixRepository.get(context)
 
     /** One message as Bob's client sees it. */
-    private data class BobEvent(val roomId: String, val eventId: String, val body: String?, val inReplyTo: String?, val edited: Boolean, val redacted: Boolean)
+    private data class BobEvent(
+        val roomId: String,
+        val eventId: String,
+        val body: String?,
+        val inReplyTo: String?,
+        val edited: Boolean,
+        val redacted: Boolean,
+        /** The `mxc://` URL of an `m.sticker`. */
+        val stickerUrl: String? = null,
+    )
 
     private var bobClient: Client? = null
     private var bobSync: SyncService? = null
@@ -210,6 +219,37 @@ class ZZConversationActionsIntegrationTest {
         waitForUi("the schedule to clear once sent", 30_000, { "scheduled=${store.messages.value}" }) {
             store.messages.value.none { it.id == pending.id } && !hasNodeWithText("Scheduled for Today, ", substring = true)
         }
+
+        // 8. Stickers: a picture added to Alice's own image pack (uploaded, recorded in im.ponies.user_emotes) sends
+        // as an encrypted m.sticker that references the pack's picture; Bob's client decrypts a sticker with that
+        // URL and body, and Alice's conversation shows it as a sticker, not a text bubble.
+        val stickerFile = java.io.File(composeRule.activity.cacheDir, "ci-sticker-$stamp.png")
+        val bitmap = android.graphics.Bitmap.createBitmap(96, 96, android.graphics.Bitmap.Config.ARGB_8888).apply { eraseColor(0xFF1A73E8.toInt()) }
+        stickerFile.outputStream().use { check(bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)) }
+        val added = runBlocking { repository.addToUserPack(android.net.Uri.fromFile(stickerFile)) }
+        assertTrue(added.url, added.url.startsWith("mxc://"))
+        assertEquals("ci-sticker-$stamp", added.body)
+        val packs = runBlocking { repository.imagePacks(second) }
+        assertTrue("packs=${packs.map { it.id to it.images.map { image -> image.shortcode } }}", packs.any { pack ->
+            pack.id == MatrixRepository.USER_PACK_ID && pack.images.any { it.url == added.url && it.sticker }
+        })
+        composeRule.onNodeWithContentDescription("Emoji").performClick()
+        waitForUi("the Stickers tab", 15_000, ::conversationState) { hasNodeWithText("Stickers") }
+        composeRule.onNodeWithText("Stickers").performClick()
+        waitForUi("the added sticker in the picker", 30_000, ::conversationState) {
+            composeRule.onAllNodesWithContentDescription("Send sticker: ${added.body}").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.auditShot("live-sticker-picker")
+        composeRule.onNodeWithContentDescription("Send sticker: ${added.body}").performClick()
+        waitFor("Bob to receive the sticker", 60_000, ::bobState) { bobEvents.values.any { it.roomId == second && it.stickerUrl == added.url } }
+        assertEquals(added.body, bobEvents.values.first { it.roomId == second && it.stickerUrl == added.url }.body)
+        waitForUi("the sticker in Alice's conversation", 60_000, ::conversationState) {
+            composeRule.onAllNodesWithContentDescription("Sticker: ${added.body}").fetchSemanticsNodes().isNotEmpty() &&
+                repository.messages.value.any { it.attachment?.kind == AttachmentKind.Sticker && it.own }
+        }
+        composeRule.auditShot("live-sticker")
+        runBlocking { repository.removeFromUserPack(added.shortcode) }
+        assertTrue(runBlocking { repository.imagePacks(second) }.none { pack -> pack.images.any { it.url == added.url } })
     }
 
     private fun hasNodeWithText(text: String, substring: Boolean = false): Boolean =
@@ -301,6 +341,7 @@ class ZZConversationActionsIntegrationTest {
                 redacted = false,
             )
             is MsgLikeKind.Redacted -> BobEvent(roomId, eventId, body = bobEvents[eventId]?.body, inReplyTo = null, edited = false, redacted = true)
+            is MsgLikeKind.Sticker -> BobEvent(roomId, eventId, body = kind.body, inReplyTo = null, edited = false, redacted = false, stickerUrl = kind.source.url())
             else -> return
         }
         bobEvents[eventId] = recorded

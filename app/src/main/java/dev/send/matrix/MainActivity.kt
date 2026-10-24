@@ -1007,6 +1007,18 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
                         is ScheduledAction.Update -> scheduledStore.update(pending.id, action.text, action.sendAtMillis)
                     }
                 },
+                // GIFs and stickers come from Matrix image packs (yours, this room's, packs enabled from other rooms).
+                stickers = remember(repository, activeRoomId) {
+                    StickerActions(
+                        loadPacks = { repository.imagePacks(activeRoomId) },
+                        send = { image, asGif ->
+                            val currentRoom = room ?: error("Open a conversation first.")
+                            if (asGif) repository.sendGif(currentRoom, image) else repository.sendSticker(currentRoom, image)
+                        },
+                        add = { uri -> repository.addToUserPack(uri) },
+                        remove = { shortcode -> repository.removeFromUserPack(shortcode) },
+                    )
+                },
                 onCall = { video -> callSession?.startCall(activeRoomId, video) },
                 callBanner = rooms.firstOrNull { it.id == activeRoomId }
                     ?.takeIf { it.callActive && it.callParticipants.none { member -> member == account?.userId } && runningCall?.callData?.roomId?.value != activeRoomId }

@@ -190,6 +190,8 @@ internal fun ConversationScreen(
     onSchedule: ((text: String, sendAtMillis: Long, attachments: List<SharedFile>) -> Unit)? = null,
     /** Send now, update or delete a scheduled message. */
     onScheduledAction: (ScheduledMessage, ScheduledAction) -> Unit = { _, _ -> },
+    /** GIF and sticker tabs for the composer panel (image packs); null leaves the emoji picker alone. */
+    stickers: StickerActions? = null,
 ) {
     val context = LocalContext.current
     val colors = MaterialTheme.colorScheme
@@ -922,8 +924,11 @@ internal fun ConversationScreen(
                         )
                     }
                     if (showEmojiPanel) {
-                        EmojiPickerPanel(
+                        ComposerPanel(
                             onEmoji = { emoji -> onDraft(draft + emoji) },
+                            stickers = stickers,
+                            loadMedia = loadMedia,
+                            onError = { composerHint = it },
                             modifier = Modifier.fillMaxWidth().height(320.dp).padding(top = 8.dp),
                         )
                     }
@@ -1122,7 +1127,7 @@ internal fun ConversationScreen(
         // Photos and videos open in the viewer; files and audio in the app that handles them.
         fun openMedia(message: MatrixMessage) {
             val attachment = message.attachment ?: return
-            if (attachment.kind == AttachmentKind.Image || attachment.kind == AttachmentKind.Video) {
+            if (attachment.kind == AttachmentKind.Image || attachment.kind == AttachmentKind.Video || attachment.kind == AttachmentKind.Sticker) {
                 viewing = message
             } else scope.launch {
                 try {
@@ -1308,7 +1313,7 @@ private fun MessageItem(
                                     loadMedia = loadMedia,
                                     playback = playback,
                                     onLongPress = onLongPress,
-                                    onOpenVisual = onOpenVisual.takeIf { attachment.kind == AttachmentKind.Image || attachment.kind == AttachmentKind.Video },
+                                    onOpenVisual = onOpenVisual.takeIf { attachment.kind == AttachmentKind.Image || attachment.kind == AttachmentKind.Video || attachment.kind == AttachmentKind.Sticker },
                                     modifier = a11yActions,
                                 ) }
                             }
