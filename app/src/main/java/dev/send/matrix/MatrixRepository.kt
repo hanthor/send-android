@@ -167,9 +167,35 @@ private data class PendingRoomFlags(
     )
 }
 
-enum class AttachmentKind { Image, Video, Audio, Voice, File }
+enum class AttachmentKind { Image, Video, Audio, Voice, File, Sticker }
 
-/** Media carried by an m.image / m.video / m.audio / m.file event. Sources are kept as SDK JSON so the model stays a plain value. */
+/**
+ * One image of an MSC2545 image pack: a sticker, a GIF or an emote the user, a room or a pack room shares.
+ * [sourceJson] is the SDK media source for its `mxc://` URL, loadable like any attachment.
+ */
+data class PackImage(
+    val shortcode: String,
+    /** Description sent as the sticker's body (its alt text). */
+    val body: String,
+    val url: String,
+    val sourceJson: String,
+    val mimetype: String?,
+    val width: Int?,
+    val height: Int?,
+    val sizeBytes: Long?,
+    /** Animated (GIF/animated WebP), shown under Messages' GIFs tab. */
+    val animated: Boolean,
+    /** Declared usable as a sticker (or with no usage declared: usable as anything). */
+    val sticker: Boolean,
+) {
+    /** Keyed by URL so a pack shared through several rooms counts once. */
+    val key: String get() = url
+}
+
+/** An MSC2545 image pack: the user's own, a room's, or one the user enabled from another room. */
+data class ImagePack(val id: String, val name: String, val images: List<PackImage>)
+
+/** Media carried by an m.image / m.video / m.audio / m.file / m.sticker event. Sources are kept as SDK JSON so the model stays a plain value. */
 data class MatrixAttachment(
     val kind: AttachmentKind,
     val filename: String,
@@ -1867,7 +1893,7 @@ class MatrixRepository(context: Context) {
     private fun toMessage(item: org.matrix.rustcomponents.sdk.TimelineItem, event: org.matrix.rustcomponents.sdk.EventTimelineItem, ownUserId: String?): MatrixMessage? {
         val content = event.content as? TimelineItemContent.MsgLike ?: return null
         val kind = content.content.kind
-        if (kind !is MsgLikeKind.Message && kind !is MsgLikeKind.UnableToDecrypt && kind !is MsgLikeKind.Redacted) return null
+        if (kind !is MsgLikeKind.Message && kind !is MsgLikeKind.UnableToDecrypt && kind !is MsgLikeKind.Redacted && kind !is MsgLikeKind.Sticker) return null
         val key = item.uniqueId().id
         val id = when (val identifier = event.eventOrTransactionId) {
             is EventOrTransactionId.EventId -> identifier.eventId
@@ -1911,6 +1937,34 @@ class MatrixRepository(context: Context) {
                 status = status,
                 decryptionFailure = decryptionFailureOf(kind.msg),
                 senderName = senderName,
+                readBy = readBy,
+                key = key,
+            )
+        }
+        if (kind is MsgLikeKind.Sticker) {
+            // Stickers (m.sticker) show as an image without a bubble; the body is their description.
+            return MatrixMessage(
+                id = id,
+                sender = event.sender,
+                text = "",
+                own = event.isOwn,
+                timestampMillis = event.timestamp.toLong(),
+                reactions = event.reactions.map { it.key },
+                attachment = MatrixAttachment(
+                    kind = AttachmentKind.Sticker,
+                    filename = kind.body.ifBlank { "Sticker" },
+                    mimetype = kind.info.mimetype,
+                    sizeBytes = kind.info.size?.toLong(),
+                    durationMillis = null,
+                    width = kind.info.width?.toInt(),
+                    height = kind.info.height?.toInt(),
+                    sourceJson = kind.source.toJson(),
+                    thumbnailSourceJson = kind.info.thumbnailSource?.toJson(),
+                ),
+                status = status,
+                senderName = senderName,
+                replyTo = content.content.inReplyTo?.let { replyQuoteOf(it, (event.eventOrTransactionId as? EventOrTransactionId.EventId)?.eventId, ownUserId) },
+                editable = false,
                 readBy = readBy,
                 key = key,
             )
@@ -2069,11 +2123,196 @@ class MatrixRepository(context: Context) {
      */
     suspend fun forward(source: Timeline, eventId: String, targetRoomId: String) = withContext(Dispatchers.IO) {
         val item = source.getEventTimelineItemByEventId(eventId)
-        val message = ((item.content as? TimelineItemContent.MsgLike)?.content?.kind as? MsgLikeKind.Message)?.content
-            ?: error("This message can't be forwarded.")
         val target = openEncryptedRoom(targetRoomId)
-        target.timeline().send(contentWithoutRelationFromMessage(message))
+        when (val kind = (item.content as? TimelineItemContent.MsgLike)?.content?.kind) {
+            is MsgLikeKind.Message -> target.timeline().send(contentWithoutRelationFromMessage(kind.content))
+            // A sticker's image is already on the server (unencrypted, as pack images are); the event is re-sent as is.
+            is MsgLikeKind.Sticker -> target.sendRaw(
+                STICKER_EVENT_TYPE,
+                stickerContent(kind.body, kind.source.url(), kind.info.mimetype, kind.info.width?.toInt(), kind.info.height?.toInt(), kind.info.size?.toLong()).toString(),
+            )
+            else -> error("This message can't be forwarded.")
+        }
+        Unit
     }
+
+    // ---- Stickers and GIFs: MSC2545 image packs (im.ponies.*), sent as m.sticker / m.image with the pack's mxc URL ----
+
+    /**
+     * Every image pack available in [roomId]: the user's own pack (`im.ponies.user_emotes`), the room's packs
+     * (`im.ponies.room_emotes` state, the default key and any key the user enabled) and the packs enabled from
+     * other rooms (`im.ponies.emote_rooms`). Room state isn't in the sliding-sync window, so packs are read with
+     * the client-server API. The user's pack comes first, named "Your stickers" when it has no name.
+     */
+    suspend fun imagePacks(roomId: String?): List<ImagePack> = withContext(Dispatchers.IO) {
+        val client = requireClient()
+        val packs = mutableListOf<ImagePack>()
+        val seen = HashSet<String>()
+        fun add(id: String, fallbackName: String, json: org.json.JSONObject?) {
+            val pack = json?.let { parseImagePack(id, fallbackName, it) } ?: return
+            if (pack.images.isNotEmpty() && seen.add(pack.id)) packs += pack
+        }
+        add(USER_PACK_ID, "Your stickers", accountDataJson(USER_EMOTES_TYPE))
+        val enabled = accountDataJson(EMOTE_ROOMS_TYPE)?.optJSONObject("rooms")
+        val wanted = linkedMapOf<String, MutableSet<String>>()
+        if (roomId != null) wanted.getOrPut(roomId) { linkedSetOf() }.add("")
+        enabled?.keys()?.forEach { enabledRoom ->
+            val keys = enabled.optJSONObject(enabledRoom) ?: return@forEach
+            val set = wanted.getOrPut(enabledRoom) { linkedSetOf() }
+            keys.keys().forEach { set.add(it) }
+        }
+        for ((packRoom, keys) in wanted) {
+            val roomName = client.getRoom(packRoom)?.use { it.displayName() }.orEmpty()
+            for (key in keys) {
+                val (code, body) = clientApi("GET", "/_matrix/client/v3/rooms/${encodePath(packRoom)}/state/$ROOM_EMOTES_TYPE/${encodePath(key)}", null)
+                if (code !in 200..299) continue
+                add("$packRoom/$key", roomName.ifBlank { "Room pack" }, runCatching { org.json.JSONObject(body) }.getOrNull())
+            }
+        }
+        packs
+    }
+
+    /**
+     * Global account data as the server holds it. The SDK's copy (`Client.accountData`) is the store's, which only
+     * learns of a write once sync echoes it back, so a pack image added a moment ago would be missing; the
+     * client-server API answers with the written content at once. The SDK's copy is the fallback offline.
+     */
+    private suspend fun accountDataJson(type: String): org.json.JSONObject? {
+        val client = requireClient()
+        val fromServer = runCatching {
+            val (code, body) = clientApi("GET", "/_matrix/client/v3/user/${encodePath(client.userId())}/account_data/${encodePath(type)}", null)
+            when {
+                code in 200..299 -> org.json.JSONObject(body)
+                code == 404 -> null
+                else -> error("HTTP $code")
+            }
+        }
+        if (fromServer.isSuccess) return fromServer.getOrNull()
+        return client.accountData(type)?.let { json -> runCatching { org.json.JSONObject(json) }.getOrNull() }
+    }
+
+    private fun parseImagePack(id: String, fallbackName: String, json: org.json.JSONObject): ImagePack? {
+        val images = json.optJSONObject("images") ?: return null
+        val packUsage = json.optJSONObject("pack")?.optJSONArray("usage")?.let { usage -> List(usage.length()) { usage.optString(it) } }
+        val name = json.optJSONObject("pack")?.optString("display_name").orEmpty().ifBlank { fallbackName }
+        val parsed = images.keys().asSequence().mapNotNull { shortcode ->
+            val image = images.optJSONObject(shortcode) ?: return@mapNotNull null
+            val url = image.optString("url").takeIf { it.startsWith("mxc://") } ?: return@mapNotNull null
+            val info = image.optJSONObject("info")
+            val usage = image.optJSONArray("usage")?.let { list -> List(list.length()) { list.optString(it) } } ?: packUsage
+            val mimetype = info?.optString("mimetype")?.takeIf { it.isNotBlank() }
+            val sourceJson = runCatching { MediaSource.fromUrl(url).use { it.toJson() } }.getOrNull() ?: return@mapNotNull null
+            PackImage(
+                shortcode = shortcode,
+                body = image.optString("body").ifBlank { shortcode },
+                url = url,
+                sourceJson = sourceJson,
+                mimetype = mimetype,
+                width = info?.optInt("w")?.takeIf { it > 0 },
+                height = info?.optInt("h")?.takeIf { it > 0 },
+                sizeBytes = info?.optLong("size")?.takeIf { it > 0 },
+                animated = mimetype == "image/gif" || mimetype == "image/apng" || (mimetype == "image/webp" && image.optBoolean("animated", false)),
+                sticker = usage == null || usage.isEmpty() || "sticker" in usage,
+            )
+        }.toList()
+        return ImagePack(id, name, parsed)
+    }
+
+    /** Sends [image] as an `m.sticker` (its body is the description); the pack's image is referenced, not re-uploaded. */
+    suspend fun sendSticker(room: Room, image: PackImage) = withContext(Dispatchers.IO) {
+        check(room.isEncrypted()) { "Stickers are disabled because this room is not encrypted." }
+        room.sendRaw(STICKER_EVENT_TYPE, stickerContent(image.body, image.url, image.mimetype, image.width, image.height, image.sizeBytes).toString())
+        Unit
+    }
+
+    /** Sends an animated pack image as an `m.image` (Messages sends GIFs as pictures), referencing the pack's image. */
+    suspend fun sendGif(room: Room, image: PackImage) = withContext(Dispatchers.IO) {
+        check(room.isEncrypted()) { "GIFs are disabled because this room is not encrypted." }
+        val content = stickerContent(image.body, image.url, image.mimetype, image.width, image.height, image.sizeBytes)
+            .put("msgtype", "m.image")
+            .put("filename", image.body.ifBlank { image.shortcode } + if (image.mimetype == "image/gif") ".gif" else "")
+        room.sendRaw("m.room.message", content.toString())
+        Unit
+    }
+
+    private fun stickerContent(body: String, url: String, mimetype: String?, width: Int?, height: Int?, size: Long?): org.json.JSONObject {
+        val info = org.json.JSONObject()
+        mimetype?.let { info.put("mimetype", it) }
+        width?.let { info.put("w", it) }
+        height?.let { info.put("h", it) }
+        size?.let { info.put("size", it) }
+        return org.json.JSONObject().put("body", body).put("url", url).put("info", info)
+    }
+
+    /**
+     * Adds a picture from the device to the user's own image pack (`im.ponies.user_emotes`): uploaded to the
+     * homeserver's media repository (pack images are plain `mxc://` URLs, so other rooms can show them) and
+     * recorded with its size, as a sticker and, for animated pictures, a GIF. Returns the new pack entry.
+     */
+    suspend fun addToUserPack(uri: Uri): PackImage = withContext(Dispatchers.IO) {
+        val client = requireClient()
+        val workDir = appContext.cacheDir.resolve("outgoing/${java.util.UUID.randomUUID()}").apply { mkdirs() }
+        try {
+            val copied = copyToCache(appContext, uri, workDir)
+            // A file picked without a provider type (tests, some file managers) is typed by its extension.
+            val guessed = android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(copied.file.extension.lowercase())
+            val picked = if (copied.mimeType.startsWith("image/")) copied else copied.copy(mimeType = guessed ?: copied.mimeType)
+            check(picked.mimeType.startsWith("image/")) { "Only pictures can be added as stickers." }
+            check(picked.file.length() <= MAX_STICKER_BYTES) { "Stickers can be up to ${MAX_STICKER_BYTES / 1_000_000} MB." }
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(picked.file.absolutePath, bounds)
+            val width = bounds.outWidth.takeIf { it > 0 }
+            val height = bounds.outHeight.takeIf { it > 0 }
+            val animated = picked.mimeType == "image/gif" || isAnimatedImage(picked.file)
+            val url = client.uploadMedia(picked.mimeType, picked.file.readBytes(), null)
+            val pack = accountDataJson(USER_EMOTES_TYPE) ?: org.json.JSONObject()
+            val images = pack.optJSONObject("images") ?: org.json.JSONObject().also { pack.put("images", it) }
+            val base = picked.file.nameWithoutExtension.lowercase().replace(Regex("[^a-z0-9_]+"), "_").trim('_').ifBlank { "sticker" }
+            var shortcode = base
+            var n = 2
+            while (images.has(shortcode)) shortcode = "${base}_${n++}"
+            val info = org.json.JSONObject().put("mimetype", picked.mimeType).put("size", picked.file.length())
+            width?.let { info.put("w", it) }
+            height?.let { info.put("h", it) }
+            val body = picked.file.nameWithoutExtension.ifBlank { shortcode }
+            val entry = org.json.JSONObject().put("url", url).put("body", body).put("info", info).put("usage", org.json.JSONArray().put("sticker"))
+            if (animated && picked.mimeType != "image/gif") entry.put("animated", true)
+            images.put(shortcode, entry)
+            if (pack.optJSONObject("pack") == null) {
+                pack.put("pack", org.json.JSONObject().put("display_name", "Your stickers").put("usage", org.json.JSONArray().put("sticker")))
+            }
+            client.setAccountData(USER_EMOTES_TYPE, pack.toString())
+            PackImage(
+                shortcode = shortcode,
+                body = body,
+                url = url,
+                sourceJson = MediaSource.fromUrl(url).use { it.toJson() },
+                mimetype = picked.mimeType,
+                width = width,
+                height = height,
+                sizeBytes = picked.file.length(),
+                animated = animated,
+                sticker = true,
+            )
+        } finally {
+            workDir.deleteRecursively()
+        }
+    }
+
+    /** Removes an image the user added from their pack (the picture stays on the server for messages that used it). */
+    suspend fun removeFromUserPack(shortcode: String) = withContext(Dispatchers.IO) {
+        val client = requireClient()
+        val pack = accountDataJson(USER_EMOTES_TYPE) ?: return@withContext
+        val images = pack.optJSONObject("images") ?: return@withContext
+        if (!images.has(shortcode)) return@withContext
+        images.remove(shortcode)
+        client.setAccountData(USER_EMOTES_TYPE, pack.toString())
+    }
+
+    private fun isAnimatedImage(file: File): Boolean = runCatching {
+        val source = android.graphics.ImageDecoder.createSource(file)
+        android.graphics.ImageDecoder.decodeDrawable(source) { decoder, _, _ -> decoder.setTargetSize(1, 1) } is android.graphics.drawable.AnimatedImageDrawable
+    }.getOrDefault(false)
 
     /**
      * Paginates back until [eventId] is in the open timeline (a reply's original, a search hit), at most
@@ -2679,6 +2918,12 @@ class MatrixRepository(context: Context) {
     }
 
     companion object {
+        internal const val STICKER_EVENT_TYPE = "m.sticker"
+        internal const val USER_EMOTES_TYPE = "im.ponies.user_emotes"
+        internal const val ROOM_EMOTES_TYPE = "im.ponies.room_emotes"
+        internal const val EMOTE_ROOMS_TYPE = "im.ponies.emote_rooms"
+        internal const val USER_PACK_ID = "user"
+        private const val MAX_STICKER_BYTES = 4_000_000L
         private const val PREFS = "matrix_session_locator"
         private const val KEY_STORE_KEY = "sdk_store_key"
         private const val KEY_SESSION = "sdk_session"

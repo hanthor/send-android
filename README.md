@@ -17,10 +17,16 @@ voice and video calls. Unencrypted rooms are never opened.
 **Messaging**
 - Text, photos, videos, files and hold-to-record voice messages (slide up to
   record hands-free), with an in-app photo/video viewer.
+- GIFs and stickers from the composer's Emoji / GIFs / Stickers panel, backed
+  by Matrix image packs (yours, the room's, and packs you enabled from other
+  rooms); add your own from your photos. Stickers show without a bubble and
+  GIFs play in place.
 - Long-press for reactions and Reply, Forward, Copy, Edit, Delete, Select more
   and Info; swipe a message to reply.
 - Typing dots, "Read" / "Seen by N" receipts, link previews, a full emoji
-  picker and search inside a conversation.
+  picker and search inside a conversation; older history loads as you scroll
+  up, and a round button jumps back to the newest message, counting what
+  arrived meanwhile.
 - Encrypted direct chats and groups; star messages and find them later.
 
 **Conversation list**
@@ -31,7 +37,8 @@ voice and video calls. Unencrypted rooms are never opened.
 
 **Calls and notifications**
 - Voice and video calls through Element Call (MatrixRTC), with a full-screen
-  incoming-call screen, Answer/Decline and "Calling…" / "Call declined".
+  incoming-call screen, Answer/Decline, "Calling…" / "Call declined" and a
+  missed-call notification with Call back.
 - Conversation notifications with inline Reply and Mark as read, delivered by
   UnifiedPush or periodic background sync; per-conversation mute; bubbles
   (let a conversation float over other apps, from the notification's bubble

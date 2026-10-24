@@ -90,6 +90,9 @@ import kotlinx.coroutines.withContext
 /** Loads decrypted media for an attachment source (SDK JSON) into a local file. */
 typealias MediaLoader = suspend (sourceJson: String, filename: String) -> File
 
+/** Longest side of a sticker in the timeline (Messages: roughly a third of the width). */
+internal val STICKER_DP = 150.dp
+
 private const val PREVIEW_PX = 720
 
 /** Decoded thumbnails, keyed by media source JSON, bounded by bitmap bytes. */
@@ -218,6 +221,15 @@ internal fun AttachmentBubble(
         }
     }
     when (attachment.kind) {
+        AttachmentKind.Sticker -> StickerImage(
+            attachment = attachment,
+            loadMedia = loadMedia,
+            modifier = modifier.combinedClickable(
+                onClick = { if (onOpenVisual != null) onOpenVisual() else open() },
+                onLongClickLabel = "Select message",
+                onLongClick = onLongPress,
+            ),
+        )
         AttachmentKind.Image, AttachmentKind.Video -> VisualMedia(
             attachment = attachment,
             shape = shape,
@@ -283,10 +295,17 @@ internal fun rememberMediaPreview(attachment: MatrixAttachment, loadMedia: Media
 @Composable
 internal fun MediaTile(attachment: MatrixAttachment, loadMedia: MediaLoader, modifier: Modifier = Modifier) {
     val colors = MaterialTheme.colorScheme
-    val visual = attachment.kind == AttachmentKind.Image || attachment.kind == AttachmentKind.Video
+    val visual = attachment.kind == AttachmentKind.Image || attachment.kind == AttachmentKind.Video || attachment.kind == AttachmentKind.Sticker
     Box(
         modifier.clip(RoundedCornerShape(12.dp)).background(colors.surfaceContainerHighest)
-            .semantics { contentDescription = if (visual) (if (attachment.kind == AttachmentKind.Video) "Video" else "Photo") else attachment.filename },
+            .semantics {
+                contentDescription = when (attachment.kind) {
+                    AttachmentKind.Video -> "Video"
+                    AttachmentKind.Sticker -> "Sticker"
+                    AttachmentKind.Image -> if (attachment.mimetype == "image/gif") "GIF" else "Photo"
+                    else -> attachment.filename
+                }
+            },
         contentAlignment = Alignment.Center,
     ) {
         if (visual) {
@@ -341,11 +360,13 @@ private fun VisualMedia(attachment: MatrixAttachment, shape: Shape, loadMedia: M
             .clip(shape)
             .background(MaterialTheme.colorScheme.surfaceContainerHighest)
             .then(modifier)
-            .semantics { contentDescription = if (isVideo) "Video" else "Photo" },
+            .semantics { contentDescription = if (isVideo) "Video" else if (attachment.mimetype == "image/gif") "GIF" else "Photo" },
         contentAlignment = Alignment.Center,
     ) {
         val bitmap = preview
         when {
+            // GIFs (and other animated pictures) play in the bubble, as in Messages.
+            !isVideo && attachment.mimetype == "image/gif" -> AnimatedOrStillImage(attachment, loadMedia, ContentScale.Crop, Modifier.fillMaxSize())
             bitmap != null -> Image(bitmap = bitmap, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
             failed -> Icon(Icons.Outlined.ImageIcon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(40.dp))
             else -> CircularProgressIndicator(modifier = Modifier.size(28.dp), strokeWidth = 2.5.dp)
@@ -372,6 +393,100 @@ private fun VisualMedia(attachment: MatrixAttachment, shape: Shape, loadMedia: M
             CircularProgressIndicator(modifier = Modifier.size(28.dp), strokeWidth = 2.5.dp)
         }
     }
+}
+
+/**
+ * Messages shows stickers as the picture alone: no bubble, no background, at most [STICKER_DP] on its longer
+ * side, keeping its aspect ratio. Animated stickers play; the description is read by TalkBack.
+ */
+@Composable
+private fun StickerImage(attachment: MatrixAttachment, loadMedia: MediaLoader, modifier: Modifier) {
+    val aspect = if (attachment.width != null && attachment.height != null && attachment.width > 0 && attachment.height > 0) {
+        attachment.width.toFloat() / attachment.height
+    } else 1f
+    val width = if (aspect >= 1f) STICKER_DP else STICKER_DP * aspect
+    val height = if (aspect >= 1f) STICKER_DP / aspect else STICKER_DP
+    val description = "Sticker" + attachment.filename.takeIf { it.isNotBlank() && it != "Sticker" }?.let { ": $it" }.orEmpty()
+    Box(
+        modifier = Modifier.size(width, height).then(modifier).semantics { contentDescription = description },
+        contentAlignment = Alignment.Center,
+    ) {
+        AnimatedOrStillImage(attachment, loadMedia, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
+    }
+}
+
+/**
+ * The picture of an image or sticker: animated pictures (GIF, animated WebP/PNG) play in place through
+ * [android.graphics.ImageDecoder]; everything else is the decoded preview bitmap. A spinner while it loads, an
+ * image icon when it can't be shown.
+ */
+@Composable
+internal fun AnimatedOrStillImage(attachment: MatrixAttachment, loadMedia: MediaLoader, contentScale: ContentScale, modifier: Modifier = Modifier) {
+    val animated = attachment.mimetype == "image/gif" || attachment.mimetype == "image/webp" || attachment.mimetype == "image/apng"
+    if (animated) {
+        var file by remember(attachment.sourceJson) { mutableStateOf<File?>(null) }
+        var failed by remember(attachment.sourceJson) { mutableStateOf(false) }
+        LaunchedEffect(attachment.sourceJson) {
+            try {
+                file = loadMedia(attachment.sourceJson, attachment.filename)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                failed = true
+            }
+        }
+        val loaded = file
+        when {
+            loaded != null -> AnimatedImage(loaded, contentScale, modifier)
+            failed -> Icon(Icons.Outlined.ImageIcon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(40.dp))
+            else -> CircularProgressIndicator(modifier = Modifier.size(28.dp), strokeWidth = 2.5.dp)
+        }
+    } else {
+        val preview = rememberMediaPreview(attachment, loadMedia)
+        val bitmap = preview.bitmap
+        when {
+            bitmap != null -> Image(bitmap = bitmap, contentDescription = null, contentScale = contentScale, modifier = modifier)
+            preview.failed -> Icon(Icons.Outlined.ImageIcon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(40.dp))
+            else -> CircularProgressIndicator(modifier = Modifier.size(28.dp), strokeWidth = 2.5.dp)
+        }
+    }
+}
+
+/** An [android.widget.ImageView] playing [file] with ImageDecoder (looping); a still picture if it isn't animated. */
+@Composable
+private fun AnimatedImage(file: File, contentScale: ContentScale, modifier: Modifier) {
+    val drawable by androidx.compose.runtime.produceState<android.graphics.drawable.Drawable?>(null, file) {
+        value = withContext(Dispatchers.IO) {
+            runCatching {
+                android.graphics.ImageDecoder.decodeDrawable(android.graphics.ImageDecoder.createSource(file)) { decoder, info, _ ->
+                    val longest = maxOf(info.size.width, info.size.height)
+                    if (longest > PREVIEW_PX) decoder.setTargetSampleSize(sampleSize(info.size.width, info.size.height, PREVIEW_PX))
+                    decoder.allocator = android.graphics.ImageDecoder.ALLOCATOR_SOFTWARE
+                }
+            }.getOrNull()
+        }
+    }
+    val current = drawable
+    DisposableEffect(current) {
+        (current as? android.graphics.drawable.AnimatedImageDrawable)?.apply {
+            repeatCount = android.graphics.drawable.AnimatedImageDrawable.REPEAT_INFINITE
+            start()
+        }
+        onDispose { (current as? android.graphics.drawable.AnimatedImageDrawable)?.stop() }
+    }
+    if (current == null) {
+        Box(modifier, contentAlignment = Alignment.Center) { CircularProgressIndicator(modifier = Modifier.size(28.dp), strokeWidth = 2.5.dp) }
+        return
+    }
+    val scaleType = if (contentScale == ContentScale.Crop) android.widget.ImageView.ScaleType.CENTER_CROP else android.widget.ImageView.ScaleType.FIT_CENTER
+    androidx.compose.ui.viewinterop.AndroidView(
+        factory = { context -> android.widget.ImageView(context).apply { this.scaleType = scaleType } },
+        update = { view ->
+            view.scaleType = scaleType
+            if (view.drawable !== current) view.setImageDrawable(current)
+        },
+        modifier = modifier,
+    )
 }
 
 @OptIn(ExperimentalFoundationApi::class)

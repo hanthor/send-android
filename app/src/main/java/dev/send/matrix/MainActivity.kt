@@ -366,7 +366,10 @@ open class MainActivity : ComponentActivity() {
 
     /** The user sees [roomId]: its notification goes, and the system ties its shortcut/notification to this screen. */
     private fun conversationVisible(roomId: String?) {
-        if (roomId != null) MessageNotifier.cancel(this, roomId)
+        if (roomId != null) {
+            MessageNotifier.cancel(this, roomId)
+            IncomingCalls.cancelMissed(this, roomId)
+        }
         setLocusContext(roomId?.let { android.content.LocusId(it) }, null)
     }
 
@@ -394,12 +397,17 @@ open class MainActivity : ComponentActivity() {
         return true
     }
 
-    /** Answer from a ring: stops ringing, opens the conversation and queues the join; false for any other intent. */
+    /**
+     * Answer from a ring: stops ringing, opens the conversation and queues the join. Call back from a missed-call
+     * notification: opens the conversation and queues a new call. False for any other intent.
+     */
     private fun acceptCall(intent: android.content.Intent?): Boolean {
-        if (intent?.action != IncomingCalls.ACTION_ANSWER) return false
+        if (intent == null) return false
+        val callBack = intent.action == IncomingCalls.ACTION_CALL_BACK
+        if (intent.action != IncomingCalls.ACTION_ANSWER && !callBack) return false
         val roomId = intent.getStringExtra(MessageNotifier.EXTRA_ROOM_ID) ?: return true
-        IncomingCalls.stop(this, roomId)
-        pendingCall.value = PendingCall(roomId, video = intent.getBooleanExtra(IncomingCalls.EXTRA_VIDEO, false))
+        if (callBack) IncomingCalls.cancelMissed(this, roomId) else IncomingCalls.stop(this, roomId)
+        pendingCall.value = PendingCall(roomId, video = intent.getBooleanExtra(IncomingCalls.EXTRA_VIDEO, false), outgoing = callBack)
         pendingConversation.value = roomId
         // Answered on the lock screen: the call (and the rest of Send) shows once the user unlocks.
         getSystemService(android.app.KeyguardManager::class.java).requestDismissKeyguard(this, null)
@@ -434,6 +442,8 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
     var activeJob by remember { mutableStateOf<Job?>(null) }
     var room by remember { mutableStateOf<Room?>(null) }
     var timeline by remember { mutableStateOf<Timeline?>(null) }
+    /** The open timeline reached the start of its room's history: scrolling up loads nothing more. */
+    var historyStartReached by remember { mutableStateOf(false) }
     var activeRoomId by rememberSaveable { mutableStateOf("") }
     var roomTitle by rememberSaveable { mutableStateOf("") }
     var activeRoomIsDirect by rememberSaveable { mutableStateOf(false) }
@@ -491,7 +501,7 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
     LaunchedEffect(callSession, answeredCall) {
         val call = answeredCall ?: return@LaunchedEffect
         val session = callSession ?: return@LaunchedEffect
-        session.answer(call.roomId, call.video)
+        if (call.outgoing) session.startCall(call.roomId, call.video) else session.answer(call.roomId, call.video)
         activity.pendingCall.value = null
     }
     val outgoingRing = callSession?.outgoingRing?.collectAsState()?.value
@@ -582,6 +592,7 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
         repository.observeTyping(selectedRoom)
         room = selectedRoom
         timeline = selectedTimeline
+        historyStartReached = false
         activeRoomId = roomId
         roomTitle = title ?: selectedRoom.displayName().orEmpty().ifBlank { roomId }
         activeRoomIsDirect = direct ?: repository.isDirectRoom(selectedRoom)
@@ -809,6 +820,7 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
                     repository.observeTyping(restoredRoom)
                     room = restoredRoom
                     timeline = restoredTimeline
+                    historyStartReached = false
                     activeRoomIsDirect = repository.isDirectRoom(restoredRoom)
                 }
             }
@@ -1006,10 +1018,19 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
                 onOlder = {
                     val current = timeline
                     if (current != null) scope.launch {
-                        try { repository.paginateOlder(current) }
-                        catch (failure: Exception) { error = failure.message ?: "Older messages could not be loaded." }
+                        try {
+                            if (repository.paginateOlder(current) && timeline === current) historyStartReached = true
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (failure: Exception) {
+                            // Pages are requested by scrolling, not by a tap, so a failed page (offline, a timeline
+                            // closed on leaving or signing out) is logged and asked for again on the next scroll
+                            // rather than reported under the composer, where the text would outlive the request.
+                            android.util.Log.w("Send", "Older messages for $activeRoomId could not be loaded", failure)
+                        }
                     }
                 },
+                hasOlder = !historyStartReached,
                 onReact = { eventId, emoji ->
                     val currentRoom = room
                     val currentTimeline = timeline
@@ -1017,6 +1038,18 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
                         try { repository.react(currentTimeline, currentRoom, eventId, emoji) }
                         catch (failure: Exception) { error = failure.message ?: "Reaction could not be sent." }
                     }
+                },
+                // GIFs and stickers come from Matrix image packs (yours, this room's, packs enabled from other rooms).
+                stickers = remember(repository, activeRoomId) {
+                    StickerActions(
+                        loadPacks = { repository.imagePacks(activeRoomId) },
+                        send = { image, asGif ->
+                            val currentRoom = room ?: error("Open a conversation first.")
+                            if (asGif) repository.sendGif(currentRoom, image) else repository.sendSticker(currentRoom, image)
+                        },
+                        add = { uri -> repository.addToUserPack(uri) },
+                        remove = { shortcode -> repository.removeFromUserPack(shortcode) },
+                    )
                 },
                 onCall = { video -> callSession?.startCall(activeRoomId, video) },
                 callBanner = rooms.firstOrNull { it.id == activeRoomId }

@@ -21,6 +21,8 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
@@ -107,6 +109,10 @@ class ConversationActionsUiTest {
         loadMedia: MediaLoader = { _, _ -> error("No media in this fixture.") },
         loadLinkPreview: (suspend (String) -> LinkPreview?)? = null,
         voiceCapture: VoiceCapture? = null,
+        /** When set, the screen follows this state instead of [messages] (tests that add messages). */
+        liveMessages: MutableState<List<MatrixMessage>>? = null,
+        hasOlder: Boolean = false,
+        stickers: StickerActions? = null,
     ): Callbacks {
         val callbacks = Callbacks()
         composeRule.setContent {
@@ -116,7 +122,7 @@ class ConversationActionsUiTest {
                     isDirect = isDirect,
                     draft = draft.value,
                     onDraft = { draft.value = it },
-                    messages = messages,
+                    messages = liveMessages?.value ?: messages,
                     onBack = {},
                     onSend = { replyTo ->
                         callbacks.sent = replyTo
@@ -140,10 +146,115 @@ class ConversationActionsUiTest {
                     typingUsers = typingUsers,
                     loadLinkPreview = loadLinkPreview,
                     voiceCapture = voiceCapture,
+                    hasOlder = hasOlder,
+                    stickers = stickers,
                 )
             }
         }
         return callbacks
+    }
+
+    @Test
+    fun scrollingUpLoadsOlderHistoryAndTheJumpButtonReturnsToTheNewest() {
+        // A long conversation: the newest messages fill the screen, the oldest are far above.
+        val history = (60 downTo 1).map { n ->
+            message("\$h$n", if (n % 2 == 0) "Older message $n" else "Reply $n", own = n % 2 == 1, minutesAgo = n + 20)
+        }
+        val live = mutableStateOf(history)
+        val callbacks = show(history, liveMessages = live, hasOlder = true)
+        // At the newest message nothing is requested and there is no jump button (as in Messages).
+        composeRule.runOnIdle { assertEquals(0, callbacks.older) }
+        composeRule.onAllNodesWithContentDescription("Jump to newest message").assertCountEquals(0)
+
+        // Scrolling up to the oldest loaded message asks for the next page once and shows a spinner above it.
+        composeRule.onNodeWithTag(TIMELINE_TAG).performScrollToIndex(history.lastIndex)
+        composeRule.waitForIdle()
+        composeRule.runOnIdle { assertEquals(1, callbacks.older) }
+        // The list was scrolled to its very end before the spinner grew the oldest row upward past the top edge;
+        // a nudge brings it into view, as a user's next finger movement would.
+        composeRule.onNodeWithContentDescription("Loading older messages").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Jump to newest message").assertIsDisplayed()
+        composeRule.auditShot("conversation-loading-older")
+
+        // A message arriving meanwhile counts on the button; the page arriving replaces the spinner.
+        // Fixture state is written on the UI thread so the next frame sees it.
+        composeRule.runOnIdle { live.value = live.value + message("\$new1", "Are you there?", own = false, minutesAgo = 0) }
+        composeRule.onNodeWithContentDescription("1 new message, jump to newest").assertIsDisplayed()
+        composeRule.runOnIdle {
+            live.value = (70 downTo 61).map { n -> message("\$h$n", "Older message $n", own = false, minutesAgo = n + 20) } + live.value
+        }
+        composeRule.waitForIdle()
+
+        // Tapping returns to the newest message; the button and the spinner are gone.
+        composeRule.onNodeWithContentDescription("1 new message, jump to newest").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Are you there?").assertIsDisplayed()
+        composeRule.onAllNodesWithContentDescription("Jump to newest message").assertCountEquals(0)
+        composeRule.onAllNodesWithContentDescription("1 new message, jump to newest").assertCountEquals(0)
+        composeRule.onAllNodesWithContentDescription("Loading older messages").assertCountEquals(0)
+    }
+
+    @Test
+    fun stickersShowWithoutABubbleAndTheComposerPanelSendsThem() {
+        val image = fixtureImage("sticker.png")
+        val party = PackImage(
+            shortcode = "party",
+            body = "Party",
+            url = "mxc://example.org/party",
+            sourceJson = "{\"url\":\"mxc://example.org/party\"}",
+            mimetype = "image/png",
+            width = 512,
+            height = 512,
+            sizeBytes = image.length(),
+            animated = false,
+            sticker = true,
+        )
+        val messages = chat + message(
+            "\$sticker",
+            "",
+            own = false,
+            minutesAgo = 1,
+            attachment = MatrixAttachment(
+                kind = AttachmentKind.Sticker,
+                filename = "Party",
+                mimetype = "image/png",
+                sizeBytes = image.length(),
+                durationMillis = null,
+                width = 512,
+                height = 512,
+                sourceJson = party.sourceJson,
+                thumbnailSourceJson = null,
+            ),
+        )
+        var sent: Pair<PackImage, Boolean>? = null
+        val actions = StickerActions(
+            loadPacks = { listOf(ImagePack(MatrixRepository.USER_PACK_ID, "Your stickers", listOf(party))) },
+            send = { picked, asGif -> sent = picked to asGif },
+            add = { error("Not in this fixture.") },
+            remove = {},
+        )
+        show(messages, loadMedia = { _, _ -> image }, stickers = actions)
+
+        // A received sticker is the picture alone, described for TalkBack, with no text bubble.
+        composeRule.onNodeWithContentDescription("Sticker: Party").assertIsDisplayed()
+        composeRule.onAllNodesWithText("Party").assertCountEquals(0)
+
+        // The composer panel has Messages' three tabs; Stickers lists the pack, tapping one sends it.
+        composeRule.onNodeWithContentDescription("Emoji").performClick()
+        composeRule.waitUntil(15_000) { composeRule.onAllNodesWithText("Stickers").fetchSemanticsNodes().isNotEmpty() }
+        composeRule.onNodeWithText("GIFs").assertIsDisplayed()
+        composeRule.onNodeWithText("Stickers").performClick()
+        composeRule.waitUntil(10_000) { composeRule.onAllNodesWithText("Your stickers").fetchSemanticsNodes().isNotEmpty() }
+        composeRule.onNodeWithContentDescription("Add a sticker from your photos").assertIsDisplayed()
+        composeRule.auditShot("sticker-picker")
+        composeRule.onNodeWithContentDescription("Send sticker: Party").performClick()
+        composeRule.waitUntil(5_000) { sent != null }
+        assertEquals(party to false, sent)
+
+        // No animated pictures in the pack: the GIFs tab explains how to add some.
+        composeRule.onNodeWithText("GIFs").performClick()
+        composeRule.waitUntil(10_000) { composeRule.onAllNodesWithText("No GIFs yet").fetchSemanticsNodes().isNotEmpty() }
+        composeRule.onNodeWithText("Add GIF").assertIsDisplayed()
     }
 
     private fun longPress(text: String) {
