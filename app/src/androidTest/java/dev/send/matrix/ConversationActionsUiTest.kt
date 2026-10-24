@@ -175,9 +175,12 @@ class ConversationActionsUiTest {
         composeRule.auditShot("conversation-loading-older")
 
         // A message arriving meanwhile counts on the button; the page arriving replaces the spinner.
-        live.value = live.value + message("\$new1", "Are you there?", own = false, minutesAgo = 0)
+        // Fixture state is written on the UI thread so the next frame sees it.
+        composeRule.runOnIdle { live.value = live.value + message("\$new1", "Are you there?", own = false, minutesAgo = 0) }
         composeRule.onNodeWithContentDescription("1 new message, jump to newest").assertIsDisplayed()
-        live.value = (70 downTo 61).map { n -> message("\$h$n", "Older message $n", own = false, minutesAgo = n + 20) } + live.value
+        composeRule.runOnIdle {
+            live.value = (70 downTo 61).map { n -> message("\$h$n", "Older message $n", own = false, minutesAgo = n + 20) } + live.value
+        }
         composeRule.waitForIdle()
 
         // Tapping returns to the newest message; the button and the spinner are gone.
