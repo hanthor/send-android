@@ -32,6 +32,9 @@
             <!-- Direct share: the share-target declaration matched by the conversation shortcuts' share category. -->
             <meta-data android:name="android.app.shortcuts" android:resource="@xml/shortcuts" />
         </activity>
+        <!-- Messages-style conversation bubbles: the same screen hosted in a bubble's own floating document
+             (allowEmbedded + documentLaunchMode=always + resizeable, as bubbles require). -->
+        <activity android:name=".BubbleActivity" android:exported="false" android:allowEmbedded="true" android:documentLaunchMode="always" android:resizeableActivity="true" android:supportsPictureInPicture="false" android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|uiMode" />
         <!-- Receives ACTION_SEND / ACTION_SEND_MULTIPLE (and direct-share) shares: copies the content while it holds
              the sender's read grant, then hands it to MainActivity in Send's own task for recipient confirmation. -->
         <activity

@@ -24,6 +24,7 @@ import androidx.core.content.LocusIdCompat
 import androidx.core.content.pm.ShortcutInfoCompat
 import androidx.core.content.pm.ShortcutManagerCompat
 import androidx.core.graphics.drawable.IconCompat
+import dev.send.matrix.BubbleActivity
 import dev.send.matrix.MainActivity
 import dev.send.matrix.R
 import dev.send.matrix.ShareTarget
@@ -43,6 +44,7 @@ internal object MessageNotifier {
     const val ACTION_OPEN_CONVERSATION = "dev.send.matrix.action.OPEN_CONVERSATION"
     private const val EXTRA_LAST_EVENT_ID = "dev.send.matrix.extra.LAST_EVENT_ID"
     private const val ACCENT = 0xFF415F91.toInt()
+    private const val BUBBLE_HEIGHT_DP = 600
 
     fun ensureChannel(context: Context) {
         val manager = context.getSystemService(NotificationManager::class.java)
@@ -145,9 +147,36 @@ internal object MessageNotifier {
             // Messages orders the actions "Mark as read", then "Reply".
             .addAction(markReadAction(context, roomId, lastEventId))
             .addAction(replyAction(context, roomId))
+            // Messages' bubbles: the conversation can float over other apps (Android asks the user once per app).
+            .setBubbleMetadata(bubbleMetadata(context, roomId, style))
         if (status != null) builder.setSubText(status)
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
         NotificationManagerCompat.from(context).notify(roomId, NOTIFICATION_ID, builder.build())
+    }
+
+    /** Opens [roomId] in [BubbleActivity]; the bubble's icon is the conversation's avatar. */
+    fun bubbleIntent(context: Context, roomId: String): Intent =
+        Intent(context, BubbleActivity::class.java)
+            .setAction(ACTION_OPEN_CONVERSATION)
+            .setData(roomUri(roomId))
+            .putExtra(EXTRA_ROOM_ID, roomId)
+
+    private fun bubbleMetadata(context: Context, roomId: String, style: NotificationCompat.MessagingStyle): NotificationCompat.BubbleMetadata {
+        val name = style.conversationTitle?.toString()
+            ?: style.messages.lastOrNull { it.person != null && it.person?.key != style.user.key }?.person?.name?.toString()
+            ?: "Conversation"
+        val target = PendingIntent.getActivity(
+            context,
+            0,
+            bubbleIntent(context, roomId),
+            // Bubble intents must be mutable so the system can add its own flags when it expands the bubble.
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE,
+        )
+        return NotificationCompat.BubbleMetadata.Builder(target, IconCompat.createWithAdaptiveBitmap(avatarBitmap(name, adaptive = true)))
+            .setDesiredHeight(BUBBLE_HEIGHT_DP)
+            .setAutoExpandBubble(false)
+            .setSuppressNotification(false)
+            .build()
     }
 
     private fun replyAction(context: Context, roomId: String): NotificationCompat.Action {
