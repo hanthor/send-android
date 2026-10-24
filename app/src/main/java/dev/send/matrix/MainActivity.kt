@@ -986,9 +986,10 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
                         } catch (cancelled: CancellationException) {
                             throw cancelled
                         } catch (failure: Exception) {
-                            // Pages are requested by scrolling, so a timeline closed meanwhile (conversation left,
-                            // signed out) fails quietly; the open conversation reports its own failures.
-                            if (timeline === current) error = failure.message ?: "Older messages could not be loaded."
+                            // Pages are requested by scrolling, not by a tap, so a failed page (offline, a timeline
+                            // closed on leaving or signing out) is logged and asked for again on the next scroll
+                            // rather than reported under the composer, where the text would outlive the request.
+                            android.util.Log.w("Send", "Older messages for $activeRoomId could not be loaded", failure)
                         }
                     }
                 },
