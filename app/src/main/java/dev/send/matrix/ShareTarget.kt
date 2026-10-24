@@ -332,30 +332,8 @@ internal fun ShareConfirmDialog(share: SharePayload, recipient: String, onSend: 
 /** A file in the confirmation: a thumbnail for photos and videos, an icon otherwise, and its name. */
 @Composable
 private fun SharedFileRow(file: SharedFile) {
-    val colors = MaterialTheme.colorScheme
-    val thumbnail by produceState<ImageBitmap?>(null, file.file) {
-        value = withContext(Dispatchers.IO) { shareThumbnail(file, 192) }?.asImageBitmap()
-    }
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Box(
-            Modifier.size(56.dp).clip(RoundedCornerShape(12.dp)),
-            contentAlignment = Alignment.Center,
-        ) {
-            val shown = thumbnail
-            if (shown != null) {
-                Image(shown, contentDescription = "Preview of ${file.name}", contentScale = ContentScale.Crop, modifier = Modifier.size(56.dp))
-            } else {
-                Surface(color = colors.surfaceContainerHighest, modifier = Modifier.size(56.dp)) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            if (file.mimeType.startsWith("audio/")) Icons.Filled.GraphicEq else Icons.AutoMirrored.Outlined.InsertDriveFile,
-                            contentDescription = null,
-                            tint = colors.onSurfaceVariant,
-                        )
-                    }
-                }
-            }
-        }
+        StagedFileTile(file, Modifier.size(56.dp))
         Text(
             file.name,
             maxLines = 2,
@@ -363,6 +341,31 @@ private fun SharedFileRow(file: SharedFile) {
             style = MaterialTheme.typography.bodyMedium,
             modifier = Modifier.padding(start = 12.dp).fillMaxWidth(),
         )
+    }
+}
+
+/** A staged file as a rounded tile: a thumbnail for photos and videos, a file (or audio) icon otherwise. */
+@Composable
+internal fun StagedFileTile(file: SharedFile, modifier: Modifier = Modifier) {
+    val colors = MaterialTheme.colorScheme
+    val thumbnail by produceState<ImageBitmap?>(null, file.file) {
+        value = withContext(Dispatchers.IO) { shareThumbnail(file, 192) }?.asImageBitmap()
+    }
+    Box(modifier.clip(RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
+        val shown = thumbnail
+        if (shown != null) {
+            Image(shown, contentDescription = "Preview of ${file.name}", contentScale = ContentScale.Crop, modifier = Modifier.matchParentSize())
+        } else {
+            Surface(color = colors.surfaceContainerHighest, modifier = Modifier.matchParentSize()) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        if (file.mimeType.startsWith("audio/")) Icons.Filled.GraphicEq else Icons.AutoMirrored.Outlined.InsertDriveFile,
+                        contentDescription = file.name,
+                        tint = colors.onSurfaceVariant,
+                    )
+                }
+            }
+        }
     }
 }
 

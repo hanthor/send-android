@@ -16,6 +16,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.PressInteraction
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -38,6 +39,8 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
@@ -46,6 +49,7 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.foundation.clickable
 import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
@@ -71,6 +75,7 @@ import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Keyboard
 import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.NotificationsOff
+import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Videocam
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -122,7 +127,10 @@ import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** Playback id of a locked recording being previewed before it is sent. */
 private const val RECORDED_CLIP_ID = "composer-recording"
@@ -149,7 +157,8 @@ internal fun ConversationScreen(
     onReact: (String, String) -> Unit,
     /** Starts a MatrixRTC call here: false for voice, true for video. */
     onCall: (video: Boolean) -> Unit,
-    onSendAttachment: (Uri) -> Unit,
+    /** Sends a photo, video or file the composer staged (a cache copy; the sender deletes it). */
+    onSendAttachment: (SharedFile) -> Unit,
     onSendVoice: (VoiceRecording) -> Unit,
     loadMedia: MediaLoader,
     uploading: Boolean,
@@ -193,6 +202,12 @@ internal fun ConversationScreen(
     sounds: Boolean = false,
     /** The room ID when opened from the list: the header's avatar and name continue the row's (shared elements). */
     sharedKey: String? = null,
+    /** Messages scheduled for this conversation, shown under the newest message until they send. */
+    scheduled: List<ScheduledMessage> = emptyList(),
+    /** Schedules the draft and the staged attachments (long-press Send → Schedule send); null hides scheduling. */
+    onSchedule: ((text: String, sendAtMillis: Long, attachments: List<SharedFile>) -> Unit)? = null,
+    /** Send now, update or delete a scheduled message. */
+    onScheduledAction: (ScheduledMessage, ScheduledAction) -> Unit = { _, _ -> },
     /**
      * Whether history older than [messages] may exist: scrolling up near the oldest loaded message then calls
      * [onOlder] by itself, with a spinner above it meanwhile (Messages has no "load more" control). False once
@@ -230,6 +245,14 @@ internal fun ConversationScreen(
     var showStarred by remember { mutableStateOf(false) }
     var showDetails by remember { mutableStateOf(false) }
     var showMediaGrid by remember { mutableStateOf(false) }
+    var showSchedulePicker by remember { mutableStateOf(false) }
+    var scheduledSheetFor by remember { mutableStateOf<ScheduledMessage?>(null) }
+    /** A scheduled message whose text is back in the composer (Update message); Send re-schedules it. */
+    var updatingScheduled by remember { mutableStateOf<ScheduledMessage?>(null) }
+    var draftBeforeUpdate by remember { mutableStateOf("") }
+    /** Photos, videos and files picked for the next message (Messages' composer tray), staged in the cache. */
+    val attachments = remember { mutableStateListOf<SharedFile>() }
+    var staging by remember { mutableIntStateOf(0) }
     PlayConversationSounds(messages, sounds)
     val composerFocus = remember { FocusRequester() }
 
@@ -270,11 +293,35 @@ internal fun ConversationScreen(
     fun toggleMulti(message: MatrixMessage) {
         multiSelected = if (message.id in multiSelected) multiSelected - message.id else multiSelected + message.id
     }
+    /** Copies a picked item into the cache and adds it to the tray; Send (or Schedule send) then sends it. */
+    fun stage(uri: Uri) {
+        scope.launch {
+            staging += 1
+            try {
+                val dir = context.cacheDir.resolve("composer/${java.util.UUID.randomUUID()}")
+                attachments += withContext(Dispatchers.IO) { copyToCache(context, uri, dir) }
+                composerHint = ""
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                composerHint = failure.message ?: "The selected file could not be read."
+            } finally {
+                staging -= 1
+            }
+        }
+    }
+    fun unstage(shared: SharedFile) {
+        attachments.remove(shared)
+        scope.launch(Dispatchers.IO) {
+            shared.file.delete()
+            shared.file.parentFile?.delete()
+        }
+    }
     val documentPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) onSendAttachment(uri)
+        if (uri != null) stage(uri)
     }
     val mediaPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        if (uri != null) onSendAttachment(uri)
+        if (uri != null) stage(uri)
     }
     val micPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         composerHint = if (granted) "Hold to record, release to send" else "Microphone access is needed to record voice messages."
@@ -393,13 +440,52 @@ internal fun ConversationScreen(
         onDraft(draftBeforeEdit)
         editing = null
     }
+    fun cancelUpdateScheduled() {
+        onDraft(draftBeforeUpdate)
+        updatingScheduled = null
+    }
+    /** Messages' "Update message": the scheduled text comes back to the composer; Send re-schedules it. */
+    fun startUpdateScheduled(message: ScheduledMessage) {
+        scheduledSheetFor = null
+        selectedId = null
+        replyingTo = null
+        if (editing != null) cancelEdit()
+        if (updatingScheduled == null) draftBeforeUpdate = draft
+        updatingScheduled = message
+        onDraft(message.text)
+        runCatching { composerFocus.requestFocus() }
+    }
+    fun scheduleDraft(sendAtMillis: Long) {
+        showSchedulePicker = false
+        val text = draft
+        val updating = updatingScheduled
+        if (updating != null) {
+            if (text.isBlank() && updating.attachments.isEmpty()) return
+            onScheduledAction(updating, ScheduledAction.Update(text, sendAtMillis))
+            updatingScheduled = null
+            onDraft(draftBeforeUpdate)
+        } else {
+            if (text.isBlank() && attachments.isEmpty()) return
+            onSchedule?.invoke(text, sendAtMillis, attachments.toList())
+            attachments.clear()
+            onDraft("")
+        }
+        replyingTo = null
+    }
     fun sendDraft() {
         val target = editing
+        val updating = updatingScheduled
         if (target != null) {
             if (draft.isNotBlank() && draft != target.text) onEdit(target, draft)
             cancelEdit()
+        } else if (updating != null) {
+            // Keeps the scheduled time; long-press Send to change it.
+            scheduleDraft(maxOf(updating.sendAtMillis, System.currentTimeMillis() + MIN_SCHEDULE_LEAD_MS))
         } else {
-            onSend(replyingTo)
+            // Messages: the tray's photos go first, the text under them.
+            attachments.toList().forEach(onSendAttachment)
+            attachments.clear()
+            if (draft.isNotBlank()) onSend(replyingTo)
             replyingTo = null
         }
     }
@@ -451,7 +537,7 @@ internal fun ConversationScreen(
 
     // Composer, selection and search states close first; with none left back leaves with predictive back.
     val nestedBack = selectedId != null || multiSelected.isNotEmpty() || showEmojiPanel || searching || recordingLocked ||
-        editing != null || replyingTo != null
+        editing != null || replyingTo != null || updatingScheduled != null
     BackHandler(enabled = nestedBack) {
         when {
             selectedId != null -> selectedId = null
@@ -460,6 +546,7 @@ internal fun ConversationScreen(
             searching -> closeSearch()
             recordingLocked -> discardRecording("Voice message discarded")
             editing != null -> cancelEdit()
+            updatingScheduled != null -> cancelUpdateScheduled()
             replyingTo != null -> replyingTo = null
         }
     }
@@ -656,14 +743,22 @@ internal fun ConversationScreen(
                     if (error.isNotBlank()) {
                         Text(error, color = colors.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(bottom = 6.dp))
                     }
-                    val status = if (uploading) "Sending attachment…" else composerHint
+                    val status = if (uploading) "Sending attachment…" else if (staging > 0) "Adding attachment…" else composerHint
                     if (status.isNotBlank()) {
                         Text(status, color = colors.onSurfaceVariant, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(start = 16.dp, bottom = 6.dp))
                     }
                     val editTarget = editing
                     val replyTarget = replyingTo
+                    val updateTarget = updatingScheduled
                     if (editTarget != null) {
                         ComposerContextBar("Editing message", messagePreviewText(editTarget), "Cancel edit", ::cancelEdit)
+                    } else if (updateTarget != null) {
+                        ComposerContextBar(
+                            "Updating scheduled message",
+                            "Scheduled for ${scheduleLabel(context, updateTarget.sendAtMillis)} · hold Send to change",
+                            "Cancel update",
+                            ::cancelUpdateScheduled,
+                        )
                     } else if (replyTarget != null) {
                         val name = when {
                             replyTarget.own -> "yourself"
@@ -672,6 +767,9 @@ internal fun ConversationScreen(
                             else -> replyTarget.sender
                         }
                         ComposerContextBar("Replying to $name", messagePreviewText(replyTarget), "Cancel reply") { replyingTo = null }
+                    }
+                    if (attachments.isNotEmpty() && editing == null) {
+                        ComposerAttachmentTray(attachments, onRemove = ::unstage, modifier = Modifier.padding(bottom = 8.dp))
                     }
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
                         // Messages composer: 56dp pill with attach, field, emoji and gallery actions.
@@ -810,9 +908,26 @@ internal fun ConversationScreen(
                             ) {
                                 Icon(imageVector = Icons.Filled.GraphicEq, contentDescription = "Hide voice recorder")
                             }
-                        } else if (draft.isNotBlank()) {
-                            FilledIconButton(onClick = ::sendDraft, modifier = Modifier.size(56.dp), colors = sendColors) {
-                                Icon(imageVector = Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
+                        } else if (draft.isNotBlank() || (attachments.isNotEmpty() && editing == null) || (updatingScheduled?.attachments?.isNotEmpty() == true)) {
+                            // Messages: tap sends, hold opens "Schedule send" (while updating a scheduled message
+                            // the button shows a clock and re-schedules).
+                            val canSchedule = onSchedule != null && editing == null
+                            Box(
+                                modifier = Modifier.size(56.dp).clip(androidx.compose.foundation.shape.CircleShape).background(colors.primary)
+                                    .combinedClickable(
+                                        onClickLabel = "Send",
+                                        onClick = ::sendDraft,
+                                        onLongClickLabel = if (canSchedule) "Schedule send" else null,
+                                        onLongClick = if (canSchedule) ({ showSchedulePicker = true }) else null,
+                                    )
+                                    .semantics { contentDescription = if (updatingScheduled != null) "Schedule" else "Send" },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    imageVector = if (updatingScheduled != null) Icons.Outlined.Schedule else Icons.AutoMirrored.Filled.Send,
+                                    contentDescription = null,
+                                    tint = colors.onPrimary,
+                                )
                             }
                         } else {
                             VoiceRecordButton(
@@ -1058,6 +1173,11 @@ internal fun ConversationScreen(
                     modifier = Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 12.dp),
                 )
                 }
+                // Messages keeps scheduled messages under the thread, above the composer, until they send: a
+                // plain column, so they stay in view whatever the timeline's scroll position.
+                scheduled.forEach { pending ->
+                    ScheduledBubble(pending, onClick = { scheduledSheetFor = pending }, modifier = backdrop)
+                }
             }
         }
     }
@@ -1173,6 +1293,21 @@ internal fun ConversationScreen(
                 onDismiss = { viewing = null },
             )
         }
+    }
+    if (showSchedulePicker) {
+        ScheduleSendSheet(onPick = ::scheduleDraft, onDismiss = { showSchedulePicker = false })
+    }
+    scheduledSheetFor?.let { pending ->
+        ScheduledMessageSheet(
+            message = pending,
+            onAction = { action ->
+                scheduledSheetFor = null
+                if (updatingScheduled?.id == pending.id) cancelUpdateScheduled()
+                onScheduledAction(pending, action)
+            },
+            onUpdate = { startUpdateScheduled(pending) },
+            onDismiss = { scheduledSheetFor = null },
+        )
     }
     reactionPickerFor?.let { eventId ->
         ModalBottomSheet(onDismissRequest = { reactionPickerFor = null }) {
@@ -1403,3 +1538,24 @@ private fun JumpToNewestButton(visible: Boolean, newCount: Int, onClick: () -> U
         }
     }
 }
+
+/**
+ * Messages' composer tray: the photos, videos and files picked for the next message as 72dp tiles, each with a
+ * remove button; Send sends them (then the text), long-press Send schedules them together.
+ */
+@Composable
+internal fun ComposerAttachmentTray(attachments: List<SharedFile>, onRemove: (SharedFile) -> Unit, modifier: Modifier = Modifier) {
+    LazyRow(modifier.fillMaxWidth().testTag(COMPOSER_TRAY_TAG), horizontalArrangement = Arrangement.spacedBy(8.dp), contentPadding = PaddingValues(horizontal = 4.dp)) {
+        items(attachments, key = { it.file.absolutePath }) { shared ->
+            Box(Modifier.size(72.dp)) {
+                StagedFileTile(shared, Modifier.fillMaxSize())
+                androidx.compose.material3.FilledTonalIconButton(
+                    onClick = { onRemove(shared) },
+                    modifier = Modifier.align(Alignment.TopEnd).size(24.dp),
+                ) { Icon(Icons.Filled.Close, contentDescription = "Remove ${shared.name}", modifier = Modifier.size(16.dp)) }
+            }
+        }
+    }
+}
+
+internal const val COMPOSER_TRAY_TAG = "composer-attachments"
