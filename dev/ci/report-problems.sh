@@ -12,7 +12,7 @@ problems=$(mktemp)
 # Workflow commands take one line; newlines are encoded as %0A. Fields: file, line, title, message.
 emit() {
   local file="$1" line="$2" title="$3" message="$4"
-  message=$(printf '%s' "$message" | head -c 1500 | sed ':a;N;$!ba;s/\n/%0A/g')
+  message=$(printf '%s' "$message" | head -c 6000 | sed ':a;N;$!ba;s/\n/%0A/g')
   if [ -n "$file" ]; then
     printf '::error file=%s,line=%s,title=%s::%s\n' "$file" "$line" "$title" "$message" >> "$problems"
   else
