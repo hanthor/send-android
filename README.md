@@ -28,6 +28,11 @@ voice and video calls. Unencrypted rooms are never opened.
   up, and a round button jumps back to the newest message, counting what
   arrived meanwhile.
 - Encrypted direct chats and groups; star messages and find them later.
+- Picked photos, videos and files wait in the composer beside your text until
+  you tap Send (or hold it to schedule them together).
+- Hold Send to schedule a message for later (quick times or a date and
+  time); it waits on your phone, shows under the conversation with Send now /
+  Update / Delete, and goes out encrypted when the time comes.
 
 **Conversation list**
 - Snippets, relative times and unread badges; search.

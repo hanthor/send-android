@@ -53,7 +53,7 @@ for case in root.iter("testcase"):
         text = (problem.text or "").strip()
         message = problem.get("message") or (text.splitlines()[0] if text else kind)
         # One line per test for the shell loop; the annotation re-expands %0A as line breaks.
-        detail = "%0A".join(text.splitlines()[:12])
+        detail = "%0A".join(text.splitlines()[:90])
         print("\t".join(part.replace("\t", " ").replace("\n", " ") for part in (name, message, detail)))
 PY
 )

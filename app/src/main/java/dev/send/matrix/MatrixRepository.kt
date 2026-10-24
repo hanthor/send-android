@@ -976,24 +976,38 @@ class MatrixRepository(context: Context) {
      * Sends a notification's inline reply as an encrypted text message (restoring the session first when the
      * process was cold) and returns once the homeserver has accepted it.
      */
-    suspend fun sendNotificationReply(roomId: String, text: String): Unit = withContext(Dispatchers.IO) {
+    suspend fun sendNotificationReply(roomId: String, text: String): Unit = sendScheduled(roomId, text, emptyList())
+
+    /**
+     * Sends a scheduled message when its time comes — its attachments (m.image / m.video / m.file) and then its
+     * text — restoring the session first when the process was cold, and returns once the homeserver has every
+     * event. The caller deletes the files afterwards.
+     */
+    internal suspend fun sendScheduled(roomId: String, text: String, files: List<SharedFile>): Unit = withContext(Dispatchers.IO) {
         check(restore()) { "Sign in to a Matrix account first." }
+        val expected = files.size + if (text.isBlank()) 0 else 1
+        require(expected > 0)
         openEncryptedRoom(roomId).use { room ->
-            val sent = CompletableDeferred<Unit>()
+            val sentCount = java.util.concurrent.atomic.AtomicInteger()
+            val allSent = CompletableDeferred<Unit>()
             val handle = room.subscribeToSendQueueUpdates(object : SendQueueListener {
                 override fun onUpdate(update: RoomSendQueueUpdate) {
                     when (update) {
-                        is RoomSendQueueUpdate.SentEvent -> sent.complete(Unit)
+                        is RoomSendQueueUpdate.SentEvent -> if (sentCount.incrementAndGet() >= expected) allSent.complete(Unit)
                         is RoomSendQueueUpdate.SendError ->
-                            if (!update.isRecoverable) sent.completeExceptionally(IllegalStateException("The reply could not be sent."))
+                            if (!update.isRecoverable) allSent.completeExceptionally(IllegalStateException("The message could not be sent."))
                         else -> Unit
                     }
                 }
             })
             try {
                 timeline(room).use { timeline ->
-                    sendText(timeline, room, text)
-                    withTimeout(REPLY_SEND_TIMEOUT_MS) { sent.await() }
+                    for (shared in files) {
+                        val workDir = (shared.file.parentFile ?: appContext.cacheDir).resolve("work").apply { mkdirs() }
+                        try { sendFileAttachment(timeline, shared.file, shared.mimeType, workDir) } finally { workDir.deleteRecursively() }
+                    }
+                    if (text.isNotBlank()) sendText(timeline, room, text)
+                    withTimeout(REPLY_SEND_TIMEOUT_MS + files.size * ATTACHMENT_SEND_TIMEOUT_MS) { allSent.await() }
                 }
             } finally {
                 handle.close()
@@ -1245,6 +1259,8 @@ class MatrixRepository(context: Context) {
     private fun wipeLocalSession() {
         appContext.filesDir.resolve(STORE_DIR).deleteRecursively()
         appContext.cacheDir.resolve("media").deleteRecursively()
+        // Messages scheduled by the signed-out account must not go out from the next one.
+        ScheduledMessages.get(appContext).clear()
         // Saved session, store key and anything older builds kept here.
         check(prefs().edit().clear().commit()) { "The signed-out session could not be cleared." }
         KeyStore.getInstance("AndroidKeyStore").apply { load(null) }.deleteEntry(STORE_KEY_ALIAS)
@@ -2476,6 +2492,19 @@ class MatrixRepository(context: Context) {
         }
     }
 
+    /** Sends a file the composer staged (a cache copy from [copyToCache]) and deletes it afterwards. */
+    internal suspend fun sendStaged(timeline: Timeline, room: Room, shared: SharedFile) = withContext(Dispatchers.IO) {
+        check(room.isEncrypted()) { "Attachments are disabled because this room is not encrypted." }
+        val workDir = (shared.file.parentFile ?: appContext.cacheDir).resolve("work").apply { mkdirs() }
+        try {
+            sendFileAttachment(timeline, shared.file, shared.mimeType, workDir)
+        } finally {
+            workDir.deleteRecursively()
+            shared.file.delete()
+            shared.file.parentFile?.takeIf { it.list()?.isEmpty() == true }?.delete()
+        }
+    }
+
     /**
      * Sends a share the user confirmed: its text, then each staged copy through the attachment path (m.image /
      * m.video with a thumbnail, or m.file). The caller deletes the staged copies.
@@ -3032,6 +3061,8 @@ class MatrixRepository(context: Context) {
         private const val STORE_KEY_ALIAS = "send.matrix.store-key"
         private const val BACKUP_UPLOAD_TIMEOUT_MS = 30_000L
         private const val REPLY_SEND_TIMEOUT_MS = 30_000L
+        /** Extra wait per attachment of a scheduled message (upload and send). */
+        private const val ATTACHMENT_SEND_TIMEOUT_MS = 120_000L
         /** Pusher app ID registered with the homeserver for this app's UnifiedPush endpoint. */
         const val PUSHER_APP_ID = "dev.send.matrix"
         const val VOICE_MIMETYPE = "audio/ogg"
