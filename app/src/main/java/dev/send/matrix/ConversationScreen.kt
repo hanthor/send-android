@@ -268,22 +268,12 @@ internal fun ConversationScreen(
     // Newest first, as the list is laid out bottom-up; the typing bubble sits below the newest message.
     val reversed = messages.asReversed()
     val typingShown = typingUsers.isNotEmpty()
-    // Scheduled messages sit under the newest message (the list's start), latest-scheduled lowest.
-    val scheduledShown = scheduled.asReversed()
     // At the newest message (the list's start) a new bubble or typing dots scroll into view as they arrive.
-    val listState = rememberTopAnchoredListState(
-        when {
-            typingShown -> "typing"
-            scheduledShown.isNotEmpty() -> "scheduled:${scheduledShown.first().id}"
-            else -> reversed.firstOrNull()?.key
-        },
-    )
+    val listState = rememberTopAnchoredListState(if (typingShown) "typing" else reversed.firstOrNull()?.key)
     val bubbleEntries = rememberBubbleEntries()
-    // Rows before the messages: typing dots, then scheduled messages.
-    val leadingRows = (if (typingShown) 1 else 0) + scheduledShown.size
     fun listIndexOf(id: String): Int? {
         val index = reversed.indexOfFirst { it.id == id }
-        return if (index < 0) null else index + leadingRows
+        return if (index < 0) null else index + if (typingShown) 1 else 0
     }
     fun jumpTo(eventId: String) {
         val index = listIndexOf(eventId)
@@ -915,10 +905,6 @@ internal fun ConversationScreen(
                     if (typingShown) {
                         item(key = "typing") { Box(sendItemPlacement().then(backdrop)) { TypingBubble(typingUsers) } }
                     }
-                    items(scheduledShown.size, key = { "scheduled:${scheduledShown[it].id}" }) { index ->
-                        val pending = scheduledShown[index]
-                        ScheduledBubble(pending, onClick = { scheduledSheetFor = pending }, modifier = sendItemPlacement().then(backdrop))
-                    }
                     items(reversed.size, key = { reversed[it].key }) { index ->
                         val message = reversed[index]
                         // Grouping is computed in chronological order: neighbours are the adjacent
@@ -1053,6 +1039,11 @@ internal fun ConversationScreen(
                             }
                         }
                     }
+                }
+                // Messages keeps scheduled messages under the thread, above the composer, until they send: a
+                // plain column, so they stay in view whatever the timeline's scroll position.
+                scheduled.forEach { pending ->
+                    ScheduledBubble(pending, onClick = { scheduledSheetFor = pending }, modifier = backdrop)
                 }
             }
         }

@@ -21,7 +21,6 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
@@ -175,11 +174,7 @@ class ConversationActionsUiTest {
         val pending = ScheduledMessage("s1", "!room:example.org", "Happy birthday!", tomorrowEight, now)
         // State written from the test thread is applied on the UI thread, so the next frame sees it.
         composeRule.runOnIdle { scheduled.value = listOf(pending) }
-        // The row settles under the newest message once its placement animation has run.
-        composeRule.waitForIdle()
-        Thread.sleep(500)
-        composeRule.waitForIdle()
-        composeRule.onNodeWithText("Scheduled for Tomorrow, 8:00 AM").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Scheduled for Tomorrow, 8:00 AM").assertIsDisplayed()
         composeRule.auditShot("scheduled-message")
         composeRule.onNodeWithText("Happy birthday!").performClick()
         composeRule.waitUntil(5_000) { composeRule.onAllNodesWithText("Send now").fetchSemanticsNodes().isNotEmpty() }
