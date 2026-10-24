@@ -26,7 +26,7 @@ import org.junit.runner.RunWith
 
 /**
  * Phase 5 conversation list management on fixtures: swipe to archive with Undo, the selection bar (pin, archive,
- * delete, mute, read/unread, block) and its confirmations, the Archived and Blocked contacts screens, starred
+ * delete, mute, read/unread, block) and its confirmations, the Archived and Spam & blocked screens, starred
  * messages and message multi-select. Each visual state is saved with [auditShot] for the Messages comparison.
  */
 @RunWith(AndroidJUnit4::class)
@@ -57,6 +57,7 @@ class ListManagementUiTest {
         val mutedCalls = mutableListOf<Pair<List<String>, Boolean>>()
         val deleted = mutableListOf<List<String>>()
         val blockedCalls = mutableListOf<String>()
+        val reported = mutableListOf<String>()
 
         private fun update(ids: List<String>, change: (MatrixRoom) -> MatrixRoom) {
             rooms.value = rooms.value.map { if (it.id in ids) change(it) else it }
@@ -91,10 +92,14 @@ class ListManagementUiTest {
                 blockedCalls += userId
                 blocked.value = blocked.value + userId
             },
+            reportSpam = { room ->
+                reported += room.id
+                blocked.value = blocked.value + checkNotNull(room.dmUserId)
+            },
         )
     }
 
-    private fun showHome(calls: Calls) {
+    private fun showHome(calls: Calls, swipeActions: SwipeActions = SwipeActions()) {
         composeRule.setContent {
             SendTheme {
                 HomeScreen(
@@ -110,9 +115,69 @@ class ListManagementUiTest {
                     mutedRoomIds = calls.muted.value,
                     blockedUserIds = calls.blocked.value,
                     listActions = calls.actions,
+                    swipeActions = swipeActions,
                 )
             }
         }
+    }
+
+    @Test
+    fun swipeActionsFollowTheSettingAndReportSpamBlocksAfterConfirming() {
+        val calls = Calls(fixtureRooms)
+        showHome(calls, SwipeActions(start = SwipeAction.MarkRead, end = SwipeAction.Delete))
+        val width = context.resources.displayMetrics.widthPixels.toFloat()
+
+        // Swipe right with "Mark as read or unread": the unread DM is marked read and the row stays.
+        composeRule.onNodeWithText("Maya").performTouchInput {
+            down(center)
+            repeat(12) { moveBy(Offset(width * 0.045f, 0f)) }
+        }
+        composeRule.onNodeWithContentDescription("Mark as read").assertIsDisplayed()
+        composeRule.auditShot("swipe-mark-read")
+        composeRule.onNodeWithText("Maya").performTouchInput { up() }
+        composeRule.waitUntil(5_000) { calls.unread.isNotEmpty() }
+        assertEquals(listOf("!maya:example.org") to false, calls.unread.single())
+        composeRule.onNodeWithText("Maya").assertIsDisplayed()
+        assertTrue(calls.archived.isEmpty())
+
+        // Swipe left with "Delete": the row springs back and the delete confirmation asks first.
+        composeRule.onNodeWithText("Design studio").performTouchInput {
+            swipe(start = center, end = Offset(centerX - width * 0.6f, centerY), durationMillis = 300)
+        }
+        composeRule.waitUntil(5_000) { hasText("Delete 1 conversation?") }
+        composeRule.auditShot("swipe-delete-confirm")
+        composeRule.onNodeWithText("Cancel").performClick()
+        composeRule.onNodeWithText("Design studio").assertIsDisplayed()
+        assertTrue(calls.deleted.isEmpty())
+
+        // Report spam on a DM: confirmation, then the report and the block.
+        longPress("Sam")
+        composeRule.onNodeWithContentDescription("More options").performClick()
+        composeRule.onNodeWithText("Report spam").performClick()
+        composeRule.waitUntil(5_000) { hasText("Report spam?") }
+        composeRule.onNodeWithText("Unblock them any time from Spam & blocked", substring = true).assertIsDisplayed()
+        composeRule.auditShot("report-spam-confirm")
+        composeRule.onNodeWithText("Report").performClick()
+        composeRule.runOnIdle { assertEquals(listOf("!sam:example.org"), calls.reported) }
+        composeRule.waitUntil(5_000) { !hasText("Sam") }
+    }
+
+    @Test
+    fun swipeActionsPageOffersAChoicePerDirection() {
+        val chosen = mutableStateOf(SwipeActions())
+        composeRule.setContent {
+            SendTheme {
+                SwipeActionsPage(actions = chosen.value, onChange = { chosen.value = it }, onBack = {})
+            }
+        }
+        composeRule.onNodeWithText("Swipe right").assertIsDisplayed()
+        composeRule.onNodeWithText("Swipe left").assertIsDisplayed()
+        composeRule.onAllNodesWithText("Archive").assertCountEquals(2)
+        composeRule.onAllNodesWithText("Delete")[1].performClick()
+        composeRule.runOnIdle { assertEquals(SwipeActions(start = SwipeAction.Archive, end = SwipeAction.Delete), chosen.value) }
+        composeRule.onAllNodesWithText("None")[0].performClick()
+        composeRule.runOnIdle { assertEquals(SwipeActions(start = SwipeAction.None, end = SwipeAction.Delete), chosen.value) }
+        composeRule.auditShot("swipe-actions-settings")
     }
 
     private fun top(text: String): Float = composeRule.onNodeWithText(text).fetchSemanticsNode().boundsInRoot.top
@@ -218,7 +283,7 @@ class ListManagementUiTest {
         composeRule.onNodeWithText("Block").performClick()
         composeRule.waitUntil(5_000) { composeRule.onAllNodesWithText("Block").fetchSemanticsNodes().isEmpty() && hasText("Yes") }
         composeRule.onNodeWithText("Block Sam?").assertIsDisplayed()
-        composeRule.onNodeWithText("Unblock them any time from Blocked contacts", substring = true).assertIsDisplayed()
+        composeRule.onNodeWithText("Unblock them any time from Spam & blocked", substring = true).assertIsDisplayed()
         composeRule.auditShot("block-confirm")
         composeRule.onNodeWithText("Yes").performClick()
         composeRule.runOnIdle { assertEquals(listOf("@sam:example.org"), calls.blockedCalls) }
@@ -309,7 +374,7 @@ class ListManagementUiTest {
         }
         composeRule.onNodeWithText("Archived").performClick()
         composeRule.runOnIdle { assertTrue(archived) }
-        composeRule.onNodeWithText("Blocked contacts").performClick()
+        composeRule.onNodeWithText("Spam & blocked").performClick()
         composeRule.runOnIdle { assertTrue(blocked) }
         composeRule.onNodeWithText("@spam:example.org").assertIsDisplayed()
         composeRule.auditShot("blocked-contacts")

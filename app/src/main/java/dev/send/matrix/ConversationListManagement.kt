@@ -34,6 +34,8 @@ import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.Archive
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.MarkEmailRead
+import androidx.compose.material.icons.outlined.MarkEmailUnread
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.outlined.Unarchive
 import androidx.compose.material3.AlertDialog
@@ -89,6 +91,8 @@ internal class ConversationListActions(
     val delete: (rooms: List<MatrixRoom>) -> Unit,
     /** Blocks the other person of a DM (after the user confirmed). */
     val block: (userId: String) -> Unit,
+    /** Reports a DM as spam to the homeserver and blocks the sender (after the user confirmed). */
+    val reportSpam: (room: MatrixRoom) -> Unit = {},
 )
 
 /** Unread for the list: new messages, or marked unread by the user. */
@@ -114,6 +118,7 @@ internal class ConversationListState(private val scope: CoroutineScope) {
     var selectedIds by mutableStateOf<List<String>>(emptyList())
     var confirmDelete by mutableStateOf<List<MatrixRoom>?>(null)
     var confirmBlock by mutableStateOf<MatrixRoom?>(null)
+    var confirmSpam by mutableStateOf<MatrixRoom?>(null)
     val selecting: Boolean get() = selectedIds.isNotEmpty()
 
     fun toggle(room: MatrixRoom) {
@@ -188,14 +193,29 @@ internal fun LazyListScope.managedConversationRows(
     onOpen: (MatrixRoom) -> Unit,
     /** The conversation open beside the list (two panes), highlighted. */
     openRoomId: String? = null,
+    /** Settings → Swipe actions; the Archived screen always unarchives. */
+    swipeActions: SwipeActions = SwipeActions(),
 ) {
     items(rooms, key = { it.id }) { room ->
         val selecting = state.selecting
+        // Archive flies the row off; delete asks first and read/unread toggles in place, so those spring back.
+        fun perform(action: SwipeAction) {
+            if (actions == null) return
+            when (action) {
+                SwipeAction.Archive -> state.archive(listOf(room), archived = !archivedView, actions)
+                SwipeAction.Delete -> state.confirmDelete = listOf(room)
+                SwipeAction.MarkRead -> actions.setUnread(listOf(room), !room.isUnread)
+                SwipeAction.None -> Unit
+            }
+        }
+        val effective = if (archivedView) SwipeActions(SwipeAction.Archive, SwipeAction.Archive) else swipeActions
         Box(sendItemPlacement()) {
-            SwipeToArchive(
+            SwipeConversation(
                 enabled = actions != null && !selecting,
+                swipeActions = effective,
                 unarchive = archivedView,
-                onSwiped = { if (actions != null) state.archive(listOf(room), archived = !archivedView, actions) },
+                unread = room.isUnread,
+                onSwiped = ::perform,
             ) { lifted ->
                 ConversationRow(
                     room = room,
@@ -205,19 +225,27 @@ internal fun LazyListScope.managedConversationRows(
                     lifted = lifted,
                     onClick = { if (selecting) state.toggle(room) else onOpen(room) },
                     onLongClick = if (actions != null) ({ state.toggle(room) }) else null,
-                    // TalkBack can't swipe the row: the same archive is a custom action.
+                    // TalkBack can't swipe the row: the swipe actions are custom actions on it.
                     accessibilityActions = if (actions != null && !selecting) {
-                        listOf(
-                            androidx.compose.ui.semantics.CustomAccessibilityAction(if (archivedView) "Unarchive" else "Archive") {
-                                state.archive(listOf(room), archived = !archivedView, actions)
+                        listOf(effective.start, effective.end).distinct().filter { it != SwipeAction.None }.map { action ->
+                            androidx.compose.ui.semantics.CustomAccessibilityAction(swipeActionLabel(action, archivedView, room.isUnread)) {
+                                perform(action)
                                 true
-                            },
-                        )
+                            }
+                        }
                     } else emptyList(),
                 )
             }
         }
     }
+}
+
+/** What a swipe action is called on the track and for TalkBack, given the row's state. */
+internal fun swipeActionLabel(action: SwipeAction, archivedView: Boolean, unread: Boolean): String = when (action) {
+    SwipeAction.Archive -> if (archivedView) "Unarchive" else "Archive"
+    SwipeAction.Delete -> "Delete"
+    SwipeAction.MarkRead -> if (unread) "Mark as read" else "Mark as unread"
+    SwipeAction.None -> "None"
 }
 
 /** Keeps the selection to rooms still on screen (another device may archive or delete one meanwhile). */
@@ -236,7 +264,23 @@ internal fun PruneSelection(state: ConversationListState, rooms: List<MatrixRoom
  * Released past it (or flung), the row springs off-screen and [onSwiped] runs; otherwise it springs back.
  */
 @Composable
-internal fun SwipeToArchive(enabled: Boolean, unarchive: Boolean, onSwiped: () -> Unit, content: @Composable (lifted: Boolean) -> Unit) {
+internal fun SwipeToArchive(enabled: Boolean, unarchive: Boolean, onSwiped: () -> Unit, content: @Composable (lifted: Boolean) -> Unit) =
+    SwipeConversation(enabled, SwipeActions(), unarchive, unread = false, onSwiped = { onSwiped() }, content = content)
+
+/**
+ * [SwipeToArchive] with Messages' configurable swipe actions: each direction has its own action (none disables
+ * that direction), drawn on the track in its own colour. Archive flies the row off; delete and mark read/unread
+ * spring the row back once [onSwiped] has been called, because they ask or act in place.
+ */
+@Composable
+internal fun SwipeConversation(
+    enabled: Boolean,
+    swipeActions: SwipeActions,
+    unarchive: Boolean,
+    unread: Boolean,
+    onSwiped: (SwipeAction) -> Unit,
+    content: @Composable (lifted: Boolean) -> Unit,
+) {
     val swipeThreshold = rememberSwipeThreshold()
     val density = LocalDensity.current
     var width by remember { mutableIntStateOf(0) }
@@ -244,10 +288,15 @@ internal fun SwipeToArchive(enabled: Boolean, unarchive: Boolean, onSwiped: () -
     val swiped by rememberUpdatedState(onSwiped)
     val threshold = width * ARCHIVE_SWIPE_FRACTION
     val flingVelocity = with(density) { ARCHIVE_FLING_VELOCITY.toPx() }
+    val startEnabled = swipeActions.start != SwipeAction.None
+    val endEnabled = swipeActions.end != SwipeAction.None
     val dragState = rememberDraggableState { delta ->
-        offset = (offset + delta).coerceIn(-width.toFloat(), width.toFloat())
+        val min = if (endEnabled) -width.toFloat() else 0f
+        val max = if (startEnabled) width.toFloat() else 0f
+        offset = (offset + delta).coerceIn(min, max)
         swipeThreshold.update(width > 0 && abs(offset) >= threshold)
     }
+    val action = if (offset > 0f) swipeActions.start else swipeActions.end
     Box(
         Modifier
             .fillMaxWidth()
@@ -255,26 +304,37 @@ internal fun SwipeToArchive(enabled: Boolean, unarchive: Boolean, onSwiped: () -
             .draggable(
                 state = dragState,
                 orientation = Orientation.Horizontal,
-                enabled = enabled,
+                enabled = enabled && (startEnabled || endEnabled),
                 onDragStopped = { velocity ->
                     val flung = abs(velocity) > flingVelocity && sign(velocity) == sign(offset) && abs(offset) > threshold / 3f
-                    val target = if (swipeThreshold.release() || flung) sign(offset) * width else 0f
+                    val chosen = if (offset > 0f) swipeActions.start else swipeActions.end
+                    val fire = (swipeThreshold.release() || flung) && chosen != SwipeAction.None
+                    val target = if (fire && chosen == SwipeAction.Archive) sign(offset) * width else 0f
                     animate(offset, target, initialVelocity = velocity, animationSpec = SendMotion.swipeSettle()) { value, _ -> offset = value }
-                    if (target != 0f) swiped()
+                    if (fire) swiped(chosen)
                 },
             ),
     ) {
         if (offset != 0f) {
             val colors = MaterialTheme.colorScheme
             val progress = if (threshold > 0f) (abs(offset) / threshold).coerceIn(0f, 1f) else 0f
+            val (track, onTrack) = when (action) {
+                SwipeAction.Delete -> colors.error to colors.onError
+                SwipeAction.MarkRead -> colors.tertiary to colors.onTertiary
+                else -> colors.primary to colors.onPrimary
+            }
             Box(
-                Modifier.matchParentSize().clip(RoundedCornerShape(24.dp)).background(colors.primary),
+                Modifier.matchParentSize().clip(RoundedCornerShape(24.dp)).background(track),
                 contentAlignment = if (offset > 0f) Alignment.CenterStart else Alignment.CenterEnd,
             ) {
                 Icon(
-                    if (unarchive) Icons.Outlined.Unarchive else Icons.Outlined.Archive,
-                    contentDescription = if (unarchive) "Unarchive" else "Archive",
-                    tint = colors.onPrimary,
+                    when (action) {
+                        SwipeAction.Delete -> Icons.Outlined.Delete
+                        SwipeAction.MarkRead -> if (unread) Icons.Outlined.MarkEmailRead else Icons.Outlined.MarkEmailUnread
+                        else -> if (unarchive) Icons.Outlined.Unarchive else Icons.Outlined.Archive
+                    },
+                    contentDescription = swipeActionLabel(action, unarchive, unread),
+                    tint = onTrack,
                     modifier = Modifier.padding(horizontal = 24.dp).graphicsLayer {
                         val scale = 0.7f + 0.3f * progress
                         scaleX = scale
@@ -348,6 +408,10 @@ internal fun ConversationSelectionBar(
                             text = { Text("Block") },
                             onClick = { showMenu = false; state.confirmBlock = dm },
                         )
+                        DropdownMenuItem(
+                            text = { Text("Report spam") },
+                            onClick = { showMenu = false; state.confirmSpam = dm },
+                        )
                     }
                 }
             }
@@ -387,7 +451,7 @@ internal fun ConversationListDialogs(state: ConversationListState, actions: Conv
             text = {
                 Text(
                     "You won't receive calls or messages from $userId on any of your devices, and your conversations " +
-                        "with them leave your list. Unblock them any time from Blocked contacts.",
+                        "with them leave your list. Unblock them any time from Spam & blocked.",
                 )
             },
             confirmButton = {
@@ -398,6 +462,28 @@ internal fun ConversationListDialogs(state: ConversationListState, actions: Conv
                 }) { Text("Yes") }
             },
             dismissButton = { TextButton(onClick = { state.confirmBlock = null }) { Text("Cancel") } },
+        )
+    }
+    state.confirmSpam?.let { room ->
+        val userId = room.dmUserId ?: return@let
+        // Messages: "Report spam?" — the report goes to the service, the sender is blocked.
+        AlertDialog(
+            onDismissRequest = { state.confirmSpam = null },
+            title = { Text("Report spam?") },
+            text = {
+                Text(
+                    "Your homeserver is told this conversation is spam, and $userId is blocked: you won't receive calls or " +
+                        "messages from them, and your conversations with them leave your list. Unblock them any time from Spam & blocked.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    state.confirmSpam = null
+                    state.clearSelection()
+                    actions.reportSpam(room)
+                }) { Text("Report") }
+            },
+            dismissButton = { TextButton(onClick = { state.confirmSpam = null }) { Text("Cancel") } },
         )
     }
 }
@@ -449,7 +535,7 @@ internal fun ArchivedScreen(
     ConversationListDialogs(state, actions)
 }
 
-/** Account menu → Blocked contacts: the account's ignored users, each with Unblock. */
+/** Account menu → Spam & blocked: the account's ignored users (blocked or reported as spam), each with Unblock. */
 @Composable
 internal fun BlockedContactsScreen(userIds: List<String>, onUnblock: (String) -> Unit, onBack: () -> Unit) {
     val colors = MaterialTheme.colorScheme
@@ -457,7 +543,7 @@ internal fun BlockedContactsScreen(userIds: List<String>, onUnblock: (String) ->
     Scaffold(
         modifier = Modifier.predictiveBack(leaving),
         containerColor = colors.surfaceContainer,
-        topBar = { ListScreenTopBar("Blocked contacts", onBack) },
+        topBar = { ListScreenTopBar("Spam & blocked", onBack) },
     ) { padding ->
         Surface(
             modifier = Modifier.fillMaxSize().padding(padding),
@@ -467,14 +553,14 @@ internal fun BlockedContactsScreen(userIds: List<String>, onUnblock: (String) ->
             LazyColumn(contentPadding = PaddingValues(vertical = 8.dp)) {
                 item(key = "about") {
                     Text(
-                        "You won't receive calls or messages from blocked contacts on any of your devices.",
+                        "You won't receive calls or messages from blocked or reported contacts on any of your devices.",
                         style = MaterialTheme.typography.bodyLarge,
                         color = colors.onSurfaceVariant,
                         modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp),
                     )
                 }
                 if (userIds.isEmpty()) {
-                    item(key = "empty") { EmptyListText("No blocked contacts. Block someone from a conversation's details or selection menu.") }
+                    item(key = "empty") { EmptyListText("No blocked contacts. Block or report someone from a conversation's details or selection menu.") }
                 }
                 items(userIds, key = { it }) { userId ->
                     Row(
