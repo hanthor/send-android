@@ -212,8 +212,11 @@ internal fun ConversationDetailsScreen(
                     }
                     Spacer(Modifier.height(16.dp))
                     Text(name, style = MaterialTheme.typography.headlineMedium, color = colors.onPrimaryContainer, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 24.dp))
-                    // Messages: the DM header carries the address; a group's member count heads its people card.
-                    val subtitle = if (shown != null && direct) shown.dmUserId else null
+                    val subtitle = when {
+                        shown == null -> null
+                        direct -> shown.dmUserId
+                        else -> shown.people.size.let { if (it == 1) "1 person" else "$it people" }
+                    }
                     if (subtitle != null) {
                         Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
                     }
@@ -260,16 +263,16 @@ internal fun ConversationDetailsScreen(
                         }
                     }
                 }
-                // Messages: a people card headed "1 other person" (DM) or "N people" (group); rows open the profile sheet.
+                // Messages: a people card — headed "1 other person" in a DM (the count already sits under a group's name).
                 val others = shown.people.filterNot { it.isMe }
                 val listed = if (direct) others else shown.people
                 if (listed.isNotEmpty() || (!direct && shown.canInvite)) {
                     item(key = "people-label") {
                         DetailsSectionLabel(
                             when {
-                                direct -> if (others.size == 1) "1 other person" else "${others.size} other people"
-                                shown.people.size == 1 -> "1 person"
-                                else -> "${shown.people.size} people"
+                                !direct -> "People"
+                                others.size == 1 -> "1 other person"
+                                else -> "${others.size} other people"
                             },
                         )
                     }
