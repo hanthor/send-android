@@ -166,10 +166,41 @@ class ZZListManagementIntegrationTest {
             waitFor("m.marked_unread cleared in Alice's synced room info", 60_000, ::roomsState) { roomInfo(deleteRoom)?.isMarkedUnread == false }
         }
 
-        // 4. Delete after confirming: Alice leaves (Bob sees one member left) and forgets the room.
+        // 4. Delete after confirming: Messages' Trash first — the room stays joined but leaves the list, muted, and
+        // dev.send.trash on the homeserver records it; Restore from the Trash brings it back; Delete forever from
+        // the Trash makes Alice leave (Bob sees one member left) and forget the room.
         longPressRow(deleteName)
         composeRule.onNodeWithContentDescription("Delete").performClick()
-        waitForUi("the delete confirmation", 10_000, ::roomsState) { hasNodeWithText("Delete 1 conversation?") }
+        waitForUi("the delete confirmation", 10_000, ::roomsState) { hasNodeWithText("Delete 1 conversation?") && hasNodeWithText("Trash", substring = true) }
+        composeRule.onNodeWithText("Delete").performClick()
+        waitFor("dev.send.trash on the homeserver", 60_000, { "server=${serverAccountData(MatrixRepository.TRASH_EVENT_TYPE)}" }) {
+            serverAccountData(MatrixRepository.TRASH_EVENT_TYPE)?.optJSONObject("rooms")?.has(deleteRoom) == true
+        }
+        waitForUi("the trashed row gone from the list", 30_000, ::roomsState) {
+            !hasNodeWithText(deleteName) && deleteRoom in repository.trashed.value && deleteRoom in repository.mutedRoomIds.value
+        }
+        assertTrue("still joined while in the Trash", deleteRoom in serverJoinedRooms())
+        openAccountItem("Trash")
+        waitForUi("the conversation in the Trash", 30_000, ::roomsState) { hasNodeWithText(deleteName) && hasNodeWithText("Restore") }
+        composeRule.auditShot("live-trash")
+        composeRule.onNodeWithText("Restore").performClick()
+        waitFor("the Trash entry gone on the homeserver", 60_000, { "server=${serverAccountData(MatrixRepository.TRASH_EVENT_TYPE)}" }) {
+            serverAccountData(MatrixRepository.TRASH_EVENT_TYPE)?.optJSONObject("rooms")?.has(deleteRoom) != true
+        }
+        composeRule.onNodeWithContentDescription("Back").performClick()
+        waitForUi("the restored row back in the list", 30_000, ::roomsState) {
+            rowListed(deleteName) && deleteRoom !in repository.trashed.value && deleteRoom !in repository.mutedRoomIds.value
+        }
+        longPressRow(deleteName)
+        composeRule.onNodeWithContentDescription("Delete").performClick()
+        waitForUi("the delete confirmation again", 10_000, ::roomsState) { hasNodeWithText("Delete 1 conversation?") }
+        composeRule.onNodeWithText("Delete").performClick()
+        waitForUi("the row in the Trash again", 30_000, ::roomsState) { !hasNodeWithText(deleteName) && deleteRoom in repository.trashed.value }
+        openAccountItem("Trash")
+        waitForUi("the conversation in the Trash again", 30_000, ::roomsState) { hasNodeWithText(deleteName) }
+        longPressRow(deleteName)
+        composeRule.onNodeWithContentDescription("Delete forever").performClick()
+        waitForUi("the delete-forever confirmation", 10_000, ::roomsState) { hasNodeWithText("for good", substring = true) }
         composeRule.onNodeWithText("Delete").performClick()
         waitFor("Alice to leave the room on the homeserver", 60_000, { "joined=${serverJoinedRooms()}" }) { deleteRoom !in serverJoinedRooms() }
         // Forget leaves no joined membership behind on Alice's client (the SDK may keep the left room until sync drops it).
@@ -177,7 +208,9 @@ class ZZListManagementIntegrationTest {
         waitFor("Bob to see Alice leave", 60_000, ::roomsState) {
             runBlocking(Dispatchers.IO) { checkNotNull(bobRooms[deleteRoom]).roomInfo().joinedMembersCount } == 1uL
         }
-        waitForUi("the deleted row gone", 30_000, ::roomsState) { !hasNodeWithText(deleteName) }
+        waitForUi("the deleted row gone from the Trash", 30_000, ::roomsState) { !hasNodeWithText(deleteName) && deleteRoom !in repository.trashed.value }
+        composeRule.onNodeWithContentDescription("Back").performClick()
+        waitForUi("the list again", 30_000, ::roomsState) { rowListed(pinName) }
 
         // 5. Star Bob's message: dev.send.starred account data round-trips through sync, the bubble shows the star,
         // and ⋮ → Starred lists it and jumps back to it.

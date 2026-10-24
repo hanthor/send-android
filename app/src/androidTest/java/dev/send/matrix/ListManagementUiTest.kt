@@ -163,6 +163,51 @@ class ListManagementUiTest {
     }
 
     @Test
+    fun trashListsDeletedConversationsWithRestoreDeleteForeverAndEmpty() {
+        val restored = mutableListOf<List<String>>()
+        val deleted = mutableListOf<List<String>>()
+        val trashedRooms = fixtureRooms.filter { it.name == "Maya" || it.name == "Design studio" }
+        val trashed = mapOf(
+            "!maya:example.org" to TrashEntry(trashedAtMillis = now - 2 * 24 * 60 * minute, wasMuted = false),
+            "!studio:example.org" to TrashEntry(trashedAtMillis = now - 60 * minute, wasMuted = true),
+        )
+        composeRule.setContent {
+            SendTheme {
+                TrashScreen(
+                    rooms = trashedConversations(fixtureRooms, trashed),
+                    trashed = trashed,
+                    mutedRoomIds = setOf("!studio:example.org"),
+                    onRestore = { restored += it.map { room -> room.id } },
+                    onDeleteForever = { deleted += it.map { room -> room.id } },
+                    onBack = {},
+                )
+            }
+        }
+        // Most recently deleted first, each with when it was deleted and Restore; the other rooms stay out.
+        assertTrue(top("Design studio") < top("Maya"))
+        composeRule.onNodeWithText("Deleted 2 days ago").assertIsDisplayed()
+        composeRule.onAllNodesWithText("Family").assertCountEquals(0)
+        composeRule.auditShot("trash")
+        composeRule.onAllNodesWithText("Restore")[0].performClick()
+        composeRule.runOnIdle { assertEquals(listOf(listOf("!studio:example.org")), restored) }
+
+        // Long-press: Restore and Delete forever for the selection, with a confirmation that says it is for good.
+        longPress("Maya")
+        composeRule.onNodeWithContentDescription("Delete forever").performClick()
+        composeRule.onNodeWithText("Delete 1 conversation?").assertIsDisplayed()
+        composeRule.onNodeWithText("You'll leave this conversation for good", substring = true).assertIsDisplayed()
+        composeRule.onNodeWithText("Delete").performClick()
+        composeRule.runOnIdle { assertEquals(listOf(listOf("!maya:example.org")), deleted) }
+
+        // ⋮ → Empty Trash deletes everything in it for good, after confirming.
+        composeRule.onNodeWithContentDescription("More options").performClick()
+        composeRule.onNodeWithText("Empty Trash").performClick()
+        composeRule.onNodeWithText("Empty Trash?").assertIsDisplayed()
+        composeRule.onAllNodesWithText("Empty Trash").onLast().performClick()
+        composeRule.runOnIdle { assertEquals(trashedRooms.map { it.id }.sorted(), deleted.last().sorted()) }
+    }
+
+    @Test
     fun swipeActionsPageOffersAChoicePerDirection() {
         val chosen = mutableStateOf(SwipeActions())
         composeRule.setContent {

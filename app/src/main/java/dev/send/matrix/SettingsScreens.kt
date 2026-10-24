@@ -253,6 +253,7 @@ internal fun SettingsScreen(
     onDevices: () -> Unit,
     onBlocked: () -> Unit,
     onArchived: () -> Unit,
+    onTrash: () -> Unit = {},
     onAbout: () -> Unit,
     onBack: () -> Unit,
 ) {
@@ -291,6 +292,7 @@ internal fun SettingsScreen(
             row { SettingsRow("Devices", "Sessions signed in to your account", onClick = onDevices) }
             row { SettingsRow("Spam & blocked", onClick = onBlocked) }
             row { SettingsRow("Archived", onClick = onArchived) }
+            row { SettingsRow("Trash", "Deleted conversations, kept for 30 days", onClick = onTrash) }
         }
         SettingsGroup {
             row { SettingsRow("About & licenses", "Send · AGPL-3.0", onClick = onAbout) }
