@@ -24,7 +24,9 @@ voice and video calls. Unencrypted rooms are never opened.
 - Long-press for reactions and Reply, Forward, Copy, Edit, Delete, Select more
   and Info; swipe a message to reply.
 - Typing dots, "Read" / "Seen by N" receipts, link previews, a full emoji
-  picker and search inside a conversation.
+  picker and search inside a conversation; older history loads as you scroll
+  up, and a round button jumps back to the newest message, counting what
+  arrived meanwhile.
 - Encrypted direct chats and groups; star messages and find them later.
 
 **Conversation list**
@@ -35,9 +37,12 @@ voice and video calls. Unencrypted rooms are never opened.
 
 **Calls and notifications**
 - Voice and video calls through Element Call (MatrixRTC), with a full-screen
-  incoming-call screen, Answer/Decline and "Calling…" / "Call declined".
+  incoming-call screen, Answer/Decline, "Calling…" / "Call declined" and a
+  missed-call notification with Call back.
 - Conversation notifications with inline Reply and Mark as read, delivered by
-  UnifiedPush or periodic background sync; per-conversation mute.
+  UnifiedPush or periodic background sync; per-conversation mute; bubbles
+  (let a conversation float over other apps, from the notification's bubble
+  settings).
 - Share text, photos and files into Send from other apps.
 
 **Account and security**
@@ -104,7 +109,7 @@ Everything is built and tested in GitHub Actions:
 - [ROADMAP.md](ROADMAP.md) — what's done, phase by phase, with the CI runs that verify it.
 - [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) — implemented paths and known limits.
 - [DEVELOPMENT.md](DEVELOPMENT.md) — local Synapse/MatrixRTC backend and comparison tooling.
-- [ANDROID_INTEGRATIONS.md](ANDROID_INTEGRATIONS.md) — Android surfaces still to come (bubbles, widgets, Android Auto).
+- [ANDROID_INTEGRATIONS.md](ANDROID_INTEGRATIONS.md) — Android surfaces: bubbles (done), widgets and Android Auto still to come.
 - [PRIVACY.md](PRIVACY.md) — what leaves the device and why; also shown in the app under About.
 - [docs/accessibility.md](docs/accessibility.md) — accessibility checks and contrast ratios.
 - [fastlane/metadata/android/en-US](fastlane/metadata/android/en-US) — store listing for F-Droid and Google Play.

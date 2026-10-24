@@ -288,8 +288,12 @@ internal fun avatarPalette(name: String): Pair<Color, Color> {
     return AvatarColors[index] to Color.White
 }
 
-class MainActivity : ComponentActivity() {
+open class MainActivity : ComponentActivity() {
     private val repository by lazy { MatrixRepository.get(applicationContext) }
+    /** Counts resumes: a window coming back to the front re-claims its conversation's timeline (see [SendApp]). */
+    val resumes = mutableIntStateOf(0)
+    /** True for the conversation shown inside a bubble ([BubbleActivity]): no list, back collapses the bubble. */
+    open val bubble: Boolean get() = false
     val ssoCallback = mutableStateOf<Uri?>(null)
     /** Conversation to open from a notification tap or conversation shortcut, consumed by SendApp. */
     val pendingConversation = mutableStateOf<String?>(null)
@@ -339,6 +343,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         NotificationRouter.activityResumed = true
+        resumes.intValue += 1
         conversationVisible(NotificationRouter.openRoomId)
     }
 
@@ -361,7 +366,10 @@ class MainActivity : ComponentActivity() {
 
     /** The user sees [roomId]: its notification goes, and the system ties its shortcut/notification to this screen. */
     private fun conversationVisible(roomId: String?) {
-        if (roomId != null) MessageNotifier.cancel(this, roomId)
+        if (roomId != null) {
+            MessageNotifier.cancel(this, roomId)
+            IncomingCalls.cancelMissed(this, roomId)
+        }
         setLocusContext(roomId?.let { android.content.LocusId(it) }, null)
     }
 
@@ -389,12 +397,17 @@ class MainActivity : ComponentActivity() {
         return true
     }
 
-    /** Answer from a ring: stops ringing, opens the conversation and queues the join; false for any other intent. */
+    /**
+     * Answer from a ring: stops ringing, opens the conversation and queues the join. Call back from a missed-call
+     * notification: opens the conversation and queues a new call. False for any other intent.
+     */
     private fun acceptCall(intent: android.content.Intent?): Boolean {
-        if (intent?.action != IncomingCalls.ACTION_ANSWER) return false
+        if (intent == null) return false
+        val callBack = intent.action == IncomingCalls.ACTION_CALL_BACK
+        if (intent.action != IncomingCalls.ACTION_ANSWER && !callBack) return false
         val roomId = intent.getStringExtra(MessageNotifier.EXTRA_ROOM_ID) ?: return true
-        IncomingCalls.stop(this, roomId)
-        pendingCall.value = PendingCall(roomId, video = intent.getBooleanExtra(IncomingCalls.EXTRA_VIDEO, false))
+        if (callBack) IncomingCalls.cancelMissed(this, roomId) else IncomingCalls.stop(this, roomId)
+        pendingCall.value = PendingCall(roomId, video = intent.getBooleanExtra(IncomingCalls.EXTRA_VIDEO, false), outgoing = callBack)
         pendingConversation.value = roomId
         // Answered on the lock screen: the call (and the rest of Send) shows once the user unlocks.
         getSystemService(android.app.KeyguardManager::class.java).requestDismissKeyguard(this, null)
@@ -406,6 +419,15 @@ class MainActivity : ComponentActivity() {
             ssoCallback.value = uri
         }
     }
+}
+
+/**
+ * One conversation in an Android bubble (Messages' bubbles): launched by a notification's bubble metadata into
+ * its own floating document with the conversation to show in the intent. Only that conversation is shown; back
+ * closes it, which collapses the bubble.
+ */
+class BubbleActivity : MainActivity() {
+    override val bubble: Boolean get() = true
 }
 
 @Composable
@@ -420,6 +442,8 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
     var activeJob by remember { mutableStateOf<Job?>(null) }
     var room by remember { mutableStateOf<Room?>(null) }
     var timeline by remember { mutableStateOf<Timeline?>(null) }
+    /** The open timeline reached the start of its room's history: scrolling up loads nothing more. */
+    var historyStartReached by remember { mutableStateOf(false) }
     var activeRoomId by rememberSaveable { mutableStateOf("") }
     var roomTitle by rememberSaveable { mutableStateOf("") }
     var activeRoomIsDirect by rememberSaveable { mutableStateOf(false) }
@@ -477,7 +501,7 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
     LaunchedEffect(callSession, answeredCall) {
         val call = answeredCall ?: return@LaunchedEffect
         val session = callSession ?: return@LaunchedEffect
-        session.answer(call.roomId, call.video)
+        if (call.outgoing) session.startCall(call.roomId, call.video) else session.answer(call.roomId, call.video)
         activity.pendingCall.value = null
     }
     val outgoingRing = callSession?.outgoingRing?.collectAsState()?.value
@@ -538,7 +562,18 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
         else -> null
     }
     // Wide windows (tablets, unfolded foldables) show the list beside the open conversation; see AdaptiveScreenHost.
-    val paneWidth = listPaneWidth()
+    // A bubble is one conversation on one pane, whatever its window size.
+    val paneWidth = if (activity.bubble) null else listPaneWidth()
+    // Each window (the app, an expanded bubble) claims its conversation's timeline when it comes to the front:
+    // the repository follows one timeline at a time, so the window in front is the one that is live.
+    LaunchedEffect(activity.resumes.intValue) {
+        val current = timeline ?: return@LaunchedEffect
+        val currentRoom = room ?: return@LaunchedEffect
+        if (!repository.isObserving(current)) {
+            repository.observeTimeline(current)
+            repository.observeTyping(currentRoom)
+        }
+    }
     val twoPane = paneWidth != null
     /**
      * Beside the list, full-width pages (Settings, Archived, …) give way when a conversation opens so it shows; on
@@ -557,6 +592,7 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
         repository.observeTyping(selectedRoom)
         room = selectedRoom
         timeline = selectedTimeline
+        historyStartReached = false
         activeRoomId = roomId
         roomTitle = title ?: selectedRoom.displayName().orEmpty().ifBlank { roomId }
         activeRoomIsDirect = direct ?: repository.isDirectRoom(selectedRoom)
@@ -611,9 +647,13 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
             }
         }
     }
-    /** Leaves the open conversation for the list. */
+    /** Leaves the open conversation for the list; in a bubble, closes the bubble's window instead. */
     fun closeConversation() {
         room?.let { left -> repository.setTyping(left, false) }
+        if (activity.bubble) {
+            activity.finish()
+            return
+        }
         room = null; timeline = null; activeRoomId = ""; roomTitle = ""; activeRoomIsDirect = false; error = ""
     }
     // Archive, pin, unread and delete are tags/flags/membership on each room; block is the account's ignore list.
@@ -780,6 +820,7 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
                     repository.observeTyping(restoredRoom)
                     room = restoredRoom
                     timeline = restoredTimeline
+                    historyStartReached = false
                     activeRoomIsDirect = repository.isDirectRoom(restoredRoom)
                 }
             }
@@ -811,7 +852,8 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
         val shownTitle = remember { mutableStateOf(roomTitle) }.apply { if (roomTitle.isNotBlank()) value = roomTitle }.value
         // The conversation list: the list screen on one pane, the start pane beside the conversation on two.
         val conversationList: @Composable () -> Unit = {
-            HomeScreen(
+            if (activity.bubble) BubbleOpeningPane(error = error, onClose = { activity.finish() })
+            else HomeScreen(
                 rooms = rooms,
                 mutedRoomIds = mutedRoomIds,
                 blockedUserIds = ignoredUsers,
@@ -976,10 +1018,19 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
                 onOlder = {
                     val current = timeline
                     if (current != null) scope.launch {
-                        try { repository.paginateOlder(current) }
-                        catch (failure: Exception) { error = failure.message ?: "Older messages could not be loaded." }
+                        try {
+                            if (repository.paginateOlder(current) && timeline === current) historyStartReached = true
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (failure: Exception) {
+                            // Pages are requested by scrolling, not by a tap, so a failed page (offline, a timeline
+                            // closed on leaving or signing out) is logged and asked for again on the next scroll
+                            // rather than reported under the composer, where the text would outlive the request.
+                            android.util.Log.w("Send", "Older messages for $activeRoomId could not be loaded", failure)
+                        }
                     }
                 },
+                hasOlder = !historyStartReached,
                 onReact = { eventId, emoji ->
                     val currentRoom = room
                     val currentTimeline = timeline
@@ -1888,6 +1939,27 @@ internal fun HomeScreen(
 }
 
 @OptIn(ExperimentalLayoutApi::class)
+/** What a bubble shows until its conversation is open (or when it couldn't open). */
+@Composable
+private fun BubbleOpeningPane(error: String, onClose: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    Column(
+        Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(32.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        if (error.isBlank()) {
+            androidx.compose.material3.CircularProgressIndicator()
+            Spacer(Modifier.height(16.dp))
+            Text("Opening conversation…", color = colors.onSurfaceVariant)
+        } else {
+            Text(error, color = colors.error, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            Spacer(Modifier.height(16.dp))
+            androidx.compose.material3.TextButton(onClick = onClose) { Text("Close") }
+        }
+    }
+}
+
 @Composable
 private fun NewConversationScreen(
     value: String,
