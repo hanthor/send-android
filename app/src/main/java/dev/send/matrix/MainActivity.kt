@@ -985,7 +985,11 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
                             if (repository.paginateOlder(current) && timeline === current) historyStartReached = true
                         } catch (cancelled: CancellationException) {
                             throw cancelled
-                        } catch (failure: Exception) { error = failure.message ?: "Older messages could not be loaded." }
+                        } catch (failure: Exception) {
+                            // Pages are requested by scrolling, so a timeline closed meanwhile (conversation left,
+                            // signed out) fails quietly; the open conversation reports its own failures.
+                            if (timeline === current) error = failure.message ?: "Older messages could not be loaded."
+                        }
                     }
                 },
                 hasOlder = !historyStartReached,
