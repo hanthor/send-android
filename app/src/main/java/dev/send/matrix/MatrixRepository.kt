@@ -1690,6 +1690,9 @@ class MatrixRepository(context: Context) {
         room.timeline()
     }
 
+    /** Whether [timeline] is the one [messages] follows (one window re-claims its conversation on resume). */
+    fun isObserving(timeline: Timeline): Boolean = observedTimeline === timeline
+
     suspend fun observeTimeline(timeline: Timeline) = withContext(Dispatchers.IO) {
         timelineHandle?.close()
         timelineItems.clear()
