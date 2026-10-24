@@ -135,7 +135,7 @@ internal fun AccountSheet(
     onProfile: (() -> Unit)? = null,
     /** Opens the Archived conversations screen (Messages: account menu → Archived). */
     onArchived: (() -> Unit)? = null,
-    /** Opens Blocked contacts. */
+    /** Opens Spam & blocked. */
     onBlocked: (() -> Unit)? = null,
 ) {
     val colors = MaterialTheme.colorScheme
@@ -176,7 +176,7 @@ internal fun AccountSheet(
                 }
                 Spacer(Modifier.height(8.dp))
                 if (onArchived != null) AccountMenuRow(Icons.Outlined.Archive, "Archived", null, onArchived)
-                if (onBlocked != null) AccountMenuRow(Icons.Outlined.Block, "Blocked contacts", null, onBlocked)
+                if (onBlocked != null) AccountMenuRow(Icons.Outlined.Block, "Spam & blocked", null, onBlocked)
                 AccountMenuRow(Icons.Outlined.Security, "Security", securitySummary, onSecurity)
                 AccountMenuRow(Icons.Outlined.Settings, "Settings", null, onSettings)
                 AccountMenuRow(Icons.AutoMirrored.Outlined.Logout, "Sign out", null, onSignOut)

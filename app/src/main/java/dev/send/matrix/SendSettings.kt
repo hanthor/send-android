@@ -19,9 +19,21 @@ enum class ThemeChoice(val label: String) {
     System("System default"),
 }
 
+/** Settings → Swipe actions: what swiping a conversation row does in each direction. */
+enum class SwipeAction(val label: String) {
+    Archive("Archive"),
+    Delete("Delete"),
+    /** Toggles read / unread (Messages' "Mark as read or unread"). */
+    MarkRead("Mark as read or unread"),
+    None("None"),
+}
+
+/** Both directions of the swipe-actions setting; [start] is a swipe from the leading edge (right, in LTR). */
+data class SwipeActions(val start: SwipeAction = SwipeAction.Archive, val end: SwipeAction = SwipeAction.Archive)
+
 /**
- * This device's app preferences (Settings): theme, in-conversation sounds and automatic link previews. Kept in
- * SharedPreferences; the flows let every screen follow a change at once.
+ * This device's app preferences (Settings): theme, in-conversation sounds, automatic link previews and swipe
+ * actions. Kept in SharedPreferences; the flows let every screen follow a change at once.
  */
 class SendSettings private constructor(context: Context) {
     private val prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -38,6 +50,20 @@ class SendSettings private constructor(context: Context) {
     private val _linkPreviews = MutableStateFlow(prefs.getBoolean(KEY_LINK_PREVIEWS, true))
     /** Automatic previews: fetch homeserver URL previews for links in messages. */
     val linkPreviews: StateFlow<Boolean> = _linkPreviews.asStateFlow()
+
+    private val _swipeActions = MutableStateFlow(
+        SwipeActions(
+            start = SwipeAction.entries.firstOrNull { it.name == prefs.getString(KEY_SWIPE_START, null) } ?: SwipeAction.Archive,
+            end = SwipeAction.entries.firstOrNull { it.name == prefs.getString(KEY_SWIPE_END, null) } ?: SwipeAction.Archive,
+        ),
+    )
+    /** Messages' Settings → Swipe actions. */
+    val swipeActions: StateFlow<SwipeActions> = _swipeActions.asStateFlow()
+
+    fun setSwipeActions(actions: SwipeActions) {
+        prefs.edit().putString(KEY_SWIPE_START, actions.start.name).putString(KEY_SWIPE_END, actions.end.name).apply()
+        _swipeActions.value = actions
+    }
 
     fun setTheme(choice: ThemeChoice) {
         prefs.edit().putString(KEY_THEME, choice.name).apply()
@@ -58,6 +84,8 @@ class SendSettings private constructor(context: Context) {
         private const val PREFS = "send_settings"
         private const val KEY_THEME = "theme"
         private const val KEY_SOUNDS = "conversation_sounds"
+        private const val KEY_SWIPE_START = "swipe_start"
+        private const val KEY_SWIPE_END = "swipe_end"
         private const val KEY_LINK_PREVIEWS = "link_previews"
 
         @Volatile private var instance: SendSettings? = null
