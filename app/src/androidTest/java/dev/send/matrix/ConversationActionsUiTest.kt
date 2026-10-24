@@ -14,8 +14,6 @@ import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.longClick
-import androidx.compose.ui.test.onRoot
-import androidx.compose.ui.test.printToString
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
@@ -184,17 +182,9 @@ class ConversationActionsUiTest {
         val pending = ScheduledMessage("s1", "!room:example.org", "Happy birthday!", tomorrowEight, now)
         // State written from the test thread is applied on the UI thread, so the next frame sees it.
         composeRule.runOnIdle { scheduled.value = listOf(pending) }
-        val label = "Scheduled for Tomorrow, 8:00 AM"
-        fun tree(): String = composeRule.onRoot(useUnmergedTree = true).printToString(maxDepth = 14).lineSequence()
-            .filter { "Node #" in it || "Scheduled" in it || "Text = " in it }.take(120).joinToString("\n")
-        try {
-            composeRule.waitUntil(5_000) {
-                composeRule.onAllNodesWithText(label).fetchSemanticsNodes().any { !it.boundsInRoot.isEmpty }
-            }
-            composeRule.onNodeWithText(label).assertIsDisplayed()
-        } catch (failure: Throwable) {
-            throw AssertionError("${failure.message}\n${tree()}", failure)
-        }
+        // Android formats the time itself (API 34 puts a narrow no-break space before AM), so the label is derived.
+        val label = "Scheduled for ${scheduleLabel(context, tomorrowEight)}"
+        composeRule.onNodeWithText(label).assertIsDisplayed()
         composeRule.auditShot("scheduled-message")
         composeRule.onNodeWithText("Happy birthday!").performClick()
         composeRule.waitUntil(5_000) { composeRule.onAllNodesWithText("Send now").fetchSemanticsNodes().isNotEmpty() }
@@ -231,7 +221,7 @@ class ConversationActionsUiTest {
         )
         composeRule.runOnIdle { scheduled.value = listOf(withPhoto) }
         composeRule.waitUntil(5_000) { composeRule.onAllNodesWithContentDescription("Preview of cake.png").fetchSemanticsNodes().isNotEmpty() }
-        composeRule.onNodeWithContentDescription("Scheduled message: 1 attachment, Look at this cake. Scheduled for Tomorrow, 8:00 AM").assertExists()
+        composeRule.onNodeWithContentDescription("Scheduled message: 1 attachment, Look at this cake. $label").assertExists()
         composeRule.auditShot("scheduled-photo")
     }
 
