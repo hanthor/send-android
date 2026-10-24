@@ -111,6 +111,11 @@ class ZZNotificationsIntegrationTest {
         assertEquals(GROUP_NAME, style.conversationTitle?.toString())
         assertEquals(MessageNotifier.CHANNEL_MESSAGES, notification.notification.channelId)
         assertEquals(roomId, notification.notification.shortcutId)
+        // Messages-style bubble: the notification carries bubble metadata whose target is the bubble's own document
+        // of this conversation (whether the system lets it float is the user's per-app choice).
+        val bubble = checkNotNull(notification.notification.bubbleMetadata) { "No bubble metadata" }
+        assertTrue("bubble height ${bubble.desiredHeight}", bubble.desiredHeight > 0)
+        assertEquals(false, bubble.autoExpandBubble)
         // Lock screen: private, with a public version that has no message text.
         assertEquals(Notification.VISIBILITY_PRIVATE, notification.notification.visibility)
         val publicText = checkNotNull(notification.notification.publicVersion).extras.getCharSequence(Notification.EXTRA_TEXT).toString()
@@ -179,8 +184,26 @@ class ZZNotificationsIntegrationTest {
         Thread.sleep(PUSH_RULE_SYNC_MS)
         val unmuted = "Unmuted message $stamp"
         bobSends(unmuted)
-        waitForMessage(roomId, unmuted)
+        val unmutedNotification = waitForMessage(roomId, unmuted)
+
+        // 6. The bubble: its intent opens BubbleActivity on this conversation alone (the system would float it);
+        // the bubbled conversation shows Bob's message and claims the timeline, and closing it collapses the bubble.
+        val bubbleIntent = MessageNotifier.bubbleIntent(context, roomId)
+        assertEquals(BubbleActivity::class.java.name, bubbleIntent.component?.className)
+        assertNotNull(unmutedNotification.notification.bubbleMetadata)
+        androidx.test.core.app.ActivityScenario.launch<BubbleActivity>(bubbleIntent).use { scenario ->
+            waitFor("the bubbled conversation", 60_000, { "visible=${NotificationRouter.visibleRoomId} state=${scenario.state}" }) {
+                scenario.state == Lifecycle.State.RESUMED && NotificationRouter.visibleRoomId == roomId &&
+                    repository.messages.value.any { it.text == unmuted }
+            }
+            assertNull(notificationState(roomId), conversationNotification(roomId))
+            waitFor("the bubbled conversation on screen", 30_000, { "found=${bubbleShows(unmuted)}" }) { bubbleShows(unmuted) }
+        }
     }
+
+    /** Whether the bubble's window shows [text] (the main activity's compose rule sees every window's tree). */
+    private fun bubbleShows(text: String): Boolean =
+        runCatching { composeRule.onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty() }.getOrDefault(false)
 
     @Test
     fun unifiedPushEndpointBecomesAPusherAndAPushedEventNotifiesFromAColdStart() {

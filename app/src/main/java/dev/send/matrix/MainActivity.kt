@@ -288,8 +288,12 @@ internal fun avatarPalette(name: String): Pair<Color, Color> {
     return AvatarColors[index] to Color.White
 }
 
-class MainActivity : ComponentActivity() {
+open class MainActivity : ComponentActivity() {
     private val repository by lazy { MatrixRepository.get(applicationContext) }
+    /** Counts resumes: a window coming back to the front re-claims its conversation's timeline (see [SendApp]). */
+    val resumes = mutableIntStateOf(0)
+    /** True for the conversation shown inside a bubble ([BubbleActivity]): no list, back collapses the bubble. */
+    open val bubble: Boolean get() = false
     val ssoCallback = mutableStateOf<Uri?>(null)
     /** Conversation to open from a notification tap or conversation shortcut, consumed by SendApp. */
     val pendingConversation = mutableStateOf<String?>(null)
@@ -339,6 +343,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         NotificationRouter.activityResumed = true
+        resumes.intValue += 1
         conversationVisible(NotificationRouter.openRoomId)
     }
 
@@ -414,6 +419,15 @@ class MainActivity : ComponentActivity() {
             ssoCallback.value = uri
         }
     }
+}
+
+/**
+ * One conversation in an Android bubble (Messages' bubbles): launched by a notification's bubble metadata into
+ * its own floating document with the conversation to show in the intent. Only that conversation is shown; back
+ * closes it, which collapses the bubble.
+ */
+class BubbleActivity : MainActivity() {
+    override val bubble: Boolean get() = true
 }
 
 @Composable
@@ -550,7 +564,18 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
         else -> null
     }
     // Wide windows (tablets, unfolded foldables) show the list beside the open conversation; see AdaptiveScreenHost.
-    val paneWidth = listPaneWidth()
+    // A bubble is one conversation on one pane, whatever its window size.
+    val paneWidth = if (activity.bubble) null else listPaneWidth()
+    // Each window (the app, an expanded bubble) claims its conversation's timeline when it comes to the front:
+    // the repository follows one timeline at a time, so the window in front is the one that is live.
+    LaunchedEffect(activity.resumes.intValue) {
+        val current = timeline ?: return@LaunchedEffect
+        val currentRoom = room ?: return@LaunchedEffect
+        if (!repository.isObserving(current)) {
+            repository.observeTimeline(current)
+            repository.observeTyping(currentRoom)
+        }
+    }
     val twoPane = paneWidth != null
     /**
      * Beside the list, full-width pages (Settings, Archived, …) give way when a conversation opens so it shows; on
@@ -624,9 +649,13 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
             }
         }
     }
-    /** Leaves the open conversation for the list. */
+    /** Leaves the open conversation for the list; in a bubble, closes the bubble's window instead. */
     fun closeConversation() {
         room?.let { left -> repository.setTyping(left, false) }
+        if (activity.bubble) {
+            activity.finish()
+            return
+        }
         room = null; timeline = null; activeRoomId = ""; roomTitle = ""; activeRoomIsDirect = false; error = ""
     }
     // Archive, pin, unread and delete are tags/flags/membership on each room; block is the account's ignore list.
@@ -826,7 +855,8 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
         val shownTitle = remember { mutableStateOf(roomTitle) }.apply { if (roomTitle.isNotBlank()) value = roomTitle }.value
         // The conversation list: the list screen on one pane, the start pane beside the conversation on two.
         val conversationList: @Composable () -> Unit = {
-            HomeScreen(
+            if (activity.bubble) BubbleOpeningPane(error = error, onClose = { activity.finish() })
+            else HomeScreen(
                 rooms = rooms,
                 mutedRoomIds = mutedRoomIds,
                 blockedUserIds = ignoredUsers,
@@ -1928,6 +1958,27 @@ internal fun HomeScreen(
 }
 
 @OptIn(ExperimentalLayoutApi::class)
+/** What a bubble shows until its conversation is open (or when it couldn't open). */
+@Composable
+private fun BubbleOpeningPane(error: String, onClose: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    Column(
+        Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(32.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        if (error.isBlank()) {
+            androidx.compose.material3.CircularProgressIndicator()
+            Spacer(Modifier.height(16.dp))
+            Text("Opening conversation…", color = colors.onSurfaceVariant)
+        } else {
+            Text(error, color = colors.error, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            Spacer(Modifier.height(16.dp))
+            androidx.compose.material3.TextButton(onClick = onClose) { Text("Close") }
+        }
+    }
+}
+
 @Composable
 private fun NewConversationScreen(
     value: String,
