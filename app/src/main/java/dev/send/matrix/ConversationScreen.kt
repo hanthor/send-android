@@ -1240,6 +1240,7 @@ internal fun ConversationScreen(
                     searching = true
                 },
                 onStarred = if (loadStarred != null) ({ showStarred = true }) else null,
+                starredCount = starredIds.size,
                 onMedia = { showMediaGrid = true },
                 onOpenMedia = { message -> openMedia(message) },
                 onBack = { showDetails = false },

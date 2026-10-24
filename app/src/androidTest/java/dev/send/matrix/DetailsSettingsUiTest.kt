@@ -11,7 +11,9 @@ import android.media.AudioManager
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.hasAnyAncestor
@@ -24,6 +26,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
@@ -194,7 +197,9 @@ class DetailsSettingsUiTest {
         composeRule.onNode(hasText("Alice") and hasClickAction()).performClick()
         // The header (top of the page) fills in once details load; lower rows compose as they scroll in.
         waitForText("@alice:example.org")
-        composeRule.onNodeWithText("@alice:example.org").assertIsDisplayed()
+        // The address sits under the name and again on the "1 other person" card's row (Messages' layout).
+        composeRule.onAllNodesWithText("@alice:example.org")[0].assertIsDisplayed()
+        composeRule.onNodeWithText("1 other person").assertExists()
         composeRule.onNodeWithText("Search").assertIsDisplayed()
         composeRule.onNodeWithText("Mute").assertIsDisplayed()
         composeRule.auditShot("details-dm")
@@ -309,7 +314,8 @@ class DetailsSettingsUiTest {
         waitForText("4 people")
         scrollDetailsTo("Media & files")
         waitForText("6 items")
-        composeRule.onNodeWithText("6 items").performClick()
+        // The row and its thumbnail strip are one tappable card; tap the row itself (a thumbnail would open the viewer).
+        composeRule.onNodeWithText("6 items").performTouchInput { click(Offset(center.x, 24f)) }
         composeRule.waitUntil(10_000) { composeRule.onAllNodesWithTag(MEDIA_GRID_TAG).fetchSemanticsNodes().isNotEmpty() }
         // The details strip (four newest) stays beneath the grid (all six).
         composeRule.waitUntil(10_000) { composeRule.onAllNodesWithText("Itinerary.pdf").fetchSemanticsNodes().size >= 2 }

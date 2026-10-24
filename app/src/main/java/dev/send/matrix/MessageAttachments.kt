@@ -293,11 +293,11 @@ internal fun rememberMediaPreview(attachment: MatrixAttachment, loadMedia: Media
  * the file's icon and name for anything else.
  */
 @Composable
-internal fun MediaTile(attachment: MatrixAttachment, loadMedia: MediaLoader, modifier: Modifier = Modifier) {
+internal fun MediaTile(attachment: MatrixAttachment, loadMedia: MediaLoader, modifier: Modifier = Modifier, rounded: Boolean = true) {
     val colors = MaterialTheme.colorScheme
     val visual = attachment.kind == AttachmentKind.Image || attachment.kind == AttachmentKind.Video || attachment.kind == AttachmentKind.Sticker
     Box(
-        modifier.clip(RoundedCornerShape(12.dp)).background(colors.surfaceContainerHighest)
+        modifier.then(if (rounded) Modifier.clip(RoundedCornerShape(12.dp)) else Modifier).background(colors.surfaceContainerHighest)
             .semantics {
                 contentDescription = when (attachment.kind) {
                     AttachmentKind.Video -> "Video"
