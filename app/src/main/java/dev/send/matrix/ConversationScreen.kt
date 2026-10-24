@@ -918,6 +918,17 @@ internal fun ConversationScreen(
                                 .then(if (selectedId == message.id) Modifier else backdrop),
                             horizontalAlignment = if (message.call != null) Alignment.CenterHorizontally else if (message.own) Alignment.End else Alignment.Start,
                         ) {
+                            if (loadingOlder && index == reversed.lastIndex) {
+                                // Part of the oldest loaded message's row, so it is on screen whenever that row is,
+                                // rather than a separate item the list would compose only once scrolled to.
+                                Box(Modifier.fillMaxWidth().padding(vertical = 12.dp), contentAlignment = Alignment.Center) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(24.dp).semantics { contentDescription = "Loading older messages" },
+                                        strokeWidth = 2.5.dp,
+                                        color = colors.primary,
+                                    )
+                                }
+                            }
                             if (prevDayKey != dayKey) {
                                 Text(
                                     text = dayHeaderLabel(context, message.timestampMillis),
@@ -1029,18 +1040,6 @@ internal fun ConversationScreen(
                                         }
                                     }
                                 }
-                            }
-                        }
-                    }
-                    if (loadingOlder) {
-                        // Above the oldest loaded message (the reversed list's end) while the next page loads.
-                        item(key = "older") {
-                            Box(Modifier.fillMaxWidth().padding(vertical = 12.dp).then(backdrop), contentAlignment = Alignment.Center) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(24.dp).semantics { contentDescription = "Loading older messages" },
-                                    strokeWidth = 2.5.dp,
-                                    color = colors.primary,
-                                )
                             }
                         }
                     }
