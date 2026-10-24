@@ -1047,38 +1047,12 @@ internal fun ConversationScreen(
                 }
                 // Messages: a small round button at the bottom end once the newest message is off screen; a count
                 // of messages that arrived meanwhile sits on it. Tapping returns to the newest message.
-                AnimatedVisibility(
+                JumpToNewestButton(
                     visible = awayFromNewest && selectedId == null,
+                    newCount = newSinceLeft,
+                    onClick = { scope.launch { listState.animateScrollToItem(0) } },
                     modifier = Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 12.dp),
-                    enter = scaleIn(SendMotion.spatialFast(), initialScale = 0.6f) + fadeIn(SendMotion.effectsFast()),
-                    exit = scaleOut(SendMotion.spatialFast(), targetScale = 0.6f) + fadeOut(SendMotion.effectsFast()),
-                ) {
-                    val jumpLabel = when (newSinceLeft) {
-                        0 -> "Jump to newest message"
-                        1 -> "1 new message, jump to newest"
-                        else -> "$newSinceLeft new messages, jump to newest"
-                    }
-                    BadgedBox(
-                        badge = {
-                            if (newSinceLeft > 0) {
-                                Badge(containerColor = colors.primary, contentColor = colors.onPrimary) {
-                                    Text(if (newSinceLeft > 99) "99+" else newSinceLeft.toString())
-                                }
-                            }
-                        },
-                    ) {
-                        FilledTonalIconButton(
-                            onClick = { scope.launch { listState.animateScrollToItem(0) } },
-                            modifier = Modifier.size(48.dp).semantics { contentDescription = jumpLabel },
-                            colors = IconButtonDefaults.filledTonalIconButtonColors(
-                                containerColor = colors.surfaceContainerHighest,
-                                contentColor = colors.onSurface,
-                            ),
-                        ) {
-                            Icon(Icons.Filled.KeyboardArrowDown, contentDescription = null)
-                        }
-                    }
-                }
+                )
                 }
             }
         }
@@ -1382,6 +1356,44 @@ fun MessageBubble(
                     ),
                 )
                 preview?.let { LinkPreviewCard(it, isFromMe) }
+            }
+        }
+    }
+}
+
+/** Messages' round "jump to newest" button with a badge for the messages that arrived while scrolled up. */
+@Composable
+private fun JumpToNewestButton(visible: Boolean, newCount: Int, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val colors = MaterialTheme.colorScheme
+    AnimatedVisibility(
+        visible = visible,
+        modifier = modifier,
+        enter = scaleIn(SendMotion.spatialFast(), initialScale = 0.6f) + fadeIn(SendMotion.effectsFast()),
+        exit = scaleOut(SendMotion.spatialFast(), targetScale = 0.6f) + fadeOut(SendMotion.effectsFast()),
+    ) {
+        val label = when (newCount) {
+            0 -> "Jump to newest message"
+            1 -> "1 new message, jump to newest"
+            else -> "$newCount new messages, jump to newest"
+        }
+        BadgedBox(
+            badge = {
+                if (newCount > 0) {
+                    Badge(containerColor = colors.primary, contentColor = colors.onPrimary) {
+                        Text(if (newCount > 99) "99+" else newCount.toString())
+                    }
+                }
+            },
+        ) {
+            FilledTonalIconButton(
+                onClick = onClick,
+                modifier = Modifier.size(48.dp).semantics { contentDescription = label },
+                colors = IconButtonDefaults.filledTonalIconButtonColors(
+                    containerColor = colors.surfaceContainerHighest,
+                    contentColor = colors.onSurface,
+                ),
+            ) {
+                Icon(Icons.Filled.KeyboardArrowDown, contentDescription = null)
             }
         }
     }
