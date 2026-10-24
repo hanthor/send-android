@@ -195,7 +195,7 @@ class ListManagementUiTest {
         longPress("Maya")
         composeRule.onNodeWithContentDescription("Delete forever").performClick()
         composeRule.onNodeWithText("Delete 1 conversation?").assertIsDisplayed()
-        composeRule.onNodeWithText("for good", substring = true).assertIsDisplayed()
+        composeRule.onNodeWithText("You'll leave this conversation for good", substring = true).assertIsDisplayed()
         composeRule.onNodeWithText("Delete").performClick()
         composeRule.runOnIdle { assertEquals(listOf(listOf("!maya:example.org")), deleted) }
 
