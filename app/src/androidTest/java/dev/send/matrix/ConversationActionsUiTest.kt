@@ -23,6 +23,8 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
@@ -113,6 +115,9 @@ class ConversationActionsUiTest {
         voiceCapture: VoiceCapture? = null,
         /** Scheduled messages shown under the timeline; null leaves scheduling out of the fixture. */
         scheduled: MutableState<List<ScheduledMessage>>? = null,
+        /** When set, the screen follows this state instead of [messages] (tests that add messages). */
+        liveMessages: MutableState<List<MatrixMessage>>? = null,
+        hasOlder: Boolean = false,
         stickers: StickerActions? = null,
     ): Callbacks {
         val callbacks = Callbacks()
@@ -123,7 +128,7 @@ class ConversationActionsUiTest {
                     isDirect = isDirect,
                     draft = draft.value,
                     onDraft = { draft.value = it },
-                    messages = messages,
+                    messages = liveMessages?.value ?: messages,
                     onBack = {},
                     onSend = { replyTo ->
                         callbacks.sent = replyTo
@@ -150,6 +155,7 @@ class ConversationActionsUiTest {
                     scheduled = scheduled?.value.orEmpty(),
                     onSchedule = if (scheduled != null) ({ text, at, _ -> callbacks.scheduledAt = text to at }) else null,
                     onScheduledAction = { pending, action -> callbacks.scheduledAction = pending to action },
+                    hasOlder = hasOlder,
                     stickers = stickers,
                 )
             }
@@ -227,6 +233,46 @@ class ConversationActionsUiTest {
         composeRule.waitUntil(5_000) { composeRule.onAllNodesWithContentDescription("Preview of cake.png").fetchSemanticsNodes().isNotEmpty() }
         composeRule.onNodeWithContentDescription("Scheduled message: 1 attachment, Look at this cake. Scheduled for Tomorrow, 8:00 AM").assertExists()
         composeRule.auditShot("scheduled-photo")
+    }
+
+    @Test
+    fun scrollingUpLoadsOlderHistoryAndTheJumpButtonReturnsToTheNewest() {
+        // A long conversation: the newest messages fill the screen, the oldest are far above.
+        val history = (60 downTo 1).map { n ->
+            message("\$h$n", if (n % 2 == 0) "Older message $n" else "Reply $n", own = n % 2 == 1, minutesAgo = n + 20)
+        }
+        val live = mutableStateOf(history)
+        val callbacks = show(history, liveMessages = live, hasOlder = true)
+        // At the newest message nothing is requested and there is no jump button (as in Messages).
+        composeRule.runOnIdle { assertEquals(0, callbacks.older) }
+        composeRule.onAllNodesWithContentDescription("Jump to newest message").assertCountEquals(0)
+
+        // Scrolling up to the oldest loaded message asks for the next page once and shows a spinner above it.
+        composeRule.onNodeWithTag(TIMELINE_TAG).performScrollToIndex(history.lastIndex)
+        composeRule.waitForIdle()
+        composeRule.runOnIdle { assertEquals(1, callbacks.older) }
+        // The list was scrolled to its very end before the spinner grew the oldest row upward past the top edge;
+        // a nudge brings it into view, as a user's next finger movement would.
+        composeRule.onNodeWithContentDescription("Loading older messages").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Jump to newest message").assertIsDisplayed()
+        composeRule.auditShot("conversation-loading-older")
+
+        // A message arriving meanwhile counts on the button; the page arriving replaces the spinner.
+        // Fixture state is written on the UI thread so the next frame sees it.
+        composeRule.runOnIdle { live.value = live.value + message("\$new1", "Are you there?", own = false, minutesAgo = 0) }
+        composeRule.onNodeWithContentDescription("1 new message, jump to newest").assertIsDisplayed()
+        composeRule.runOnIdle {
+            live.value = (70 downTo 61).map { n -> message("\$h$n", "Older message $n", own = false, minutesAgo = n + 20) } + live.value
+        }
+        composeRule.waitForIdle()
+
+        // Tapping returns to the newest message; the button and the spinner are gone.
+        composeRule.onNodeWithContentDescription("1 new message, jump to newest").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Are you there?").assertIsDisplayed()
+        composeRule.onAllNodesWithContentDescription("Jump to newest message").assertCountEquals(0)
+        composeRule.onAllNodesWithContentDescription("1 new message, jump to newest").assertCountEquals(0)
+        composeRule.onAllNodesWithContentDescription("Loading older messages").assertCountEquals(0)
     }
 
     @Test

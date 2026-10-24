@@ -57,6 +57,18 @@ import androidx.compose.material.icons.filled.SentimentSatisfied
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.StarOutline
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.platform.testTag
 import androidx.compose.material.icons.outlined.AddCircleOutline
 import androidx.compose.material.icons.outlined.Call
 import androidx.compose.material.icons.outlined.Image
@@ -106,7 +118,6 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -123,6 +134,12 @@ import kotlinx.coroutines.withContext
 
 /** Playback id of a locked recording being previewed before it is sent. */
 private const val RECORDED_CLIP_ID = "composer-recording"
+/** Test tag of the conversation's timeline list. */
+internal const val TIMELINE_TAG = "conversation-timeline"
+/** Older history is requested when the oldest loaded message is within this many rows of the top. */
+private const val OLDER_PREFETCH_ROWS = 8
+/** A page that changed nothing visible may be followed by another request after this long at the top. */
+private const val OLDER_RETRY_MILLIS = 4_000L
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
@@ -135,6 +152,7 @@ internal fun ConversationScreen(
     onBack: () -> Unit,
     /** Sends the draft, as a reply to the given message when it isn't null. */
     onSend: (replyTo: MatrixMessage?) -> Unit,
+    /** Loads the next page of older history; called by itself on scrolling up while [hasOlder], and by search. */
     onOlder: () -> Unit,
     onReact: (String, String) -> Unit,
     /** Starts a MatrixRTC call here: false for voice, true for video. */
@@ -190,6 +208,12 @@ internal fun ConversationScreen(
     onSchedule: ((text: String, sendAtMillis: Long, attachments: List<SharedFile>) -> Unit)? = null,
     /** Send now, update or delete a scheduled message. */
     onScheduledAction: (ScheduledMessage, ScheduledAction) -> Unit = { _, _ -> },
+    /**
+     * Whether history older than [messages] may exist: scrolling up near the oldest loaded message then calls
+     * [onOlder] by itself, with a spinner above it meanwhile (Messages has no "load more" control). False once
+     * the start of the conversation is loaded — and for fixtures, which have nothing older.
+     */
+    hasOlder: Boolean = false,
     /** GIF and sticker tabs for the composer panel (image packs); null leaves the emoji picker alone. */
     stickers: StickerActions? = null,
 ) {
@@ -309,6 +333,49 @@ internal fun ConversationScreen(
     // At the newest message (the list's start) a new bubble or typing dots scroll into view as they arrive.
     val listState = rememberTopAnchoredListState(if (typingShown) "typing" else reversed.firstOrNull()?.key)
     val bubbleEntries = rememberBubbleEntries()
+
+    // Messages loads older history as you scroll up, without a control: when the oldest loaded message comes
+    // within a few rows of the top, the next page is requested once per loaded size (and again after a pause,
+    // in case a page held nothing that renders). A spinner sits above the oldest message while a page loads.
+    val messageCount by rememberUpdatedState(messages.size)
+    val requestOlder by rememberUpdatedState(onOlder)
+    var olderRequestedFor by remember { mutableIntStateOf(-1) }
+    var olderRequestedAt by remember { mutableLongStateOf(0L) }
+    val loadingOlder = hasOlder && olderRequestedFor == messages.size
+    LaunchedEffect(hasOlder) {
+        if (!hasOlder) return@LaunchedEffect
+        snapshotFlow {
+            val info = listState.layoutInfo
+            (info.visibleItemsInfo.lastOrNull()?.index ?: -1) to info.totalItemsCount
+        }.collect { (lastVisible, total) ->
+            if (lastVisible < 0 || total == 0) return@collect
+            val nearOldest = lastVisible >= total - OLDER_PREFETCH_ROWS
+            val now = android.os.SystemClock.elapsedRealtime()
+            val fresh = olderRequestedFor == messageCount && now - olderRequestedAt < OLDER_RETRY_MILLIS
+            if (nearOldest && !fresh) {
+                olderRequestedFor = messageCount
+                olderRequestedAt = now
+                requestOlder()
+            }
+        }
+    }
+    // Messages' round "jump to newest" button: shows once the newest message scrolls out of view, counting
+    // the messages that arrive meanwhile. Sending a message yourself returns to the newest, as in Messages.
+    val awayFromNewest by remember { derivedStateOf { listState.firstVisibleItemIndex > 0 } }
+    var newestWhenLeft by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(awayFromNewest) { newestWhenLeft = if (awayFromNewest) reversed.firstOrNull()?.id else null }
+    val newSinceLeft = newestWhenLeft?.let { anchor ->
+        val newer = reversed.indexOfFirst { it.id == anchor }
+        if (newer <= 0) 0 else reversed.subList(0, newer).count { !it.own && it.call == null }
+    } ?: 0
+    val newestOwnId = reversed.firstOrNull { it.own }?.id
+    var lastOwnId by remember { mutableStateOf(newestOwnId) }
+    LaunchedEffect(newestOwnId) {
+        if (newestOwnId != lastOwnId) {
+            lastOwnId = newestOwnId
+            if (newestOwnId != null && reversed.firstOrNull()?.id == newestOwnId && awayFromNewest) listState.animateScrollToItem(0)
+        }
+    }
     fun listIndexOf(id: String): Int? {
         val index = reversed.indexOfFirst { it.id == id }
         return if (index < 0) null else index + if (typingShown) 1 else 0
@@ -644,10 +711,6 @@ internal fun ConversationScreen(
                                         searching = true
                                     },
                                 )
-                                DropdownMenuItem(
-                                    text = { Text("Load older messages") },
-                                    onClick = { showMenu = false; onOlder() },
-                                )
                                 if (loadStarred != null) {
                                     DropdownMenuItem(
                                         text = { Text("Starred") },
@@ -946,9 +1009,10 @@ internal fun ConversationScreen(
                 // "Read" / "Seen by N" belongs under the newest own message.
                 val newestOwnIndex = messages.indexOfLast { it.own && it.call == null && !it.deleted }
                 val newestOwnReaders = remember(messages, newestOwnIndex) { readersFrom(messages, newestOwnIndex) }
+                Box(Modifier.weight(1f).fillMaxWidth()) {
                 LazyColumn(
                     state = listState,
-                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    modifier = Modifier.fillMaxSize().testTag(TIMELINE_TAG),
                     reverseLayout = true,
                 ) {
                     if (typingShown) {
@@ -974,6 +1038,17 @@ internal fun ConversationScreen(
                                 .then(if (selectedId == message.id) Modifier else backdrop),
                             horizontalAlignment = if (message.call != null) Alignment.CenterHorizontally else if (message.own) Alignment.End else Alignment.Start,
                         ) {
+                            if (loadingOlder && index == reversed.lastIndex) {
+                                // Part of the oldest loaded message's row, so it is on screen whenever that row is,
+                                // rather than a separate item the list would compose only once scrolled to.
+                                Box(Modifier.fillMaxWidth().padding(vertical = 12.dp), contentAlignment = Alignment.Center) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(24.dp).semantics { contentDescription = "Loading older messages" },
+                                        strokeWidth = 2.5.dp,
+                                        color = colors.primary,
+                                    )
+                                }
+                            }
                             if (prevDayKey != dayKey) {
                                 Text(
                                     text = dayHeaderLabel(context, message.timestampMillis),
@@ -1088,6 +1163,15 @@ internal fun ConversationScreen(
                             }
                         }
                     }
+                }
+                // Messages: a small round button at the bottom end once the newest message is off screen; a count
+                // of messages that arrived meanwhile sits on it. Tapping returns to the newest message.
+                JumpToNewestButton(
+                    visible = awayFromNewest && selectedId == null,
+                    newCount = newSinceLeft,
+                    onClick = { scope.launch { listState.animateScrollToItem(0) } },
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 12.dp),
+                )
                 }
                 // Messages keeps scheduled messages under the thread, above the composer, until they send: a
                 // plain column, so they stay in view whatever the timeline's scroll position.
@@ -1416,6 +1500,43 @@ fun MessageBubble(
     }
 }
 
+/** Messages' round "jump to newest" button with a badge for the messages that arrived while scrolled up. */
+@Composable
+private fun JumpToNewestButton(visible: Boolean, newCount: Int, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val colors = MaterialTheme.colorScheme
+    AnimatedVisibility(
+        visible = visible,
+        modifier = modifier,
+        enter = scaleIn(SendMotion.spatialFast(), initialScale = 0.6f) + fadeIn(SendMotion.effectsFast()),
+        exit = scaleOut(SendMotion.spatialFast(), targetScale = 0.6f) + fadeOut(SendMotion.effectsFast()),
+    ) {
+        val label = when (newCount) {
+            0 -> "Jump to newest message"
+            1 -> "1 new message, jump to newest"
+            else -> "$newCount new messages, jump to newest"
+        }
+        BadgedBox(
+            badge = {
+                if (newCount > 0) {
+                    Badge(containerColor = colors.primary, contentColor = colors.onPrimary) {
+                        Text(if (newCount > 99) "99+" else newCount.toString())
+                    }
+                }
+            },
+        ) {
+            FilledTonalIconButton(
+                onClick = onClick,
+                modifier = Modifier.size(48.dp).semantics { contentDescription = label },
+                colors = IconButtonDefaults.filledTonalIconButtonColors(
+                    containerColor = colors.surfaceContainerHighest,
+                    contentColor = colors.onSurface,
+                ),
+            ) {
+                Icon(Icons.Filled.KeyboardArrowDown, contentDescription = null)
+            }
+        }
+    }
+}
 
 /**
  * Messages' composer tray: the photos, videos and files picked for the next message as 72dp tiles, each with a

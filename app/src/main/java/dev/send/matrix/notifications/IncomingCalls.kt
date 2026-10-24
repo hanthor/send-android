@@ -53,8 +53,11 @@ import org.matrix.rustcomponents.sdk.TaskHandle
  */
 internal object IncomingCalls {
     const val CHANNEL_CALLS = "calls"
+    const val CHANNEL_MISSED_CALLS = "missed_calls"
     const val NOTIFICATION_ID = 2
+    const val MISSED_NOTIFICATION_ID = 3
     const val ACTION_ANSWER = "dev.send.matrix.action.ANSWER_CALL"
+    const val ACTION_CALL_BACK = "dev.send.matrix.action.CALL_BACK"
     const val EXTRA_VIDEO = "dev.send.matrix.extra.VIDEO"
     private const val EXTRA_CALLER_ID = "dev.send.matrix.extra.CALLER_ID"
     private const val EXTRA_CALLER_NAME = "dev.send.matrix.extra.CALLER_NAME"
@@ -73,6 +76,14 @@ internal object IncomingCalls {
 
     fun ensureChannel(context: Context) {
         val manager = context.getSystemService(NotificationManager::class.java)
+        if (manager.getNotificationChannel(CHANNEL_MISSED_CALLS) == null) {
+            manager.createNotificationChannel(
+                NotificationChannel(CHANNEL_MISSED_CALLS, "Missed calls", NotificationManager.IMPORTANCE_DEFAULT).apply {
+                    description = "Calls you didn't answer"
+                    lockscreenVisibility = Notification.VISIBILITY_PRIVATE
+                },
+            )
+        }
         if (manager.getNotificationChannel(CHANNEL_CALLS) != null) return
         manager.createNotificationChannel(
             NotificationChannel(CHANNEL_CALLS, "Calls", NotificationManager.IMPORTANCE_HIGH).apply {
@@ -119,6 +130,20 @@ internal object IncomingCalls {
         watchers.remove(roomId)?.cancel()
         NotificationManagerCompat.from(context).cancel(roomId, NOTIFICATION_ID)
     }
+
+    /** Removes the missed-call notification for [roomId] (the conversation opened, or Call back was tapped). */
+    fun cancelMissed(context: Context, roomId: String) {
+        NotificationManagerCompat.from(context).cancel(roomId, MISSED_NOTIFICATION_ID)
+    }
+
+    /** Opens the conversation and places a call there (the missed-call notification's Call back). */
+    fun callBackIntent(context: Context, roomId: String, video: Boolean): Intent =
+        Intent(context, MainActivity::class.java)
+            .setAction(ACTION_CALL_BACK)
+            .setData(Uri.Builder().scheme("dev.send.matrix").authority("callback").appendPath(roomId).build())
+            .putExtra(MessageNotifier.EXTRA_ROOM_ID, roomId)
+            .putExtra(EXTRA_VIDEO, video)
+            .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
 
     /** Decline from the notification or the incoming-call screen: stops ringing now, then sends `m.rtc.decline`. */
     fun decline(context: Context, roomId: String, eventId: String) {
@@ -211,9 +236,46 @@ internal object IncomingCalls {
     }
 
     /**
+     * Messages' "Missed call" notification, posted when a ring ended without an answer or decline on any of the
+     * user's devices: tap opens the conversation (its call row says "Missed voice call"), Call back places a call
+     * of the same kind, Message opens the conversation to reply. One per room; a newer missed call replaces it.
+     */
+    private fun showMissed(context: Context, call: ParsedNotification.IncomingCall) {
+        ensureChannel(context)
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
+        val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        val open = PendingIntent.getActivity(context, 0, MessageNotifier.conversationIntent(context, call.roomId), flags)
+        val callBack = PendingIntent.getActivity(context, 0, callBackIntent(context, call.roomId, call.video), flags)
+        val kind = if (call.video) "Missed video call" else "Missed voice call"
+        val caller = Person.Builder()
+            .setKey(call.callerId)
+            .setName(call.callerName)
+            .setIcon(IconCompat.createWithBitmap(MessageNotifier.avatarBitmap(call.callerName, adaptive = false)))
+            .build()
+        val notification = NotificationCompat.Builder(context, CHANNEL_MISSED_CALLS)
+            .setSmallIcon(R.drawable.ic_stat_call)
+            .setColor(ACCENT)
+            .setContentTitle(kind)
+            .setContentText(call.callerName + call.roomName.takeIf { it.isNotBlank() && it != call.callerName }?.let { " · $it" }.orEmpty())
+            .setLargeIcon(MessageNotifier.avatarBitmap(call.callerName, adaptive = false))
+            .addPerson(caller)
+            .setCategory(NotificationCompat.CATEGORY_MISSED_CALL)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setContentIntent(open)
+            .addAction(NotificationCompat.Action.Builder(R.drawable.ic_stat_call, "Call back", callBack).build())
+            .addAction(NotificationCompat.Action.Builder(R.drawable.ic_action_reply, "Message", open).build())
+            .setAutoCancel(true)
+            .setWhen(System.currentTimeMillis())
+            .setShowWhen(true)
+            .build()
+        NotificationManagerCompat.from(context).notify(call.roomId, MISSED_NOTIFICATION_ID, notification)
+    }
+
+    /**
      * Stops the ring when it no longer applies: declined on another of the user's devices (`m.rtc.decline` from
      * the user, `subscribeToCallDeclineEvents`), joined on any device (the user in `activeRoomCallParticipants`),
-     * the caller gone from the call, or the ring's lifetime over.
+     * the caller gone from the call, or the ring's lifetime over. The last two leave a missed-call notification.
      */
     private fun watch(context: Context, call: ParsedNotification.IncomingCall, remaining: Long) {
         val appContext = context.applicationContext
@@ -225,6 +287,7 @@ internal object IncomingCalls {
             val handles = mutableListOf<TaskHandle>()
             val room = repository.sdkRoom(call.roomId)
             var callerSeen = false
+            var missed = false
             fun check(info: RoomInfo) {
                 val participants = info.activeRoomCallParticipants
                 if (ownUserId != null && ownUserId in participants) done.complete("joined on a device")
@@ -245,16 +308,22 @@ internal object IncomingCalls {
                 }
                 val reason = withTimeoutOrNull(remaining) { done.await() } ?: "expired"
                 Log.i(TAG, "Ring ${call.eventId} in ${call.roomId} stopped: $reason")
+                missed = reason == "expired" || reason == "the caller left"
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
                 Log.w(TAG, "Watching ring ${call.eventId} failed", error)
-                withTimeoutOrNull(remaining) { done.await() }
+                missed = withTimeoutOrNull(remaining) { done.await() } == null
             } finally {
                 handles.forEach { it.close() }
                 room?.close()
             }
-            if (watchers[call.roomId] === coroutineContext[Job]) stop(appContext, call.roomId)
+            if (watchers[call.roomId] === coroutineContext[Job]) {
+                stop(appContext, call.roomId)
+                // Answered or declined here cancels this watcher first, so reaching this with the ring still up
+                // means nobody picked up on any device.
+                if (missed) showMissed(appContext, call)
+            }
         }
         watchers[call.roomId] = job
         job.start()
