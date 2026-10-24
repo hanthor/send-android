@@ -24,9 +24,9 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.outlined.Logout
 import androidx.compose.material.icons.outlined.Archive
 import androidx.compose.material.icons.outlined.Block
@@ -130,6 +130,8 @@ internal fun ConversationDetailsScreen(
     onCall: (video: Boolean) -> Unit,
     onSearch: () -> Unit,
     onStarred: (() -> Unit)?,
+    /** Starred messages in this conversation (Messages shows the count on the row). */
+    starredCount: Int = 0,
     onMedia: () -> Unit,
     onOpenMedia: (MatrixMessage) -> Unit,
     onBack: () -> Unit,
@@ -210,11 +212,8 @@ internal fun ConversationDetailsScreen(
                     }
                     Spacer(Modifier.height(16.dp))
                     Text(name, style = MaterialTheme.typography.headlineMedium, color = colors.onPrimaryContainer, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 24.dp))
-                    val subtitle = when {
-                        shown == null -> null
-                        direct -> shown.dmUserId
-                        else -> shown.people.size.let { if (it == 1) "1 person" else "$it people" }
-                    }
+                    // Messages: the DM header carries the address; a group's member count heads its people card.
+                    val subtitle = if (shown != null && direct) shown.dmUserId else null
                     if (subtitle != null) {
                         Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
                     }
@@ -261,15 +260,26 @@ internal fun ConversationDetailsScreen(
                         }
                     }
                 }
-                if (!direct) {
-                    item(key = "people-label") { DetailsSectionLabel("People") }
+                // Messages: a people card headed "1 other person" (DM) or "N people" (group); rows open the profile sheet.
+                val others = shown.people.filterNot { it.isMe }
+                val listed = if (direct) others else shown.people
+                if (listed.isNotEmpty() || (!direct && shown.canInvite)) {
+                    item(key = "people-label") {
+                        DetailsSectionLabel(
+                            when {
+                                direct -> if (others.size == 1) "1 other person" else "${others.size} other people"
+                                shown.people.size == 1 -> "1 person"
+                                else -> "${shown.people.size} people"
+                            },
+                        )
+                    }
                     item(key = "people") {
                         SettingsGroup {
-                            if (shown.canInvite) {
-                                row { SettingsRow("Add people", icon = Icons.Outlined.PersonAdd, onClick = { dialogError = ""; dialog = DetailsDialog.AddPeople }) }
-                            }
-                            shown.people.forEach { member ->
+                            listed.forEach { member ->
                                 row { PersonRow(member, onClick = if (member.isMe) null else ({ person = member })) }
+                            }
+                            if (!direct && shown.canInvite) {
+                                row { SettingsRow("Add people", icon = Icons.Outlined.PersonAdd, onClick = { dialogError = ""; dialog = DetailsDialog.AddPeople }) }
                             }
                         }
                     }
@@ -286,7 +296,7 @@ internal fun ConversationDetailsScreen(
                                 if (media.isNotEmpty()) {
                                     Row(
                                         Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(MEDIA_GAP),
                                     ) {
                                         media.take(4).forEach { message ->
                                             val attachment = message.attachment ?: return@forEach
@@ -301,7 +311,17 @@ internal fun ConversationDetailsScreen(
                                 }
                             }
                         }
-                        if (onStarred != null) row { SettingsRow("Starred messages", icon = Icons.Outlined.StarOutline, onClick = onStarred) }
+                        if (onStarred != null) {
+                            row {
+                                SettingsRow(
+                                    "Starred messages",
+                                    when (starredCount) { 0 -> null; 1 -> "1 message"; else -> "$starredCount messages" },
+                                    icon = Icons.Outlined.StarOutline,
+                                    onClick = onStarred,
+                                    trailing = { Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, contentDescription = null, tint = colors.onSurfaceVariant) },
+                                )
+                            }
+                        }
                     }
                 }
                 item(key = "encryption") {
@@ -448,6 +468,10 @@ internal fun ConversationDetailsScreen(
 }
 
 /** Line under "End-to-end encrypted": the other person's identity in a DM, the group's scope otherwise. */
+/** Media & files grid: Messages' four columns with 2dp gaps, edge to edge. */
+internal const val MEDIA_COLUMNS = 4
+internal val MEDIA_GAP = 2.dp
+
 private fun encryptionSummary(details: RoomDetails, name: String): String = when {
     !details.direct -> "Messages and calls are encrypted for the people in this group"
     details.dmIdentity == IdentityState.Verified -> "You verified $name's identity"
@@ -494,7 +518,7 @@ private fun roleLabel(person: RoomPerson): String? = when {
 private fun PersonRow(person: RoomPerson, onClick: (() -> Unit)?) {
     Row(
         Modifier.fillMaxWidth().then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
-            .padding(horizontal = 16.dp, vertical = 10.dp),
+            .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Avatar(name = person.name, size = 40.dp, url = person.avatarUrl)
@@ -613,17 +637,14 @@ internal fun MediaGridScreen(
         containerColor = colors.surfaceContainer,
         topBar = { ListScreenTopBar("Media & files", onBack) },
     ) { padding ->
-        Surface(
-            modifier = Modifier.fillMaxSize().padding(padding),
-            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-            color = colors.surface,
-        ) {
+        // Messages: a four-column edge-to-edge grid with hairline gaps.
+        Surface(modifier = Modifier.fillMaxSize().padding(padding), color = colors.surface) {
             LazyVerticalGrid(
-                columns = GridCells.Fixed(3),
+                columns = GridCells.Fixed(MEDIA_COLUMNS),
                 modifier = Modifier.testTag(MEDIA_GRID_TAG),
-                contentPadding = PaddingValues(12.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
+                contentPadding = PaddingValues(bottom = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(MEDIA_GAP),
+                verticalArrangement = Arrangement.spacedBy(MEDIA_GAP),
             ) {
                 if (media.isEmpty()) {
                     item(key = "empty", span = { GridItemSpan(maxLineSpan) }) {
@@ -632,7 +653,7 @@ internal fun MediaGridScreen(
                 }
                 items(media, key = { it.id }) { message ->
                     val attachment = message.attachment ?: return@items
-                    MediaTile(attachment, loadMedia, Modifier.fillMaxWidth().aspectRatio(1f).clickable { onOpen(message) })
+                    MediaTile(attachment, loadMedia, Modifier.fillMaxWidth().aspectRatio(1f).clickable { onOpen(message) }, rounded = false)
                 }
                 item(key = "older", span = { GridItemSpan(maxLineSpan) }) {
                     Box(Modifier.fillMaxWidth().padding(top = 8.dp), contentAlignment = Alignment.Center) {

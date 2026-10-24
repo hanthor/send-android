@@ -194,7 +194,9 @@ class DetailsSettingsUiTest {
         composeRule.onNode(hasText("Alice") and hasClickAction()).performClick()
         // The header (top of the page) fills in once details load; lower rows compose as they scroll in.
         waitForText("@alice:example.org")
-        composeRule.onNodeWithText("@alice:example.org").assertIsDisplayed()
+        // The address sits under the name and again on the "1 other person" card's row (Messages' layout).
+        composeRule.onAllNodesWithText("@alice:example.org")[0].assertIsDisplayed()
+        composeRule.onNodeWithText("1 other person").assertExists()
         composeRule.onNodeWithText("Search").assertIsDisplayed()
         composeRule.onNodeWithText("Mute").assertIsDisplayed()
         composeRule.auditShot("details-dm")
