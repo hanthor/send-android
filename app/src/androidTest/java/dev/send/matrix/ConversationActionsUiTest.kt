@@ -20,8 +20,6 @@ import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
-import androidx.compose.ui.test.onRoot
-import androidx.compose.ui.test.printToString
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
@@ -175,17 +173,8 @@ class ConversationActionsUiTest {
 
         // The scheduled message sits under the conversation with its time; tapping offers Send now / Update / Delete.
         val pending = ScheduledMessage("s1", "!room:example.org", "Happy birthday!", tomorrowEight, now)
-        scheduled.value = listOf(pending)
-        try {
-            composeRule.waitUntil(5_000) { composeRule.onAllNodesWithText("Scheduled for Tomorrow, 8:00 AM").fetchSemanticsNodes().isNotEmpty() }
-        } catch (timeout: androidx.compose.ui.test.ComposeTimeoutException) {
-            // What the screen holds instead, for the CI annotation.
-            val tree = composeRule.onRoot(useUnmergedTree = true).printToString(maxDepth = Int.MAX_VALUE)
-            val lines = tree.lines().filter { line ->
-                listOf("Scheduled", "Happy", "ScrollBy", "ScrollToIndex", "Dinner", "Bounds", "Text =").any { it in line }
-            }
-            throw AssertionError("No scheduled bubble after 5 s; tree excerpt:\n" + lines.take(60).joinToString("\n"), timeout)
-        }
+        // State written from the test thread is applied on the UI thread, so the next frame sees it.
+        composeRule.runOnIdle { scheduled.value = listOf(pending) }
         composeRule.onNodeWithText("Scheduled for Tomorrow, 8:00 AM").performScrollTo().assertIsDisplayed()
         composeRule.auditShot("scheduled-message")
         composeRule.onNodeWithText("Happy birthday!").performClick()
