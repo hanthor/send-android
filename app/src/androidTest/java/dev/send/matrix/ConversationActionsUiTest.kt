@@ -188,7 +188,7 @@ class ConversationActionsUiTest {
             val roots = composeRule.onAllNodes(androidx.compose.ui.test.isRoot()).fetchSemanticsNodes().size
             val later = composeRule.onRoot().printToString(maxDepth = Int.MAX_VALUE).lines().take(70).joinToString("\n")
             throw AssertionError(
-                "Scheduled bubble lookup failed: ${failure.message?.lineSequence()?.firstOrNull()}\nRight after the write:\n$immediately\n\n" +
+                "Scheduled bubble lookup failed: ${failure.message?.lineSequence()?.take(3)?.joinToString(" | ")}\nRight after the write:\n$immediately\n\n" +
                     "Two seconds later ($roots root(s)):\n$later",
                 failure,
             )
