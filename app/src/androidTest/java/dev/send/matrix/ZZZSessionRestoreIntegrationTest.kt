@@ -7,6 +7,8 @@ import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.printToString
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -107,8 +109,19 @@ class ZZZSessionRestoreIntegrationTest {
         assertFalse(runBlocking { repository.restore() })
         assertTrue(context.getSharedPreferences("matrix_session_locator", Context.MODE_PRIVATE).all.isEmpty())
         composeRule.activityRule.scenario.recreate()
-        composeRule.waitUntil(timeoutMillis = 30_000) {
-            composeRule.onAllNodesWithText("Get started").fetchSemanticsNodes().isNotEmpty()
+        try {
+            composeRule.waitUntil(timeoutMillis = 30_000) {
+                composeRule.onAllNodesWithText("Get started").fetchSemanticsNodes().isNotEmpty()
+            }
+        } catch (timeout: androidx.compose.ui.test.ComposeTimeoutException) {
+            // What the relaunched app shows instead, for the CI annotation.
+            val tree = runCatching { composeRule.onRoot(useUnmergedTree = true).printToString(maxDepth = Int.MAX_VALUE) }.getOrElse { it.toString() }
+            val texts = tree.lines().filter { "Text =" in it || "ContentDescription =" in it }.take(40).joinToString("\n")
+            throw AssertionError(
+                "No hero after sign-out + relaunch; account=${repository.account.value} " +
+                    "state=${runCatching { composeRule.activityRule.scenario.state }.getOrNull()}; on screen:\n$texts",
+                timeout,
+            )
         }
 
         // A store from a build that wrote it unencrypted can't be opened with the key: restore discards it
