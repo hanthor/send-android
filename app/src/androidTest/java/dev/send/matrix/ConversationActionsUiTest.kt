@@ -20,6 +20,8 @@ import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.printToString
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
@@ -175,7 +177,16 @@ class ConversationActionsUiTest {
         val pending = ScheduledMessage("s1", "!room:example.org", "Happy birthday!", tomorrowEight, now)
         // State written from the test thread is applied on the UI thread, so the next frame sees it.
         composeRule.runOnIdle { scheduled.value = listOf(pending) }
-        composeRule.onNodeWithText("Scheduled for Tomorrow, 8:00 AM").performScrollTo().assertIsDisplayed()
+        fun excerpt(unmerged: Boolean) = composeRule.onRoot(useUnmergedTree = unmerged).printToString(maxDepth = Int.MAX_VALUE)
+            .lines().filter { "Scheduled" in it || "Happy" in it || "ScrollToIndex" in it || "Bounds" in it }.take(12).joinToString("\n")
+        val immediately = "merged:\n${excerpt(false)}\nunmerged:\n${excerpt(true)}"
+        try {
+            composeRule.onNodeWithText("Scheduled for Tomorrow, 8:00 AM").performScrollTo().assertIsDisplayed()
+        } catch (failure: AssertionError) {
+            Thread.sleep(2_000)
+            composeRule.waitForIdle()
+            throw AssertionError("Scheduled bubble lookup failed. Right after the write:\n$immediately\n\nTwo seconds later, merged:\n${excerpt(false)}", failure)
+        }
         composeRule.auditShot("scheduled-message")
         composeRule.onNodeWithText("Happy birthday!").performClick()
         composeRule.waitUntil(5_000) { composeRule.onAllNodesWithText("Send now").fetchSemanticsNodes().isNotEmpty() }
