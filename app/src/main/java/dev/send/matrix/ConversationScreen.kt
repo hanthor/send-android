@@ -279,6 +279,13 @@ internal fun ConversationScreen(
         },
     )
     val bubbleEntries = rememberBubbleEntries()
+    // A message just scheduled shows at once, however the list was scrolled (Messages scrolls to it too).
+    var scheduledCount by remember { mutableIntStateOf(scheduled.size) }
+    LaunchedEffect(scheduled.size) {
+        val grew = scheduled.size > scheduledCount
+        scheduledCount = scheduled.size
+        if (grew) listState.scrollToItem(0)
+    }
     // Rows before the messages: typing dots, then scheduled messages.
     val leadingRows = (if (typingShown) 1 else 0) + scheduledShown.size
     fun listIndexOf(id: String): Int? {
