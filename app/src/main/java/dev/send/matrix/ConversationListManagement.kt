@@ -87,7 +87,7 @@ internal class ConversationListActions(
     val setPinned: (rooms: List<MatrixRoom>, pinned: Boolean) -> Unit,
     val setUnread: (rooms: List<MatrixRoom>, unread: Boolean) -> Unit,
     val setMuted: (rooms: List<MatrixRoom>, muted: Boolean) -> Unit,
-    /** Leaves and forgets the conversations (after the user confirmed). */
+    /** Deletes the conversations (after the user confirmed): to the Trash in the lists, for good from the Trash. */
     val delete: (rooms: List<MatrixRoom>) -> Unit,
     /** Blocks the other person of a DM (after the user confirmed). */
     val block: (userId: String) -> Unit,
@@ -101,18 +101,22 @@ internal val MatrixRoom.isUnread: Boolean get() = unreadCount > 0 || markedUnrea
 private fun MatrixRoom.blockedBy(blockedUserIds: Set<String>): Boolean = dmUserId != null && dmUserId in blockedUserIds
 
 /** The main list: encrypted, not archived, no blocked person's DM; pinned first, otherwise the SDK's recency order. */
-internal fun inboxConversations(rooms: List<MatrixRoom>, blockedUserIds: Set<String>): List<MatrixRoom> =
-    rooms.filter { it.encrypted && !it.archived && !it.blockedBy(blockedUserIds) }.sortedByDescending { it.pinned }
+internal fun inboxConversations(rooms: List<MatrixRoom>, blockedUserIds: Set<String>, trashedRoomIds: Set<String> = emptySet()): List<MatrixRoom> =
+    rooms.filter { it.encrypted && !it.archived && !it.blockedBy(blockedUserIds) && it.id !in trashedRoomIds }.sortedByDescending { it.pinned }
 
 /** The Archived screen's list, in the SDK's recency order. */
-internal fun archivedConversations(rooms: List<MatrixRoom>, blockedUserIds: Set<String>): List<MatrixRoom> =
-    rooms.filter { it.encrypted && it.archived && !it.blockedBy(blockedUserIds) }
+internal fun archivedConversations(rooms: List<MatrixRoom>, blockedUserIds: Set<String>, trashedRoomIds: Set<String> = emptySet()): List<MatrixRoom> =
+    rooms.filter { it.encrypted && it.archived && !it.blockedBy(blockedUserIds) && it.id !in trashedRoomIds }
+
+/** The Trash screen's list: most recently trashed first. */
+internal fun trashedConversations(rooms: List<MatrixRoom>, trashed: Map<String, TrashEntry>): List<MatrixRoom> =
+    rooms.filter { it.encrypted && it.id in trashed }.sortedByDescending { trashed.getValue(it.id).trashedAtMillis }
 
 private fun conversationCount(count: Int, what: String) = if (count == 1) "1 conversation $what" else "$count conversations $what"
 
 /** Selection, pending confirmations and the undo snackbar of one conversation list. */
 @Stable
-internal class ConversationListState(private val scope: CoroutineScope) {
+internal class ConversationListState(private val scope: CoroutineScope, /** The Trash screen: Delete is for good. */ val forever: Boolean = false) {
     val snackbar = SnackbarHostState()
     /** Selected conversation IDs, in the order they were picked. */
     var selectedIds by mutableStateOf<List<String>>(emptyList())
@@ -150,9 +154,9 @@ internal class ConversationListState(private val scope: CoroutineScope) {
 }
 
 @Composable
-internal fun rememberConversationListState(): ConversationListState {
+internal fun rememberConversationListState(forever: Boolean = false): ConversationListState {
     val scope = rememberCoroutineScope()
-    return remember(scope) { ConversationListState(scope) }
+    return remember(scope, forever) { ConversationListState(scope, forever) }
 }
 
 /**
@@ -428,8 +432,14 @@ internal fun ConversationListDialogs(state: ConversationListState, actions: Conv
             title = { Text(if (rooms.size == 1) "Delete 1 conversation?" else "Delete ${rooms.size} conversations?") },
             text = {
                 Text(
-                    if (rooms.size == 1) "You'll leave this conversation and it will be removed from your list on all your devices."
-                    else "You'll leave these conversations and they will be removed from your list on all your devices.",
+                    if (state.forever) {
+                        if (rooms.size == 1) "You'll leave this conversation for good and it will be removed from your list on all your devices."
+                        else "You'll leave these conversations for good and they will be removed from your list on all your devices."
+                    } else {
+                        // Messages: deleted conversations wait in the Trash for 30 days.
+                        if (rooms.size == 1) "It moves to the Trash, where you can restore it for 30 days. After that it's deleted for good on all your devices."
+                        else "They move to the Trash, where you can restore them for 30 days. After that they're deleted for good on all your devices."
+                    },
                 )
             },
             confirmButton = {
@@ -533,6 +543,140 @@ internal fun ArchivedScreen(
         }
     }
     ConversationListDialogs(state, actions)
+}
+
+/**
+ * Messages' Trash (account menu → Trash): deleted conversations wait here for 30 days. Each row shows when it was
+ * deleted and restores on tap of Restore; long-press selects for Delete forever; ⋮ empties the Trash.
+ */
+@Composable
+internal fun TrashScreen(
+    rooms: List<MatrixRoom>,
+    trashed: Map<String, TrashEntry>,
+    mutedRoomIds: Set<String>,
+    onRestore: (List<MatrixRoom>) -> Unit,
+    /** Leaves and forgets the conversations (after the user confirmed). */
+    onDeleteForever: (List<MatrixRoom>) -> Unit,
+    onBack: () -> Unit,
+) {
+    val colors = MaterialTheme.colorScheme
+    val state = rememberConversationListState(forever = true)
+    val leaving = rememberPredictiveBack(onBack = onBack)
+    PruneSelection(state, rooms)
+    val selected = state.selectedIds.mapNotNull { id -> rooms.firstOrNull { it.id == id } }
+    var showMenu by remember { mutableStateOf(false) }
+    var confirmEmpty by remember { mutableStateOf(false) }
+    val actions = remember(onRestore, onDeleteForever) {
+        ConversationListActions(
+            setArchived = { picked, _ -> onRestore(picked) },
+            setPinned = { _, _ -> },
+            setUnread = { _, _ -> },
+            setMuted = { _, _ -> },
+            delete = onDeleteForever,
+            block = {},
+        )
+    }
+    Scaffold(
+        modifier = Modifier.predictiveBack(leaving),
+        containerColor = colors.surfaceContainer,
+        snackbarHost = { SnackbarHost(state.snackbar) },
+        topBar = {
+            if (state.selecting) {
+                TrashSelectionBar(
+                    count = selected.size,
+                    onClose = { state.clearSelection() },
+                    onRestore = { state.clearSelection(); onRestore(selected) },
+                    onDelete = { state.confirmDelete = selected },
+                )
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth().statusBarsPadding().heightIn(min = 64.dp).padding(horizontal = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
+                    Text("Trash", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f).padding(start = 8.dp))
+                    if (rooms.isNotEmpty()) Box {
+                        IconButton(onClick = { showMenu = true }) { Icon(Icons.Filled.MoreVert, contentDescription = "More options") }
+                        DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+                            DropdownMenuItem(text = { Text("Empty Trash") }, onClick = { showMenu = false; confirmEmpty = true })
+                        }
+                    }
+                }
+            }
+        },
+    ) { padding ->
+        Surface(
+            modifier = Modifier.fillMaxSize().padding(padding),
+            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+            color = colors.surface,
+        ) {
+            LazyColumn(state = rememberTopAnchoredListState(rooms.firstOrNull()?.id), contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp)) {
+                item(key = "about") {
+                    Text(
+                        "Conversations in the Trash are deleted for good after 30 days.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = colors.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp),
+                    )
+                }
+                if (rooms.isEmpty()) {
+                    item(key = "empty") { EmptyListText("The Trash is empty") }
+                }
+                items(rooms, key = { it.id }) { room ->
+                    val selecting = state.selecting
+                    val entry = trashed[room.id]
+                    Column(sendItemPlacement()) {
+                        ConversationRow(
+                            room = room,
+                            muted = room.id in mutedRoomIds,
+                            selected = room.id in state.selectedIds,
+                            onClick = { if (selecting) state.toggle(room) else onRestore(listOf(room)) },
+                            onLongClick = { state.toggle(room) },
+                            accessibilityActions = listOf(
+                                androidx.compose.ui.semantics.CustomAccessibilityAction("Restore") { onRestore(listOf(room)); true },
+                            ),
+                        )
+                        if (entry != null) {
+                            val deletedOn = android.text.format.DateUtils.getRelativeTimeSpanString(
+                                entry.trashedAtMillis,
+                                System.currentTimeMillis(),
+                                android.text.format.DateUtils.DAY_IN_MILLIS,
+                            )
+                            Row(Modifier.padding(start = 88.dp, end = 16.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text("Deleted $deletedOn", style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant, modifier = Modifier.weight(1f))
+                                TextButton(onClick = { onRestore(listOf(room)) }) { Text("Restore") }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    ConversationListDialogs(state, actions)
+    if (confirmEmpty) {
+        AlertDialog(
+            onDismissRequest = { confirmEmpty = false },
+            title = { Text("Empty Trash?") },
+            text = { Text("The ${rooms.size} conversation${if (rooms.size == 1) "" else "s"} in the Trash will be deleted for good on all your devices.") },
+            confirmButton = { TextButton(onClick = { confirmEmpty = false; onDeleteForever(rooms) }) { Text("Empty Trash") } },
+            dismissButton = { TextButton(onClick = { confirmEmpty = false }) { Text("Cancel") } },
+        )
+    }
+}
+
+/** The Trash's contextual bar while conversations are selected: close, the count, Restore and Delete forever. */
+@Composable
+private fun TrashSelectionBar(count: Int, onClose: () -> Unit, onRestore: () -> Unit, onDelete: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    Row(
+        modifier = Modifier.fillMaxWidth().background(colors.surfaceContainer).statusBarsPadding().heightIn(min = 64.dp).padding(horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconButton(onClick = onClose) { Icon(Icons.Filled.Close, contentDescription = "Close") }
+        Text(count.toString(), style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f).padding(start = 8.dp))
+        TextButton(onClick = onRestore) { Text("Restore") }
+        IconButton(onClick = onDelete) { Icon(Icons.Outlined.Delete, contentDescription = "Delete forever") }
+    }
 }
 
 /** Account menu → Spam & blocked: the account's ignored users (blocked or reported as spam), each with Unblock. */

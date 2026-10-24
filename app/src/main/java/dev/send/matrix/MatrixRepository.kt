@@ -141,6 +141,9 @@ data class MatrixRoom(
     val avatarUrl: String? = null,
 )
 
+/** A conversation in the Trash: when it went there, and whether it was already muted (Restore keeps that). */
+data class TrashEntry(val trashedAtMillis: Long, val wasMuted: Boolean)
+
 /** A starred message as listed on the conversation's Starred screen. */
 data class StarredMessage(
     val eventId: String,
@@ -443,6 +446,10 @@ class MatrixRepository(context: Context) {
     private val _ignoredUsers = MutableStateFlow<Set<String>>(emptySet())
     /** Users this account blocked (`m.ignored_user_list`); their DMs leave the conversation list. */
     val ignoredUsers: StateFlow<Set<String>> = _ignoredUsers.asStateFlow()
+    private val _trashed = MutableStateFlow<Map<String, TrashEntry>>(emptyMap())
+    /** Conversations in the Trash (account data [TRASH_EVENT_TYPE]), by room ID. */
+    val trashed: StateFlow<Map<String, TrashEntry>> = _trashed.asStateFlow()
+    private val trashLock = Mutex()
     private val _starredEvents = MutableStateFlow<Map<String, List<String>>>(emptyMap())
     /** Starred messages per room, oldest star first, from the account data event [STARRED_EVENT_TYPE]. */
     val starredEvents: StateFlow<Map<String, List<String>>> = _starredEvents.asStateFlow()
@@ -745,6 +752,7 @@ class MatrixRepository(context: Context) {
         ownProfileHandle = null
         _ownProfile.value = null
         _starredEvents.value = emptyMap()
+        _trashed.value = emptyMap()
         starredWrite = null
         syncService?.close()
         syncService = null
@@ -856,6 +864,12 @@ class MatrixRepository(context: Context) {
                 refreshStarred()
             } catch (error: Exception) {
                 android.util.Log.w(TAG, "Starred messages could not be read", error)
+            }
+            try {
+                refreshTrash()
+                purgeTrash()
+            } catch (error: Exception) {
+                android.util.Log.w(TAG, "Trash could not be read", error)
             }
         }
     }
@@ -1591,6 +1605,107 @@ class MatrixRepository(context: Context) {
     }
 
     /**
+     * Global account data as the server holds it. The SDK's copy (`Client.accountData`) is the store's, which only
+     * learns of a write once sync echoes it back, so a value written a moment ago would be missing; the
+     * client-server API answers with the written content at once. The SDK's copy is the fallback offline.
+     */
+    private suspend fun accountDataJson(type: String): org.json.JSONObject? {
+        val client = requireClient()
+        val fromServer = runCatching {
+            val (code, body) = clientApi("GET", "/_matrix/client/v3/user/${encodePath(client.userId())}/account_data/${encodePath(type)}", null)
+            when {
+                code in 200..299 -> org.json.JSONObject(body)
+                code == 404 -> null
+                else -> error("HTTP $code")
+            }
+        }
+        if (fromServer.isSuccess) return fromServer.getOrNull()
+        return client.accountData(type)?.let { json -> runCatching { org.json.JSONObject(json) }.getOrNull() }
+    }
+
+    // ---- Trash: Messages' Delete moves a conversation to Trash for 30 days (account data dev.send.trash) ----
+
+    /** Re-reads the Trash from the server (falling back to the store's copy) into [trashed]. */
+    suspend fun refreshTrash(): Map<String, TrashEntry> = withContext(Dispatchers.IO) {
+        val sdk = requireClient()
+        val stored = parseTrash(accountDataJson(TRASH_EVENT_TYPE))
+        trashLock.withLock { if (client === sdk) _trashed.value = stored }
+        stored
+    }
+
+    /**
+     * Moves conversations to the Trash: still joined, so nothing is lost until "Delete forever" or 30 days pass,
+     * but hidden from every list and muted (the mute that was there before is remembered for Restore).
+     */
+    suspend fun trashConversations(roomIds: List<String>) = withContext(Dispatchers.IO) {
+        val sdk = requireClient()
+        trashLock.withLock {
+            val now = System.currentTimeMillis()
+            val next = _trashed.value + roomIds.associateWith { id ->
+                _trashed.value[id] ?: TrashEntry(trashedAtMillis = now, wasMuted = id in _mutedRoomIds.value)
+            }
+            sdk.setAccountData(TRASH_EVENT_TYPE, trashJson(next))
+            _trashed.value = next
+        }
+        for (id in roomIds) {
+            if (id !in _mutedRoomIds.value) runCatching { setRoomMuted(id, true) }
+            MessageNotifier.cancel(appContext, id)
+        }
+    }
+
+    /** Puts conversations back from the Trash (and unmutes the ones the Trash muted). */
+    suspend fun restoreFromTrash(roomIds: List<String>) = withContext(Dispatchers.IO) {
+        val sdk = requireClient()
+        val entries = trashLock.withLock {
+            val current = _trashed.value
+            val next = current - roomIds.toSet()
+            sdk.setAccountData(TRASH_EVENT_TYPE, trashJson(next))
+            _trashed.value = next
+            roomIds.mapNotNull { id -> current[id]?.let { id to it } }
+        }
+        for ((id, entry) in entries) {
+            if (!entry.wasMuted) runCatching { setRoomMuted(id, false) }
+        }
+    }
+
+    /** Deletes conversations for good: leaves and forgets them, and drops their Trash entries. */
+    suspend fun deleteForever(roomIds: List<String>) = withContext(Dispatchers.IO) {
+        deleteConversations(roomIds)
+        val sdk = requireClient()
+        trashLock.withLock {
+            val next = _trashed.value - roomIds.toSet()
+            if (next != _trashed.value) {
+                sdk.setAccountData(TRASH_EVENT_TYPE, trashJson(next))
+                _trashed.value = next
+            }
+        }
+    }
+
+    /** Deletes for good whatever has been in the Trash for [TRASH_RETENTION_MS] (Messages: 30 days). */
+    suspend fun purgeTrash() {
+        val cutoff = System.currentTimeMillis() - TRASH_RETENTION_MS
+        val expired = _trashed.value.filterValues { it.trashedAtMillis <= cutoff }.keys.toList()
+        if (expired.isNotEmpty()) deleteForever(expired)
+    }
+
+    private fun parseTrash(json: org.json.JSONObject?): Map<String, TrashEntry> {
+        val rooms = json?.optJSONObject("rooms") ?: return emptyMap()
+        return rooms.keys().asSequence().mapNotNull { id ->
+            val entry = rooms.optJSONObject(id) ?: return@mapNotNull null
+            val at = entry.optLong("trashed_at", 0L).takeIf { it > 0L } ?: return@mapNotNull null
+            id to TrashEntry(trashedAtMillis = at, wasMuted = entry.optBoolean("was_muted", false))
+        }.toMap()
+    }
+
+    private fun trashJson(entries: Map<String, TrashEntry>): String {
+        val rooms = org.json.JSONObject()
+        entries.forEach { (id, entry) ->
+            rooms.put(id, org.json.JSONObject().put("trashed_at", entry.trashedAtMillis).put("was_muted", entry.wasMuted))
+        }
+        return org.json.JSONObject().put("rooms", rooms).toString()
+    }
+
+    /**
      * Re-reads the starred messages from the store (where sync keeps the account data current) and returns what
      * the store holds. A write from this device that sync hasn't brought back yet stays shown for [STARRED_ECHO_MS].
      */
@@ -2170,25 +2285,6 @@ class MatrixRepository(context: Context) {
             }
         }
         packs
-    }
-
-    /**
-     * Global account data as the server holds it. The SDK's copy (`Client.accountData`) is the store's, which only
-     * learns of a write once sync echoes it back, so a pack image added a moment ago would be missing; the
-     * client-server API answers with the written content at once. The SDK's copy is the fallback offline.
-     */
-    private suspend fun accountDataJson(type: String): org.json.JSONObject? {
-        val client = requireClient()
-        val fromServer = runCatching {
-            val (code, body) = clientApi("GET", "/_matrix/client/v3/user/${encodePath(client.userId())}/account_data/${encodePath(type)}", null)
-            when {
-                code in 200..299 -> org.json.JSONObject(body)
-                code == 404 -> null
-                else -> error("HTTP $code")
-            }
-        }
-        if (fromServer.isSuccess) return fromServer.getOrNull()
-        return client.accountData(type)?.let { json -> runCatching { org.json.JSONObject(json) }.getOrNull() }
     }
 
     private fun parseImagePack(id: String, fallbackName: String, json: org.json.JSONObject): ImagePack? {
@@ -2941,6 +3037,9 @@ class MatrixRepository(context: Context) {
         const val VOICE_MIMETYPE = "audio/ogg"
         /** Global account data holding this account's starred messages: `{"rooms": {roomId: [eventId, …]}}`. */
         const val STARRED_EVENT_TYPE = "dev.send.starred"
+        const val TRASH_EVENT_TYPE = "dev.send.trash"
+        /** How long a conversation stays in the Trash before it is deleted for good (Messages: 30 days). */
+        const val TRASH_RETENTION_MS = 30L * 24 * 60 * 60 * 1000
         private const val AVATAR_MIMETYPE = "image/jpeg"
         /** Longest edge of uploaded avatars. */
         private const val AVATAR_PX = 1024
