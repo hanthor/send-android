@@ -2137,8 +2137,8 @@ class MatrixRepository(context: Context) {
             val pack = json?.let { parseImagePack(id, fallbackName, it) } ?: return
             if (pack.images.isNotEmpty() && seen.add(pack.id)) packs += pack
         }
-        add(USER_PACK_ID, "Your stickers", client.accountData(USER_EMOTES_TYPE)?.let { runCatching { org.json.JSONObject(it) }.getOrNull() })
-        val enabled = client.accountData(EMOTE_ROOMS_TYPE)?.let { runCatching { org.json.JSONObject(it).optJSONObject("rooms") }.getOrNull() }
+        add(USER_PACK_ID, "Your stickers", accountDataJson(USER_EMOTES_TYPE))
+        val enabled = accountDataJson(EMOTE_ROOMS_TYPE)?.optJSONObject("rooms")
         val wanted = linkedMapOf<String, MutableSet<String>>()
         if (roomId != null) wanted.getOrPut(roomId) { linkedSetOf() }.add("")
         enabled?.keys()?.forEach { enabledRoom ->
@@ -2155,6 +2155,25 @@ class MatrixRepository(context: Context) {
             }
         }
         packs
+    }
+
+    /**
+     * Global account data as the server holds it. The SDK's copy (`Client.accountData`) is the store's, which only
+     * learns of a write once sync echoes it back, so a pack image added a moment ago would be missing; the
+     * client-server API answers with the written content at once. The SDK's copy is the fallback offline.
+     */
+    private suspend fun accountDataJson(type: String): org.json.JSONObject? {
+        val client = requireClient()
+        val fromServer = runCatching {
+            val (code, body) = clientApi("GET", "/_matrix/client/v3/user/${encodePath(client.userId())}/account_data/${encodePath(type)}", null)
+            when {
+                code in 200..299 -> org.json.JSONObject(body)
+                code == 404 -> null
+                else -> error("HTTP $code")
+            }
+        }
+        if (fromServer.isSuccess) return fromServer.getOrNull()
+        return client.accountData(type)?.let { json -> runCatching { org.json.JSONObject(json) }.getOrNull() }
     }
 
     private fun parseImagePack(id: String, fallbackName: String, json: org.json.JSONObject): ImagePack? {
@@ -2231,7 +2250,7 @@ class MatrixRepository(context: Context) {
             val height = bounds.outHeight.takeIf { it > 0 }
             val animated = picked.mimeType == "image/gif" || isAnimatedImage(picked.file)
             val url = client.uploadMedia(picked.mimeType, picked.file.readBytes(), null)
-            val pack = client.accountData(USER_EMOTES_TYPE)?.let { runCatching { org.json.JSONObject(it) }.getOrNull() } ?: org.json.JSONObject()
+            val pack = accountDataJson(USER_EMOTES_TYPE) ?: org.json.JSONObject()
             val images = pack.optJSONObject("images") ?: org.json.JSONObject().also { pack.put("images", it) }
             val base = picked.file.nameWithoutExtension.lowercase().replace(Regex("[^a-z0-9_]+"), "_").trim('_').ifBlank { "sticker" }
             var shortcode = base
@@ -2268,7 +2287,7 @@ class MatrixRepository(context: Context) {
     /** Removes an image the user added from their pack (the picture stays on the server for messages that used it). */
     suspend fun removeFromUserPack(shortcode: String) = withContext(Dispatchers.IO) {
         val client = requireClient()
-        val pack = client.accountData(USER_EMOTES_TYPE)?.let { runCatching { org.json.JSONObject(it) }.getOrNull() } ?: return@withContext
+        val pack = accountDataJson(USER_EMOTES_TYPE) ?: return@withContext
         val images = pack.optJSONObject("images") ?: return@withContext
         if (!images.has(shortcode)) return@withContext
         images.remove(shortcode)
