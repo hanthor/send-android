@@ -17,6 +17,10 @@ voice and video calls. Unencrypted rooms are never opened.
 **Messaging**
 - Text, photos, videos, files and hold-to-record voice messages (slide up to
   record hands-free), with an in-app photo/video viewer.
+- GIFs and stickers from the composer's Emoji / GIFs / Stickers panel, backed
+  by Matrix image packs (yours, the room's, and packs you enabled from other
+  rooms); add your own from your photos. Stickers show without a bubble and
+  GIFs play in place.
 - Long-press for reactions and Reply, Forward, Copy, Edit, Delete, Select more
   and Info; swipe a message to reply.
 - Typing dots, "Read" / "Seen by N" receipts, link previews, a full emoji
