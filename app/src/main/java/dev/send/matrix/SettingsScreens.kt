@@ -191,6 +191,51 @@ internal fun SettingsPage(
 }
 
 /** Account menu → Settings, laid out like Messages settings. */
+private fun swipeSummary(actions: SwipeActions): String =
+    if (actions.start == actions.end) actions.start.label else "Right: ${actions.start.label} · Left: ${actions.end.label}"
+
+/** Messages' Settings → Swipe actions: a choice for each direction. */
+@Composable
+internal fun SwipeActionsPage(actions: SwipeActions, onChange: (SwipeActions) -> Unit, onBack: () -> Unit) {
+    SettingsPage("Swipe actions", onBack) {
+        Text(
+            "Swipe right",
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.padding(start = 28.dp, top = 12.dp, bottom = 4.dp),
+        )
+        SettingsGroup {
+            SwipeAction.entries.forEach { choice ->
+                row { SettingsRadioRow(choice.label, selected = actions.start == choice) { onChange(actions.copy(start = choice)) } }
+            }
+        }
+        Text(
+            "Swipe left",
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.padding(start = 28.dp, top = 12.dp, bottom = 4.dp),
+        )
+        SettingsGroup {
+            SwipeAction.entries.forEach { choice ->
+                row { SettingsRadioRow(choice.label, selected = actions.end == choice) { onChange(actions.copy(end = choice)) } }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SettingsRadioRow(label: String, selected: Boolean, onSelect: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().selectable(selected = selected, role = Role.RadioButton, onClick = onSelect)
+            .padding(horizontal = 16.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RadioButton(selected = selected, onClick = null)
+        Spacer(Modifier.width(12.dp))
+        Text(label, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
+    }
+}
+
 @Composable
 internal fun SettingsScreen(
     notificationSummary: String,
@@ -201,6 +246,8 @@ internal fun SettingsScreen(
     onTheme: (ThemeChoice) -> Unit,
     linkPreviews: Boolean,
     onLinkPreviews: (Boolean) -> Unit,
+    swipeActions: SwipeActions = SwipeActions(),
+    onSwipeActions: (SwipeActions) -> Unit = {},
     securitySummary: String,
     onSecurity: () -> Unit,
     onDevices: () -> Unit,
@@ -211,6 +258,11 @@ internal fun SettingsScreen(
 ) {
     var choosingTheme by rememberSaveable { mutableStateOf(false) }
     var choosingPreviews by rememberSaveable { mutableStateOf(false) }
+    var choosingSwipes by rememberSaveable { mutableStateOf(false) }
+    if (choosingSwipes) {
+        SwipeActionsPage(swipeActions, onSwipeActions, onBack = { choosingSwipes = false })
+        return
+    }
     if (choosingPreviews) {
         // Messages: Automatic previews is its own page of switches.
         SettingsPage("Automatic previews", onBack = { choosingPreviews = false }) {
@@ -232,11 +284,12 @@ internal fun SettingsScreen(
             row { SettingsSwitchRow("Hear outgoing and incoming message sounds", sounds, onSounds) }
             row { SettingsRow("Choose theme", theme.label, onClick = { choosingTheme = true }) }
             row { SettingsRow("Automatic previews", previewsLabel(linkPreviews), onClick = { choosingPreviews = true }) }
+            row { SettingsRow("Swipe actions", swipeSummary(swipeActions), onClick = { choosingSwipes = true }) }
         }
         SettingsGroup {
             row { SettingsRow("Security", securitySummary, onClick = onSecurity) }
             row { SettingsRow("Devices", "Sessions signed in to your account", onClick = onDevices) }
-            row { SettingsRow("Blocked contacts", onClick = onBlocked) }
+            row { SettingsRow("Spam & blocked", onClick = onBlocked) }
             row { SettingsRow("Archived", onClick = onArchived) }
         }
         SettingsGroup {
