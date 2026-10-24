@@ -116,7 +116,7 @@ class ZZZSessionRestoreIntegrationTest {
         } catch (timeout: androidx.compose.ui.test.ComposeTimeoutException) {
             // What the relaunched app shows instead, for the CI annotation.
             val tree = runCatching { composeRule.onRoot(useUnmergedTree = true).printToString(maxDepth = Int.MAX_VALUE) }.getOrElse { it.toString() }
-            val texts = tree.lines().filter { "Text =" in it || "ContentDescription =" in it }.take(40).joinToString("\n")
+            val texts = tree.lines().filter { "Text =" in it || "ContentDescription =" in it }.take(90).joinToString("\n")
             throw AssertionError(
                 "No hero after sign-out + relaunch; account=${repository.account.value} " +
                     "state=${runCatching { composeRule.activityRule.scenario.state }.getOrNull()}; on screen:\n$texts",
