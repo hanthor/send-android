@@ -27,7 +27,8 @@ voice and video calls. Unencrypted rooms are never opened.
 - Snippets, relative times and unread badges; search.
 - Swipe to archive (or delete, mark read/unread — Settings → Swipe actions),
   long-press to select, pin, mark unread, mute, delete, block or report spam
-  (Spam & blocked lists who you've blocked).
+  (Spam & blocked lists who you've blocked). Deleted conversations wait in
+  the Trash for 30 days with Restore, Delete forever and Empty Trash.
 
 **Calls and notifications**
 - Voice and video calls through Element Call (MatrixRTC), with a full-screen

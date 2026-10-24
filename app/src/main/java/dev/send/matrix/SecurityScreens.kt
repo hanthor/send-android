@@ -44,6 +44,7 @@ import androidx.compose.material.icons.automirrored.outlined.Logout
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.outlined.Archive
 import androidx.compose.material.icons.outlined.Block
+import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Devices
@@ -137,6 +138,8 @@ internal fun AccountSheet(
     onArchived: (() -> Unit)? = null,
     /** Opens Spam & blocked. */
     onBlocked: (() -> Unit)? = null,
+    /** Opens the Trash (Messages: account menu → Trash). */
+    onTrash: (() -> Unit)? = null,
 ) {
     val colors = MaterialTheme.colorScheme
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
@@ -177,6 +180,7 @@ internal fun AccountSheet(
                 Spacer(Modifier.height(8.dp))
                 if (onArchived != null) AccountMenuRow(Icons.Outlined.Archive, "Archived", null, onArchived)
                 if (onBlocked != null) AccountMenuRow(Icons.Outlined.Block, "Spam & blocked", null, onBlocked)
+                if (onTrash != null) AccountMenuRow(Icons.Outlined.Delete, "Trash", null, onTrash)
                 AccountMenuRow(Icons.Outlined.Security, "Security", securitySummary, onSecurity)
                 AccountMenuRow(Icons.Outlined.Settings, "Settings", null, onSettings)
                 AccountMenuRow(Icons.AutoMirrored.Outlined.Logout, "Sign out", null, onSignOut)

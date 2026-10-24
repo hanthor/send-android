@@ -445,7 +445,9 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
     val mutedRoomIds by repository.mutedRoomIds.collectAsState()
     val ignoredUsers by repository.ignoredUsers.collectAsState()
     val starredEvents by repository.starredEvents.collectAsState()
+    val trashed by repository.trashed.collectAsState()
     var showArchived by rememberSaveable { mutableStateOf(false) }
+    var showTrash by rememberSaveable { mutableStateOf(false) }
     var showBlocked by rememberSaveable { mutableStateOf(false) }
     var showSettings by rememberSaveable { mutableStateOf(false) }
     var showProfile by rememberSaveable { mutableStateOf(false) }
@@ -546,7 +548,7 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
      */
     fun showConversationBesideList() {
         if (twoPane) {
-            showSettings = false; showDevices = false; showProfile = false; showArchived = false; showBlocked = false
+            showSettings = false; showDevices = false; showProfile = false; showArchived = false; showBlocked = false; showTrash = false
         }
     }
     /** Opens [roomId] (encrypted rooms only); title and kind come from the list when known, else from the SDK. */
@@ -641,8 +643,9 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
                     repository.setRoomsMuted(picked.map { it.id }, muted)
                 }
             },
+            // Messages: Delete moves the conversation to the Trash for 30 days; the Trash deletes for good.
             delete = { picked ->
-                listAction("Conversation could not be deleted.") { repository.deleteConversations(picked.map { it.id }) }
+                listAction("Conversation could not be deleted.") { repository.trashConversations(picked.map { it.id }) }
                 if (picked.any { it.id == activeRoomId }) closeConversation()
             },
             block = { userId ->
@@ -671,7 +674,7 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
                 closeConversation()
             },
             delete = {
-                listAction("Conversation could not be deleted.") { repository.deleteConversations(listOf(roomId)) }
+                listAction("Conversation could not be deleted.") { repository.trashConversations(listOf(roomId)) }
                 closeConversation()
             },
             block = { userId ->
@@ -815,6 +818,7 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
                 rooms = rooms,
                 mutedRoomIds = mutedRoomIds,
                 blockedUserIds = ignoredUsers,
+                trashedRoomIds = trashed.keys,
                 listActions = listActions,
                 swipeActions = swipeActions,
                 onOpen = openFromList,
@@ -1137,6 +1141,7 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
                     onDevices = { showDevices = true },
                     onBlocked = { showBlocked = true },
                     onArchived = { showArchived = true },
+                    onTrash = { showTrash = true },
                     onAbout = { showAbout = true },
                     onBack = { showSettings = false },
                 )
@@ -1161,11 +1166,22 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
             // Account menu → Archived; on one pane hidden (not closed) while a conversation opened from it is on screen.
             AnimatedVisibility(visible = showArchived && pagesShown, enter = SendMotion.openEnter, exit = SendMotion.closeExit) {
                 ArchivedScreen(
-                    rooms = archivedConversations(rooms, ignoredUsers),
+                    rooms = archivedConversations(rooms, ignoredUsers, trashed.keys),
                     mutedRoomIds = mutedRoomIds,
                     actions = listActions,
                     onOpen = openFromList,
                     onBack = { showArchived = false },
+                )
+            }
+            // Account menu → Trash: deleted conversations for 30 days, with Restore and Delete forever.
+            AnimatedVisibility(visible = showTrash && pagesShown, enter = SendMotion.openEnter, exit = SendMotion.closeExit) {
+                TrashScreen(
+                    rooms = trashedConversations(rooms, trashed),
+                    trashed = trashed,
+                    mutedRoomIds = mutedRoomIds,
+                    onRestore = { picked -> listAction("Conversation could not be restored.") { repository.restoreFromTrash(picked.map { it.id }) } },
+                    onDeleteForever = { picked -> listAction("Conversation could not be deleted.") { repository.deleteForever(picked.map { it.id }) } },
+                    onBack = { showTrash = false },
                 )
             }
             AnimatedVisibility(visible = showBlocked, enter = SendMotion.openEnter, exit = SendMotion.closeExit) {
@@ -1220,6 +1236,7 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
                     onSettings = { showAccount = false; showSettings = true },
                     onArchived = { showAccount = false; showArchived = true },
                     onBlocked = { showAccount = false; showBlocked = true },
+                    onTrash = { showAccount = false; showTrash = true },
                     onSignOut = { showAccount = false; signOutError = ""; showSignOut = true },
                     onDismiss = { showAccount = false },
                 )
@@ -1734,6 +1751,8 @@ internal fun HomeScreen(
     mutedRoomIds: Set<String> = emptySet(),
     /** People this account blocked; their DMs stay out of the list. */
     blockedUserIds: Set<String> = emptySet(),
+    /** Conversations in the Trash; out of the list until restored. */
+    trashedRoomIds: Set<String> = emptySet(),
     /** Swipe-to-archive, long-press selection and its bar; without them rows only open. */
     listActions: ConversationListActions? = null,
     /** The conversation open beside the list (two panes); its row is highlighted. */
@@ -1746,7 +1765,7 @@ internal fun HomeScreen(
     var verifyBannerDismissed by rememberSaveable { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
     var searching by rememberSaveable { mutableStateOf(false) }
-    val inboxRooms = inboxConversations(rooms, blockedUserIds)
+    val inboxRooms = inboxConversations(rooms, blockedUserIds, trashedRoomIds)
     val visibleRooms = if (query.isBlank()) inboxRooms else inboxRooms.filter { it.name.contains(query, ignoreCase = true) }
     val colors = MaterialTheme.colorScheme
     val listState = rememberConversationListState()
