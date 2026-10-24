@@ -216,7 +216,7 @@ class ZZListManagementIntegrationTest {
             composeRule.onAllNodesWithContentDescription("Search").fetchSemanticsNodes().isNotEmpty()
         }
 
-        // 6. Block Bob from his DM: he joins m.ignored_user_list, his DMs leave the list; Blocked contacts unblocks.
+        // 6. Block Bob from his DM: he joins m.ignored_user_list, his DMs leave the list; Spam & blocked unblocks.
         val blockCheck = "Block check $stamp"
         bobSends(dm, blockCheck)
         waitForUi("Bob's DM in the list", 60_000, ::roomsState) {
@@ -238,8 +238,8 @@ class ZZListManagementIntegrationTest {
         waitForUi("Bob's DM gone from the list", 30_000, ::roomsState) {
             !hasNodeWithText(blockCheck) && inboxConversations(repository.joinedRooms.value, repository.ignoredUsers.value).none { it.id == dm }
         }
-        openAccountItem("Blocked contacts")
-        waitForUi("Bob under Blocked contacts", 30_000, ::roomsState) { hasNodeWithText(BOB) }
+        openAccountItem("Spam & blocked")
+        waitForUi("Bob under Spam & blocked", 30_000, ::roomsState) { hasNodeWithText(BOB) }
         composeRule.auditShot("live-blocked")
         composeRule.onNodeWithText("Unblock").performClick()
         waitFor("Bob removed from m.ignored_user_list on the homeserver", 60_000, { "server=${serverAccountData("m.ignored_user_list")}" }) {

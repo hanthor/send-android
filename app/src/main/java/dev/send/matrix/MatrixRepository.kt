@@ -1535,6 +1535,18 @@ class MatrixRepository(context: Context) {
         }
     }
 
+    /**
+     * Messages' Report spam on a DM: the room is reported to the homeserver (MSC4151 `reportRoom`) and the other
+     * person is blocked. A homeserver without room reporting still gets the block.
+     */
+    suspend fun reportSpam(roomId: String, userId: String) = withContext(Dispatchers.IO) {
+        val sdk = requireClient()
+        sdk.getRoom(roomId)?.use { room ->
+            runCatching { room.reportRoom("Spam") }.onFailure { android.util.Log.w(TAG, "Room report for $roomId not accepted", it) }
+        }
+        blockUser(userId)
+    }
+
     suspend fun unblockUser(userId: String) = withContext(Dispatchers.IO) {
         val sdk = requireClient()
         _ignoredUsers.value = _ignoredUsers.value - userId

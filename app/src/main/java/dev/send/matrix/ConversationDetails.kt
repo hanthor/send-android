@@ -400,7 +400,7 @@ internal fun ConversationDetailsScreen(
                 text = {
                     Text(
                         "You won't receive calls or messages from ${target.userId} on any of your devices, and your conversations " +
-                            "with them leave your list. Unblock them any time from Blocked contacts.",
+                            "with them leave your list. Unblock them any time from Spam & blocked.",
                     )
                 },
                 confirmButton = {
