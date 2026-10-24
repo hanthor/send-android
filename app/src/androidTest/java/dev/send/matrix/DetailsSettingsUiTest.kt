@@ -11,7 +11,9 @@ import android.media.AudioManager
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.hasAnyAncestor
@@ -23,9 +25,8 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithText
-import androidx.compose.ui.test.printToString
-import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
@@ -313,16 +314,11 @@ class DetailsSettingsUiTest {
         waitForText("4 people")
         scrollDetailsTo("Media & files")
         waitForText("6 items")
-        composeRule.onNodeWithText("6 items").performClick()
+        // The row and its thumbnail strip are one tappable card; tap the row itself (a thumbnail would open the viewer).
+        composeRule.onNodeWithText("6 items").performTouchInput { click(Offset(center.x, 24f)) }
         composeRule.waitUntil(10_000) { composeRule.onAllNodesWithTag(MEDIA_GRID_TAG).fetchSemanticsNodes().isNotEmpty() }
         // The details strip (four newest) stays beneath the grid (all six).
-        try {
-            composeRule.waitUntil(10_000) { composeRule.onAllNodesWithText("Itinerary.pdf").fetchSemanticsNodes().size >= 2 }
-        } catch (timeout: androidx.compose.ui.test.ComposeTimeoutException) {
-            val tree = composeRule.onRoot(useUnmergedTree = true).printToString(maxDepth = 16).lineSequence()
-                .filter { "Itinerary" in it || "Photo" in it || "Node #" in it || "Media" in it }.take(120).joinToString("\n")
-            throw AssertionError("Itinerary.pdf nodes=${composeRule.onAllNodesWithText("Itinerary.pdf").fetchSemanticsNodes().size}\n$tree", timeout)
-        }
+        composeRule.waitUntil(10_000) { composeRule.onAllNodesWithText("Itinerary.pdf").fetchSemanticsNodes().size >= 2 }
         composeRule.waitUntil(10_000) { composeRule.onAllNodesWithContentDescription("Photo").fetchSemanticsNodes().size >= 8 }
         // Let every thumbnail decode before the shot.
         Thread.sleep(1_500)
