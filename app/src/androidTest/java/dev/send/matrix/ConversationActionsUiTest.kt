@@ -145,7 +145,7 @@ class ConversationActionsUiTest {
                     loadLinkPreview = loadLinkPreview,
                     voiceCapture = voiceCapture,
                     scheduled = scheduled?.value.orEmpty(),
-                    onSchedule = if (scheduled != null) ({ text, at -> callbacks.scheduledAt = text to at }) else null,
+                    onSchedule = if (scheduled != null) ({ text, at, _ -> callbacks.scheduledAt = text to at }) else null,
                     onScheduledAction = { pending, action -> callbacks.scheduledAction = pending to action },
                 )
             }
@@ -202,6 +202,17 @@ class ConversationActionsUiTest {
         composeRule.onNodeWithText("Delete").performClick()
         composeRule.waitUntil(5_000) { callbacks.scheduledAction != null }
         assertEquals(pending to ScheduledAction.Delete, callbacks.scheduledAction)
+
+        // A scheduled photo shows as a tile above its caption (Messages' layout) and reads as one attachment.
+        val photo = fixtureImage("cake.png")
+        val withPhoto = ScheduledMessage(
+            "s2", "!room:example.org", "Look at this cake", tomorrowEight, now,
+            attachments = listOf(ScheduledAttachment(photo.absolutePath, photo.name, "image/png")),
+        )
+        composeRule.runOnIdle { scheduled.value = listOf(withPhoto) }
+        composeRule.waitUntil(5_000) { composeRule.onAllNodesWithContentDescription("Preview of cake.png").fetchSemanticsNodes().isNotEmpty() }
+        composeRule.onNodeWithContentDescription("Scheduled message: 1 attachment, Look at this cake. Scheduled for Tomorrow, 8:00 AM").assertExists()
+        composeRule.auditShot("scheduled-photo")
     }
 
     private fun longPress(text: String) {

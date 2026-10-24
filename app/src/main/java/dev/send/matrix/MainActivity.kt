@@ -164,6 +164,7 @@ import dev.send.matrix.notifications.notificationsAllowed
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.NonCancellable
@@ -995,7 +996,10 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
                 },
                 // Messages' Schedule send: kept on this device and sent through the encrypted path when due.
                 scheduled = scheduledMessages.filter { it.roomId == activeRoomId },
-                onSchedule = { text, sendAt -> scheduledStore.schedule(activeRoomId, text, sendAt) },
+                onSchedule = { text, sendAt, files ->
+                    val roomId = activeRoomId
+                    scope.launch(Dispatchers.IO) { scheduledStore.schedule(roomId, text, sendAt, files) }
+                },
                 onScheduledAction = { pending, action ->
                     when (action) {
                         ScheduledAction.SendNow -> scheduledStore.sendNow(pending.id)
@@ -1011,13 +1015,13 @@ private fun SendApp(repository: MatrixRepository, activity: MainActivity) {
                     val video = rooms.firstOrNull { it.id == activeRoomId }?.callVideo == true
                     callSession?.answer(activeRoomId, video)
                 },
-                onSendAttachment = { uri ->
+                onSendAttachment = { staged ->
                     val currentRoom = room
                     val currentTimeline = timeline
                     if (currentRoom != null && currentTimeline != null) scope.launch {
                         error = ""
                         pendingUploads += 1
-                        try { repository.sendAttachment(currentTimeline, currentRoom, uri) }
+                        try { repository.sendStaged(currentTimeline, currentRoom, staged) }
                         catch (cancelled: CancellationException) { throw cancelled }
                         catch (failure: Exception) { error = failure.message ?: "Attachment could not be sent." }
                         finally { pendingUploads -= 1 }

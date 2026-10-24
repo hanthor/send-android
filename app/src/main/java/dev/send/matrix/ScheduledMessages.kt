@@ -26,7 +26,15 @@ import kotlinx.coroutines.sync.withLock
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** A message written now to be sent later (Messages' "Schedule send"); [failed] once every attempt at its time failed. */
+/** A photo, video or file kept with a scheduled message until it goes (a copy under the app's files). */
+data class ScheduledAttachment(val path: String, val name: String, val mimeType: String) {
+    internal fun asShared() = SharedFile(java.io.File(path), name, mimeType)
+}
+
+/**
+ * A message written now to be sent later (Messages' "Schedule send"): text, attachments or both; [failed] once
+ * every attempt at its time failed.
+ */
 data class ScheduledMessage(
     val id: String,
     val roomId: String,
@@ -34,6 +42,7 @@ data class ScheduledMessage(
     val sendAtMillis: Long,
     val createdAtMillis: Long,
     val failed: Boolean = false,
+    val attachments: List<ScheduledAttachment> = emptyList(),
 )
 
 /**
@@ -53,46 +62,67 @@ class ScheduledMessages private constructor(private val context: Context) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var foregroundTicker: Job? = null
 
-    /** Schedules [text] for [roomId] at [sendAtMillis]; it shows in the conversation until it is sent. */
-    fun schedule(roomId: String, text: String, sendAtMillis: Long): ScheduledMessage {
+    /**
+     * Schedules [text] and the staged [attachments] for [roomId] at [sendAtMillis]; it shows in the conversation
+     * until it is sent. The staged copies move under the app's files so they outlive the cache and the process.
+     */
+    fun schedule(roomId: String, text: String, sendAtMillis: Long, attachments: List<SharedFile> = emptyList()): ScheduledMessage {
+        val id = java.util.UUID.randomUUID().toString()
         val message = ScheduledMessage(
-            id = java.util.UUID.randomUUID().toString(),
+            id = id,
             roomId = roomId,
             text = text.trim(),
             sendAtMillis = sendAtMillis,
             createdAtMillis = System.currentTimeMillis(),
+            attachments = attachments.mapIndexed { index, shared -> keep(id, index, shared) },
         )
-        save(_messages.value + message)
+        change { it + message }
         enqueue(message, sendAtMillis - System.currentTimeMillis())
         return message
     }
 
-    /** Changes a scheduled message's text and time (Messages' "Update message"). */
+    /** Moves a staged file into this message's own directory (same filesystem; copied when a move isn't possible). */
+    private fun keep(id: String, index: Int, shared: SharedFile): ScheduledAttachment {
+        val dir = attachmentsDir(id).resolve(index.toString()).apply { mkdirs() }
+        val target = dir.resolve(shared.name)
+        if (!shared.file.renameTo(target)) {
+            shared.file.copyTo(target, overwrite = true)
+            shared.file.delete()
+        }
+        shared.file.parentFile?.takeIf { it.list()?.isEmpty() == true }?.delete()
+        return ScheduledAttachment(target.absolutePath, shared.name, shared.mimeType)
+    }
+
+    private fun attachmentsDir(id: String) = context.filesDir.resolve("scheduled/$id")
+
+    /** Changes a scheduled message's text and time (Messages' "Update message"); its attachments stay. */
     fun update(id: String, text: String, sendAtMillis: Long) {
         val current = _messages.value.firstOrNull { it.id == id } ?: return
         val updated = current.copy(text = text.trim(), sendAtMillis = sendAtMillis, failed = false)
-        save(_messages.value.map { if (it.id == id) updated else it })
+        change { list -> list.map { if (it.id == id) updated else it } }
         enqueue(updated, sendAtMillis - System.currentTimeMillis())
     }
 
     /** Deletes a scheduled message without sending it. */
     fun cancel(id: String) {
-        save(_messages.value.filterNot { it.id == id })
+        change { list -> list.filterNot { it.id == id } }
         WorkManager.getInstance(context).cancelUniqueWork(workName(id))
+        attachmentsDir(id).deleteRecursively()
     }
 
-    /** Drops every scheduled message and its job (sign-out). */
+    /** Drops every scheduled message, its job and its attachments (sign-out). */
     fun clear() {
         val manager = WorkManager.getInstance(context)
         _messages.value.forEach { manager.cancelUniqueWork(workName(it.id)) }
-        save(emptyList())
+        change { emptyList() }
+        context.filesDir.resolve("scheduled").deleteRecursively()
     }
 
     /** Sends a scheduled message right away (Messages' "Send now"). */
     fun sendNow(id: String) {
         val current = _messages.value.firstOrNull { it.id == id } ?: return
         val now = current.copy(sendAtMillis = System.currentTimeMillis(), failed = false)
-        save(_messages.value.map { if (it.id == id) now else it })
+        change { list -> list.map { if (it.id == id) now else it } }
         scope.launch { sendDue() }
         enqueue(now, 0L)
     }
@@ -124,9 +154,10 @@ class ScheduledMessages private constructor(private val context: Context) {
         val due = _messages.value.filter { !it.failed && it.sendAtMillis <= System.currentTimeMillis() && inFlight.add(it.id) }
         for (message in due) {
             try {
-                MatrixRepository.get(context).sendNotificationReply(message.roomId, message.text)
-                save(_messages.value.filterNot { it.id == message.id })
+                MatrixRepository.get(context).sendScheduled(message.roomId, message.text, message.attachments.map { it.asShared() })
+                change { list -> list.filterNot { it.id == message.id } }
                 WorkManager.getInstance(context).cancelUniqueWork(workName(message.id))
+                attachmentsDir(message.id).deleteRecursively()
             } catch (cancelled: CancellationException) {
                 inFlight.remove(message.id)
                 throw cancelled
@@ -134,7 +165,7 @@ class ScheduledMessages private constructor(private val context: Context) {
                 Log.w(TAG, "Scheduled message ${message.id} for ${message.roomId} not sent (attempt $attempt)", error)
                 allSent = false
                 if (attempt >= MAX_ATTEMPTS) {
-                    save(_messages.value.map { if (it.id == message.id) it.copy(failed = true) else it })
+                    change { list -> list.map { if (it.id == message.id) it.copy(failed = true) else it } }
                     MessageNotifier.showActionFailed(context, message.roomId, "Scheduled message not sent")
                 }
             } finally {
@@ -154,6 +185,9 @@ class ScheduledMessages private constructor(private val context: Context) {
         WorkManager.getInstance(context).enqueueUniqueWork(workName(message.id), ExistingWorkPolicy.REPLACE, request)
     }
 
+    /** Read-modify-write of the list under one lock (schedules arrive from an IO thread, the rest from the UI). */
+    private fun change(transform: (List<ScheduledMessage>) -> List<ScheduledMessage>) = synchronized(this) { save(transform(_messages.value)) }
+
     private fun save(messages: List<ScheduledMessage>) {
         val sorted = messages.sortedBy { it.sendAtMillis }
         _messages.value = sorted
@@ -166,7 +200,13 @@ class ScheduledMessages private constructor(private val context: Context) {
                     .put("text", message.text)
                     .put("sendAt", message.sendAtMillis)
                     .put("createdAt", message.createdAtMillis)
-                    .put("failed", message.failed),
+                    .put("failed", message.failed)
+                    .put(
+                        "attachments",
+                        JSONArray().also { files ->
+                            message.attachments.forEach { files.put(JSONObject().put("path", it.path).put("name", it.name).put("mime", it.mimeType)) }
+                        },
+                    ),
             )
         }
         prefs.edit().putString(KEY_MESSAGES, array.toString()).apply()
@@ -183,6 +223,9 @@ class ScheduledMessages private constructor(private val context: Context) {
                 sendAtMillis = item.getLong("sendAt"),
                 createdAtMillis = item.optLong("createdAt", 0L),
                 failed = item.optBoolean("failed", false),
+                attachments = item.optJSONArray("attachments")?.let { files ->
+                    List(files.length()) { i -> files.getJSONObject(i).let { ScheduledAttachment(it.getString("path"), it.getString("name"), it.getString("mime")) } }
+                } ?: emptyList(),
             )
         }.sortedBy { it.sendAtMillis }
     }.getOrDefault(emptyList())

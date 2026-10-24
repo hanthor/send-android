@@ -4,6 +4,7 @@ import android.content.Context
 import android.text.format.DateUtils
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -230,13 +231,30 @@ internal fun ScheduledBubble(message: ScheduledMessage, onClick: () -> Unit, mod
     val context = LocalContext.current
     val colors = MaterialTheme.colorScheme
     val status = if (message.failed) "Not sent" else "Scheduled for ${scheduleLabel(context, message.sendAtMillis)}"
+    val described = listOfNotNull(
+        message.attachments.takeIf { it.isNotEmpty() }?.let { files -> if (files.size == 1) "1 attachment" else "${files.size} attachments" },
+        message.text.takeIf { it.isNotBlank() },
+    ).joinToString(", ")
     Column(
         modifier.fillMaxWidth().clickable(onClickLabel = "Scheduled message options", onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 4.dp)
-            .semantics(mergeDescendants = true) { contentDescription = "Scheduled message: ${message.text}. $status" },
+            .semantics(mergeDescendants = true) { contentDescription = "Scheduled message: $described. $status" },
         horizontalAlignment = Alignment.End,
     ) {
-        Surface(
+        // Messages: the photos sit above the caption; files show as tiles with their name.
+        if (message.attachments.isNotEmpty()) {
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.padding(bottom = 4.dp)) {
+                message.attachments.take(3).forEach { attachment ->
+                    StagedFileTile(attachment.asShared(), Modifier.size(if (message.attachments.size == 1) 150.dp else 88.dp))
+                }
+                if (message.attachments.size > 3) {
+                    Surface(shape = MaterialTheme.shapes.medium, color = colors.surfaceContainerHighest, modifier = Modifier.size(88.dp)) {
+                        Text("+${message.attachments.size - 3}", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(8.dp))
+                    }
+                }
+            }
+        }
+        if (message.text.isNotBlank()) Surface(
             shape = bubbleShape(isFromMe = true, isFirstInGroup = true, isLastInGroup = true),
             color = colors.surface,
             contentColor = colors.onSurface,
