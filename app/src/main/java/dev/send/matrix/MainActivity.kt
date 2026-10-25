@@ -2249,6 +2249,16 @@ internal fun ConversationRow(
             }
         }
         Spacer(modifier = Modifier.width(16.dp))
+        val largeFont = LocalDensity.current.fontScale >= 1.5f
+        val timeLabel = @Composable { timestamp: Long ->
+            Text(
+                text = conversationTimestamp(context, timestamp),
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = emphasis,
+                color = if (unread) colors.onSurface else colors.onSurfaceVariant,
+                modifier = Modifier.padding(start = 8.dp),
+            )
+        }
         Column(modifier = Modifier.weight(1f)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.weight(1f)) {
@@ -2287,15 +2297,9 @@ internal fun ConversationRow(
                         modifier = Modifier.padding(start = 6.dp).size(16.dp),
                     )
                 }
-                room.lastTimestampMillis?.let { timestamp ->
-                    Text(
-                        text = conversationTimestamp(context, timestamp),
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = emphasis,
-                        color = if (unread) colors.onSurface else colors.onSurfaceVariant,
-                        modifier = Modifier.padding(start = 8.dp),
-                    )
-                }
+                // Large font sizes: a two-digit time ("12:09 AM") would leave the name no room, so the time moves
+                // down beside the snippet, which is ellipsized anyway.
+                if (!largeFont) room.lastTimestampMillis?.let { timestamp -> timeLabel(timestamp) }
             }
             Spacer(modifier = Modifier.height(2.dp))
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -2308,6 +2312,7 @@ internal fun ConversationRow(
                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
+                if (largeFont) room.lastTimestampMillis?.let { timestamp -> timeLabel(timestamp) }
                 if (room.unreadCount > 0) {
                     val label = if (room.unreadCount > 99) "99+" else room.unreadCount.toString()
                     Box(
