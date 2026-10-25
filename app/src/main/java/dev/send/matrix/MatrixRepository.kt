@@ -2689,7 +2689,7 @@ class MatrixRepository(context: Context) {
         // No `sessionPaths` here: it replaces the store configuration with an unencrypted one.
         val store = SqliteStoreBuilder(root.resolve(STORE_DATA_DIR).absolutePath, root.resolve(STORE_CACHE_DIR).absolutePath)
             .key(storeKey())
-        return ClientBuilder()
+        val builder = ClientBuilder()
             .homeserverUrl(homeserver)
             .slidingSyncVersionBuilder(SlidingSyncVersionBuilder.NATIVE)
             .sqliteStore(store)
@@ -2697,7 +2697,51 @@ class MatrixRepository(context: Context) {
             // (secret storage) and session verification build on.
             .autoEnableCrossSigning(true)
             .setSessionDelegate(sessionDelegate)
-            .build()
+        return try {
+            builder.build()
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            // The SDK's HTTP layer reports every transport failure as "error sending request for url (…)" and
+            // keeps the cause to itself; a second look with Android's own HTTP stack names it.
+            val message = failure.message.orEmpty()
+            if ("error sending request" !in message && "Connection" !in message && "connect" !in message) throw failure
+            throw IllegalStateException(connectionDiagnosis(homeserver, message), failure)
+        }
+    }
+
+    /**
+     * Why `homeserver` couldn't be reached, in the user's terms, found by requesting its
+     * `/_matrix/client/versions` with the platform's HTTP stack (which does explain itself).
+     */
+    private fun connectionDiagnosis(homeserver: String, sdkMessage: String): String {
+        val host = runCatching { java.net.URI(homeserver).host }.getOrNull() ?: homeserver
+        val probe = runCatching {
+            val connection = java.net.URL("$homeserver/_matrix/client/versions").openConnection() as java.net.HttpURLConnection
+            try {
+                connection.connectTimeout = 8000
+                connection.readTimeout = 8000
+                connection.setRequestProperty("Accept", "application/json")
+                connection.responseCode
+            } finally {
+                connection.disconnect()
+            }
+        }
+        val cause = probe.exceptionOrNull()
+        val detail = cause?.let { "${it.javaClass.simpleName}: ${it.message}" } ?: "HTTP ${probe.getOrNull()}"
+        val explanation = when {
+            cause is javax.net.ssl.SSLHandshakeException || cause is javax.net.ssl.SSLPeerUnverifiedException ||
+                cause?.message?.contains("certif", ignoreCase = true) == true || cause?.message?.contains("Trust anchor") == true ->
+                "Android doesn't trust $host's certificate. Browsers often hide this: the server may not be sending its intermediate certificate, or the certificate may be for a different name or from a private CA (Android ignores AIA fetching, so the full chain must be served)."
+            cause is java.net.UnknownHostException -> "The name $host couldn't be looked up on this device."
+            cause is java.net.ConnectException || cause is java.net.SocketTimeoutException || cause is java.net.NoRouteToHostException ->
+                "This device couldn't connect to $host (a firewall, or an IPv6 address that doesn't route from here)."
+            cause == null && probe.getOrNull() in 200..399 ->
+                "Android reaches $host, but the Matrix engine's TLS client (rustls) couldn't: the server may offer only TLS 1.0/1.1 or RSA-only key exchange, or cut off non-browser clients."
+            cause == null -> "$host answers /_matrix/client/versions with HTTP ${probe.getOrNull()}, so it may not be a Matrix homeserver at that address."
+            else -> "$host couldn't be reached from this device."
+        }
+        return "$explanation\n\nDetails: $detail\nMatrix engine: $sdkMessage"
     }
 
     private fun requireClient(): Client = client ?: error("Sign in to a Matrix account first.")
