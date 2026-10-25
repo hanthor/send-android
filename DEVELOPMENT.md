@@ -122,7 +122,15 @@ stay below 100, N between 1 and 98). Release notes for a version code go in
 `fastlane/metadata/android/en-US/changelogs/<versionCode>.txt`; the workflow adds
 that file to the GitHub Release when it exists.
 
-**Cutting a release.** From an up-to-date `main` whose `Android CI` run is green:
+**Automatic release candidates.** `.github/workflows/autorelease.yml` runs
+after every green `Android CI` run on `main`: it tags that commit with the next
+candidate (`-rc.N+1` after a candidate, `vX.Y.(Z+1)-rc.1` after a final release;
+a commit that already carries a `v*` tag is skipped) and starts release.yml on
+the tag, so each candidate is a signed, R8-tested GitHub pre-release. Without a
+changelog file for its version code, the release notes list the commits since
+the previous tag. *Run workflow* with "dry run" shows the tag it would create.
+
+**Cutting a final release.** From an up-to-date `main` whose `Android CI` run is green:
 
 ```sh
 git tag v0.1.0-rc.1 origin/main

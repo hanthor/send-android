@@ -196,6 +196,13 @@ jobs:
               echo
               cat "$changelog"
               echo
+            elif [ "$GITHUB_REF_TYPE" = tag ] &&
+              previous="$(git describe --tags --match 'v*' --abbrev=0 --exclude "$GITHUB_REF_NAME" HEAD 2>/dev/null)"; then
+              # No written changelog (autorelease candidates): the commits since the previous tag.
+              echo "## Changes since $previous"
+              echo
+              git log --no-merges --format='- %s' "$previous..HEAD"
+              echo
             fi
             echo '## Which file?'
             echo
