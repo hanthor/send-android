@@ -1,0 +1,113 @@
+name: Autorelease
+
+# Cuts the next release candidate automatically: once `Android CI` is green on `main`, this tags that commit
+# `vMAJOR.MINOR.PATCH-rc.N` (the next N after the newest tag, or `-rc.1` of the next patch after a final release)
+# and starts release.yml on the tag, which builds, signs, re-tests on the R8 build and publishes a GitHub
+# pre-release. A final release is still cut by hand: `git tag vX.Y.Z && git push origin vX.Y.Z` (DEVELOPMENT.md,
+# "Releases"). A commit that already carries a v* tag is left alone.
+on:
+  workflow_run:
+    workflows: ['Android CI']
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Compute the next tag without creating it
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: autorelease
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    name: Tag the next release candidate
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The commit CI just passed (workflow_dispatch: the branch's head), with every tag for `git describe`.
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 0
+      - name: Choose the next tag
+        id: next
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          git fetch --tags --force --quiet
+          # Only `main` is released; a dispatch from another branch stops here.
+          if ! git merge-base --is-ancestor HEAD origin/main; then
+            echo "::notice::$(git rev-parse --short HEAD) is not on main; nothing to release."
+            echo "tag=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if existing="$(git tag --points-at HEAD --list 'v*' | head -n1)" && [ -n "$existing" ]; then
+            echo "::notice::$(git rev-parse --short HEAD) is already $existing; nothing to release."
+            echo "tag=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          latest="$(git describe --tags --match 'v*' --abbrev=0 2>/dev/null || true)"
+          if [ -z "$latest" ]; then
+            next=v0.1.0-rc.1
+          elif [[ "$latest" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)-rc\.([0-9]+)$ ]]; then
+            rc=$(( BASH_REMATCH[4] + 1 ))
+            if [ "$rc" -gt 98 ]; then
+              echo "::error::$latest is the last release candidate the version scheme allows (rc.98); cut v${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]} by hand."
+              exit 1
+            fi
+            next="v${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}-rc.$rc"
+          elif [[ "$latest" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            patch=$(( BASH_REMATCH[3] + 1 ))
+            minor=${BASH_REMATCH[2]}
+            if [ "$patch" -gt 99 ]; then patch=0; minor=$(( minor + 1 )); fi
+            if [ "$minor" -gt 99 ]; then
+              echo "::error::$latest leaves no room for a patch or minor bump in the version scheme; tag the next version by hand."
+              exit 1
+            fi
+            next="v${BASH_REMATCH[1]}.$minor.$patch-rc.1"
+          else
+            echo "::error::The newest tag '$latest' is not vMAJOR.MINOR.PATCH[-rc.N]."
+            exit 1
+          fi
+          echo "Newest tag: ${latest:-none}; next: $next"
+          {
+            echo "tag=$next"
+            echo "previous=$latest"
+          } >> "$GITHUB_OUTPUT"
+      - name: Create and push the tag
+        if: steps.next.outputs.tag != '' && inputs.dry_run != true
+        env:
+          TAG: ${{ steps.next.outputs.tag }}
+          PREVIOUS: ${{ steps.next.outputs.previous }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          range=""
+          if [ -n "$PREVIOUS" ]; then range="$PREVIOUS..HEAD"; fi
+          {
+            echo "Send $TAG"
+            echo
+            echo "Changes since ${PREVIOUS:-the beginning}:"
+            echo
+            git log --no-merges --format='- %s' $range
+          } > "$RUNNER_TEMP/tag-message.txt"
+          git tag -a "$TAG" -F "$RUNNER_TEMP/tag-message.txt" HEAD
+          git push origin "refs/tags/$TAG"
+          echo "::notice::Tagged $(git rev-parse --short HEAD) as $TAG."
+      - name: Start the release build on the tag
+        # A tag pushed with GITHUB_TOKEN raises no `push` event (GitHub stops workflows from chaining that way),
+        # so release.yml is started here explicitly; on a tag ref it builds, verifies and publishes as usual.
+        if: steps.next.outputs.tag != '' && inputs.dry_run != true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.next.outputs.tag }}
+        run: gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref "refs/tags/$TAG"
