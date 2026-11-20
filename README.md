@@ -97,7 +97,8 @@ Builds signed with a key labelled `UNOFFICIAL-ci-signed` are test builds only.
 
 ## Build and verify
 
-Everything is built and tested in GitHub Actions:
+CI is the reference build and test run (to build locally, see
+[DEVELOPMENT.md](DEVELOPMENT.md#building-and-testing-locally)):
 
 - **[Android CI](.github/workflows/android.yml)** — assemble, unit tests, lint,
   then the full instrumentation suite on an emulator against a disposable
