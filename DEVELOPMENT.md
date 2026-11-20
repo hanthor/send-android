@@ -1,5 +1,37 @@
 # Local development
 
+## Building and testing locally
+
+CI (`.github/workflows/android.yml`) is the reference build; a local build needs
+the same toolchain:
+
+- JDK 17 (CI uses Temurin; `app/build.gradle.kts` compiles for Java 17).
+- An Android SDK with platform `android-37.2`, build-tools `37.0.0` and NDK
+  `29.0.14206865`. The NDK only provides `llvm-strip` (`android.ndkVersion`), so
+  the version must match. Point Gradle at the SDK with `ANDROID_HOME` or an
+  `sdk.dir` line in `local.properties` (git-ignored). With the SDK's
+  command-line tools installed, CI installs the packages with:
+
+  ```sh
+  sdkmanager 'platforms;android-37.2' 'build-tools;37.0.0' 'ndk;29.0.14206865'
+  ```
+
+- Network access to Maven Central, Google's Maven repository and GitHub
+  Releases (`settings.gradle.kts` resolves the Element Call and RTC artifacts
+  from `element-hq` release downloads).
+
+The device needs Android 14 (API 34) or newer (`minSdk = 34`). From the
+repository root, the steps CI runs before the emulator tests are:
+
+```sh
+./gradlew :app:assembleDebug :app:testDebugUnitTest :app:lintDebug
+```
+
+The debug APK is `app/build/outputs/apk/debug/app-debug.apk`. The instrumentation
+suite (`./gradlew :app:connectedDebugAndroidTest`) needs a running emulator or
+device (CI uses an API 35 x86_64 emulator) and the local Synapse backend from the
+next section. Release builds are signed in CI only; see "Releases".
+
 ## Local Matrix homeserver
 
 The optional Synapse service provides a disposable backend for account sign-in, encrypted direct-room creation, and message/reaction testing. It binds to the workstation loopback only; do not expose it to a public network.
@@ -133,8 +165,8 @@ the previous tag. *Run workflow* with "dry run" shows the tag it would create.
 **Cutting a final release.** From an up-to-date `main` whose `Android CI` run is green:
 
 ```sh
-git tag v0.1.0-rc.1 origin/main
-git push origin v0.1.0-rc.1
+git tag v0.1.0 origin/main
+git push origin v0.1.0
 ```
 
 The workflow then builds `:app:assembleRelease :app:bundleRelease` with R8
