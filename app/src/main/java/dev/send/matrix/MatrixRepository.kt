@@ -2597,7 +2597,7 @@ class MatrixRepository(context: Context) {
         if (file.isFile && file.length() > 0) return@withContext file
         val bytes = MediaSource.fromJson(sourceJson).use { requireClient().getMediaContent(it) }
         file.parentFile?.mkdirs()
-        val partial = File(file.parentFile, "${file.name}.part")
+        val partial = uniquePartialFile(file)
         partial.writeBytes(bytes)
         check(partial.renameTo(file)) { "Media could not be cached." }
         file
@@ -3201,6 +3201,13 @@ internal fun messageSummary(type: MessageType): String = when (type) {
 /** Strips path separators and control characters so a remote/picked name is safe as a cache file name. */
 internal fun safeFileName(name: String): String =
     name.substringAfterLast('/').filter { it >= ' ' && it != '\\' && it != ':' }.trim().trimStart('.').take(120).ifBlank { "attachment" }
+
+/**
+ * A download-private temp file beside [target]. Two downloads of the same media must not share one `.part`
+ * name: one writer's bytes could be renamed into place while the other is still writing them.
+ */
+internal fun uniquePartialFile(target: File): File =
+    File(target.parentFile, "${target.name}.${java.util.UUID.randomUUID()}.part")
 
 /** Largest power-of-two BitmapFactory sample size that keeps the longest edge at or above [targetPx]. */
 internal fun sampleSize(width: Int, height: Int, targetPx: Int): Int {
